@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type OutstandingCard, copiesToPrint, outstandingLabel } from './printRuns.ts';
+import { type OutstandingCard, defaultCopies, outstandingLabel } from './printRuns.ts';
 
 function owed(overrides: Partial<OutstandingCard> = {}): OutstandingCard {
   return {
@@ -15,33 +15,28 @@ function owed(overrides: Partial<OutstandingCard> = {}): OutstandingCard {
   };
 }
 
-describe('how many copies a run puts on paper', () => {
-  it('prints the deck’s own count when the mode is everything', () => {
-    expect(copiesToPrint(3, owed({ owed_copies: 1 }), 'all', false)).toBe(3);
+describe('the count a card starts at', () => {
+  it('offers the deck’s own count when the mode is everything', () => {
+    expect(defaultCopies(3, owed({ owed_copies: 1 }), 'all')).toBe(3);
   });
 
-  it('prints only what is outstanding when the mode is changed', () => {
-    expect(copiesToPrint(3, owed({ owed_copies: 1 }), 'changed', false)).toBe(1);
+  it('offers only what is outstanding when the mode is changed', () => {
+    expect(defaultCopies(3, owed({ owed_copies: 1 }), 'changed')).toBe(1);
   });
 
-  it('leaves out a card that owes nothing', () => {
-    expect(copiesToPrint(3, owed({ owed_copies: 0, reason: null }), 'changed', false)).toBe(0);
+  it('starts a card that owes nothing at none', () => {
+    expect(defaultCopies(3, owed({ owed_copies: 0, reason: null }), 'changed')).toBe(0);
   });
 
-  it('prints none of a card the deck holds none of, whichever mode is on', () => {
-    expect(copiesToPrint(0, owed({ quantity: 0, owed_copies: 0 }), 'all', false)).toBe(0);
-    expect(copiesToPrint(0, owed({ quantity: 0, owed_copies: 0 }), 'changed', false)).toBe(0);
-  });
-
-  it('collapses to one proof copy under one of each', () => {
-    expect(copiesToPrint(3, owed({ owed_copies: 2 }), 'changed', true)).toBe(1);
-    expect(copiesToPrint(3, owed(), 'all', true)).toBe(1);
+  it('starts a card the deck holds none of at none, whichever mode is on', () => {
+    expect(defaultCopies(0, owed({ quantity: 0, owed_copies: 0 }), 'all')).toBe(0);
+    expect(defaultCopies(0, owed({ quantity: 0, owed_copies: 0 }), 'changed')).toBe(0);
   });
 
   // Dropping artwork off a sheet because a lookup missed is the one failure this
   // must not have, so an unknown card falls back to its own count.
-  it('prints a card the server said nothing about at its full count', () => {
-    expect(copiesToPrint(2, undefined, 'changed', false)).toBe(2);
+  it('offers a card the server said nothing about its full count', () => {
+    expect(defaultCopies(2, undefined, 'changed')).toBe(2);
   });
 });
 

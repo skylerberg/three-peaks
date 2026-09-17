@@ -476,10 +476,11 @@ has no pointer column.
 **A copy count may be zero**, and that is a third state beside taking the card
 out of the list and deleting its image: the row keeps its place and its artwork,
 and nothing physical is made of it. Every consumer that counts pieces rather than
-rows honours it — no slot on a sheet, not even under "one of each", and nothing
-on the Blender table, which means no `.glb` in the bundle either. The bound is
-`DECK_QUANTITY_LIMITS` in `packages/shared/src/decks.ts`, and the deck's own
-"N cards · M to print" is where the two numbers come apart on screen.
+rows honours it — no slot on a sheet and nothing on the Blender table, which
+means no `.glb` in the bundle either. The bound is `DECK_QUANTITY_LIMITS` in
+`packages/shared/src/decks.ts`, and the deck's own "N cards · M to print" is
+where the two numbers come apart on screen. The print screen is where it is a
+default rather than an instruction — see below.
 
 **Deleting a deck is soft**, because a deck owns its artwork and so owns bytes.
 It is tombstoned like a folder, `?purge=true` is the only path that reclaims, and
@@ -573,6 +574,21 @@ Three consequences are worth knowing before changing any of it:
   draws each card at the number `GET /api/print/outstanding` handed it and
   records that same number, so the ledger describes the paper rather than
   whatever the file reached while jsPDF was working.
+
+**A deck's copy count is what a run starts at, not what it prints.** Every card
+on the print screen carries a field, `defaultCopies` in
+`apps/web/src/lib/printRuns.ts` fills it -- from the deck under "everything
+selected", from what is outstanding under "only what has changed" -- and what is
+in it is what the sheets are packed from and what the ledger records. Three
+things follow. A number somebody typed outranks the mode, so switching between
+the two moves the fields still following their default and leaves the rest where
+they were put; the deck row offers to put its own back, which is the only way a
+typed number is forgotten short of leaving the screen. A card the deck holds
+none of starts at none and can still be asked for, which is how the deck's back
+is proofed as a card. And nothing here writes to the deck: the counts on the
+deck screen are the persistent truth and this is one print job's opinion of
+them, which is why a run that printed five of a card the deck asks two of leaves
+it owing nothing rather than owing less than nothing.
 
 Generating the document records the run, because building it is the act of
 printing and a second button is a step to forget. `DELETE /api/print/runs/:runId`
