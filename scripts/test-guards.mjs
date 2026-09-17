@@ -926,6 +926,61 @@ export const guards = [
     runner: 'shared',
   },
   {
+    // A keyboard drag finalizes on every arrow press and ends with a consider,
+    // so a screen that saves on each finalize writes the deck once per
+    // keystroke -- and fans a realtime event out to every other tab behind each
+    // of them, describing an arrangement nobody asked for.
+    name: 'a keyboard drag saves once, where it ends',
+    package: 'web',
+    file: 'src/routes/Deck.svelte',
+    find: '    if (event.detail.info.source === SOURCES.KEYBOARD) return;\n',
+    replace: '',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'saves once at the end of a keyboard drag, not once per arrow',
+    runner: 'web',
+  },
+  {
+    // The drawn list is the dropped one until the save answers. Drawing the
+    // store instead is the tempting simplification -- there is no second list
+    // to keep -- and it makes every drop jump home and then forward again,
+    // which is how it looked before.
+    name: 'a dropped card stays where it was dropped while the save is in flight',
+    package: 'web',
+    file: 'src/routes/Deck.svelte',
+    find: '          {#each localCards as card (card.id)}',
+    replace: '          {#each drawCards() as card (card.id)}',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'draws the dropped order while the save is in flight',
+    runner: 'web',
+  },
+  {
+    // A reorder arranges what a section holds. Without the refusal it is also
+    // a way to take a component out of one -- the ids it is not given simply
+    // keep whatever position they had, behind rows that now claim theirs.
+    name: 'a reorder can neither add a component to a section nor drop one',
+    package: 'api',
+    file: 'src/routes/components.ts',
+    find:
+      '      new Set(wanted).size !== wanted.length ||\n' +
+      '      wanted.length !== held.length ||\n' +
+      '      wanted.some((id) => !holds.has(id))',
+    replace: '      false',
+    tests: ['tests/e2e/components.test.ts'],
+    testName: 'refuses an order with one left out',
+  },
+  {
+    // Most drags end where they started. Writing those renumbers rows that
+    // already hold those numbers and announces it to every client with the
+    // section open, which is a realtime event per drag that changed nothing.
+    name: 'an order that did not move writes nothing and announces nothing',
+    package: 'api',
+    file: 'src/routes/components.ts',
+    find: '      .filter((row) => holds.get(row.id) !== row.position);',
+    replace: '      .filter(() => true);',
+    tests: ['tests/e2e/realtime.test.ts'],
+    testName: 'carries a reordered section, and says nothing when the order did not move',
+  },
+  {
     // Deduplicating on the settings alone is the tempting version, and it hands
     // fifty-two cards one file: every card in a deck is cut to one size.
     name: 'two cards printed with different artwork are two files',

@@ -226,6 +226,9 @@ jobs:
       - run: pnpm run check:upload
       - run: pnpm run check:model3d
       - run: pnpm run check:print
+      # A real press on a drag handle. jsdom is handed the events the library
+      # dispatches; everything between the grip and those events is here.
+      - run: pnpm run check:reorder
       # Unpacks the ZIP the export screen builds and reads the .glb files out of
       # it. Every unit test of that path stubs the renderer out, because jsdom
       # has neither a canvas nor WebGL.

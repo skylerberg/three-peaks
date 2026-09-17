@@ -266,6 +266,17 @@ that job: the 3D dial-in for one image, which after this means a deck card.
 `file.component_role` says which slot a file fills (`artwork` or `cut`), with a
 partial unique index so a component holds at most one of each.
 
+**A section is an order, and `component.position` is it** — per kind, because a
+section is one kind and dragging a wooden piece must not move the box. It is not
+unique: a tombstone keeps the number it had so a restore lands where it was, and
+the name settles a collision on the way out. `PUT /api/components/order` takes
+the whole section at once the way a deck's cards are replaced, and refuses
+anything that is not exactly its live rows — a reorder arranges what is there
+and is not a way to take something out of it. It writes `position` and nothing
+else, so it publishes `component_order_changed` rather than a row update, and
+that event carries the section whole because a list of ids would send every
+screen holding it back for the names and artwork it already has.
+
 **A deck's cards are exactly its own live images**, bar a back that is not itself
 a card. `assertCardFiles` refuses both halves: a file the deck does not own would
 be a card Assets still lists, and a live one left out would be artwork in the deck
@@ -359,6 +370,10 @@ router library.
 - **A test that needs runes must be named `*.svelte.test.ts`.** Without the
   infix the runes are never compiled and the failure is silent: a `$derived`
   keeps handing back its first value.
+- **A list somebody arranges is dragged by a handle**, and there are no up and
+  down buttons left anywhere. `svelte-dnd-action` is the one dependency here
+  that is neither Svelte nor Vite, and what it buys is the keyboard half: space
+  or enter on the grip lifts a row, the arrows move it, escape puts it down.
 - Three Svelte 5 traps: `$state` returns a _proxy_, so a value captured for later
   must be read back off the `$state` variable after assignment; **writing**
   `$state` during teardown silently does not survive, so bookkeeping that must
@@ -383,6 +398,36 @@ router library.
   neighbour. Each screen hands over its rows in the order it drew them, with the
   version it drew them at, so the arrow keys walk the screen and a card opened
   from a run in February is February's artwork.
+
+## Dragging a list into order
+
+`apps/web/src/components/ui/DragHandle.svelte` is the grip, and
+`apps/web/src/lib/dnd.ts` holds what every zone shares: the outline drawn around
+one while a drag is live, and the flip duration. That duration is a rule rather
+than a number — reduced motion takes it to zero, and `app.css` cannot say so on
+its behalf, because its own block reaches CSS animations and these are Web
+Animations.
+
+A deck's cards and a components section are the two, and they are written alike
+because the three awkward parts are the same on each:
+
+- **What is drawn is a local copy of the store's list**, held from the moment a
+  drag starts until the save that follows it answers. The store goes on applying
+  realtime events under a live drag, and a screen that reads it back in between
+  redraws the arrangement the drop replaced: the row jumps home, and forward
+  again when the response lands.
+- **The flag that holds that copy is a plain `let`.** Declared as `$state` it
+  becomes a dependency of the effect doing the copying, so the drag ending
+  re-runs it — the same jump, reached from the other side.
+- **A keyboard drag ends on a `consider` carrying `DRAG_STOPPED`.** Its arrows
+  finalize on every press, so a save hung off the finalize is a request and a
+  broadcast per keystroke. A row dropped back where it came from is not a move
+  and writes nothing at all.
+
+`check:reorder` owns the gesture. jsdom has no pointer, no layout and no
+animation, so a unit test can only hand a screen the events the library would
+have dispatched; between a press on the grip and those events is covered there
+and nowhere else.
 
 # The 3D studio
 
@@ -458,7 +503,8 @@ offer a value the server will reject.
 # Decks, and printable sheets
 
 A **deck** is an ordered list of card images with a copy count each, one card
-size, and one image on the back. `/projects/:projectId/print` turns any selection
+size, and one image on the back. The order is `deck_card.position`, dragged into
+place on the deck screen and replaced wholesale by every save. `/projects/:projectId/print` turns any selection
 of decks into a US Letter PDF: cards packed as tightly as the paper allows, with
 a backing page behind every sheet.
 
@@ -1060,9 +1106,11 @@ arms and their "fails under CI" contracts never once executing.
 and `check:model3d` drives the studio and reads the `.glb` that comes out —
 GLTFExporter needs a real canvas to serialise a texture, so nothing else covers
 the step between "the vertices are right" and "a file Blender can open came
-out". `check:a11y` reaches its one screen behind the session the same way.
+out". `check:reorder` presses a drag handle and walks the pointer far enough to
+change places, which is the half of a reorder jsdom cannot hold an opinion
+about. `check:a11y` reaches its one screen behind the session the same way.
 
-All three need an API (`pnpm dev:api`), and all three interrogate it before a
+They all need an API (`pnpm dev:api`), and they all interrogate it before a
 browser starts rather than trusting the port. Nothing there skips locally and
 fails under CI; something there that serves a different set of routes fails
 everywhere, with the reason. `check:a11y` skips only the screens behind the

@@ -39,6 +39,9 @@ export const componentSchema = type({
   project_id: 'string',
   kind: 'string',
   name: 'string',
+  // Where it sits in its section. The order is per kind, because a section is
+  // one kind -- dragging a wooden piece cannot move the box.
+  position: 'number',
   settings: componentSettingsSchema,
   created_by: 'string',
   created_at: 'string',
@@ -68,6 +71,16 @@ export const createComponentRequestSchema = type({
 export const updateComponentRequestSchema = type({
   'name?': componentName,
   'settings?': componentSettingsSchema,
+});
+
+// The whole ordered list of one section in one request, the way a deck's cards
+// are replaced: the ids are the order, and anything but exactly the section's
+// live components is refused. Nothing here says what a component is, so a
+// reorder cannot add or remove one.
+export const putComponentOrderRequestSchema = type({
+  project_id: uuid,
+  kind: componentKind,
+  component_ids: uuid.array(),
 });
 
 export const componentQuerySchema = type({

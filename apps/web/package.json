@@ -14,6 +14,7 @@
     "check:upload": "node scripts/check-upload.mjs",
     "check:model3d": "node scripts/check-model3d.mjs",
     "check:print": "node scripts/check-print.mjs",
+    "check:reorder": "node scripts/check-reorder.mjs",
     "check:scene": "node scripts/check-scene.mjs",
     "playwright:install": "playwright install chromium webkit",
     "check:all": "pnpm run type-check && pnpm test && pnpm run check:a11y && pnpm run build"
@@ -23,6 +24,7 @@
     "jspdf": "^4.2.1",
     "openapi-fetch": "~0.17.0",
     "svelte": "~5.56.9",
+    "svelte-dnd-action": "^0.9.79",
     "three": "^0.185.1"
   },
   "devDependencies": {

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { flip } from 'svelte/animate';
+  import { SOURCES, TRIGGERS, type DndEvent, dragHandleZone } from 'svelte-dnd-action';
   import {
     COMPONENT_KIND_INFO,
     COMPONENT_NAME_LIMITS,
@@ -7,10 +9,12 @@
   import type { components as ApiComponents } from '@three-peaks/shared/api';
   import Thumbnail from '../components/Thumbnail.svelte';
   import Button from '../components/ui/Button.svelte';
+  import DragHandle from '../components/ui/DragHandle.svelte';
   import Input from '../components/ui/Input.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
-  import { projectComponents } from '../lib/components.svelte.ts';
+  import { type ProjectComponent, projectComponents } from '../lib/components.svelte.ts';
+  import { DROP_TARGET_STYLE, flipDuration, isDragPlaceholder } from '../lib/dnd.ts';
   import { realtime } from '../lib/realtime.svelte.ts';
   import { link, router } from '../lib/router.svelte.ts';
   import { apiMessage } from '../lib/session.svelte.ts';
@@ -26,6 +30,12 @@
   let { projectId, kind }: Props = $props();
 
   let project = $state<ApiComponents['schemas']['Project'] | null>(null);
+  // The list the section draws. See Deck.svelte's, which this is the other half
+  // of: the store's, except while a drag holds it and for the round trip after
+  // a drop.
+  let localList = $state<ProjectComponent[]>([]);
+  // Plain, not `$state`, so the sync below does not subscribe to it.
+  let dragging = false;
   let error = $state<string | null>(null);
   let creating = $state(false);
   let newName = $state('');
@@ -55,6 +65,12 @@
   });
 
   $effect(() => {
+    const next = list;
+    if (dragging) return;
+    localList = [...next];
+  });
+
+  $effect(() => {
     const id = projectId;
     realtime.subscribe(id);
     const off = realtime.on((event) => {
@@ -63,6 +79,8 @@
         projectComponents.apply(event.data);
       } else if (event.type === 'component_deleted') {
         projectComponents.apply(event.data, true);
+      } else if (event.type === 'component_order_changed') {
+        projectComponents.applyOrder(event.data.kind, event.data.components);
       }
     });
     return () => {
@@ -91,6 +109,49 @@
       await projectComponents.remove(id);
     } catch (caught) {
       toasts.error(apiMessage(caught));
+    }
+  }
+
+  function handleConsider(event: CustomEvent<DndEvent<ProjectComponent>>) {
+    localList = event.detail.items.filter((one) => !isDragPlaceholder(one.id));
+    // Where a keyboard drag ends; the arrows finalize on every press. Deck.svelte
+    // carries the reason at its own pair of handlers.
+    if (event.detail.info.trigger === TRIGGERS.DRAG_STOPPED) {
+      dragging = false;
+      void commitOrder();
+      return;
+    }
+    dragging = true;
+  }
+
+  function handleFinalize(event: CustomEvent<DndEvent<ProjectComponent>>) {
+    localList = event.detail.items.filter((one) => !isDragPlaceholder(one.id));
+    if (event.detail.info.source === SOURCES.KEYBOARD) return;
+    dragging = false;
+    void commitOrder();
+  }
+
+  async function commitOrder() {
+    const held = list;
+    const unchanged =
+      localList.length === held.length &&
+      localList.every((one, index) => one.id === held[index]?.id);
+    if (unchanged) {
+      localList = [...held];
+      return;
+    }
+    try {
+      await projectComponents.reorder(
+        projectId,
+        kind,
+        localList.map((one) => one.id)
+      );
+    } catch (caught) {
+      toasts.error(apiMessage(caught));
+      // Refetched rather than rolled back, the way every other save on this
+      // screen is: the server's answer is the one that is true.
+      await projectComponents.refreshList().catch(() => {});
+      localList = [...list];
     }
   }
 
@@ -139,10 +200,28 @@
         it afterwards.
       </p>
     {:else}
-      <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {#each list as component (component.id)}
+      <ul
+        class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        aria-label="{info.section}, in order"
+        use:dragHandleZone={{
+          items: localList,
+          type: 'components',
+          flipDurationMs: flipDuration(),
+          dropTargetStyle: DROP_TARGET_STYLE,
+          dropFromOthersDisabled: true,
+          dragDisabled: !canEdit,
+        }}
+        onconsider={handleConsider}
+        onfinalize={handleFinalize}
+      >
+        {#each localList as component (component.id)}
           {@const artwork = artworkOf(component)}
-          <li class="flex flex-col gap-2 rounded-lg border border-edge bg-surface p-3">
+          {@const inert = isDragPlaceholder(component.id)}
+          <li
+            animate:flip={{ duration: flipDuration() }}
+            aria-label={component.name}
+            class="flex flex-col gap-2 rounded-lg border border-edge bg-surface p-3"
+          >
             <a
               class="focus-ring flex flex-col gap-2 rounded"
               href="/projects/{projectId}/components/{component.id}"
@@ -161,11 +240,12 @@
                 Waiting for {component.missing_roles.join(' and ')}
               </p>
             {/if}
-            {#if canEdit}
-              <div>
+            {#if canEdit && !inert}
+              <div class="flex items-center justify-between gap-2">
                 <Button variant="secondary" onclick={() => remove(component.id, component.name)}>
                   Delete
                 </Button>
+                <DragHandle label="Reorder {component.name}" />
               </div>
             {/if}
           </li>

@@ -91,6 +91,12 @@ export const REALTIME_PAYLOAD_SCHEMAS = withActor({
   // The row as it was, and `purged` separating the tombstone from the erasure,
   // exactly as folder_deleted does.
   component_deleted: componentSchema.merge({ purged: 'boolean' }),
+  // One section, whole and in order. A list of ids would be the smaller message
+  // and the wrong one: the section draws a thumbnail and a name per row, so a
+  // client handed ids alone has to go back for the rows it already holds. The
+  // kind rides alongside because a section knows only its own, and the rows
+  // cannot say which kind an empty one was.
+  component_order_changed: type({ kind: 'string', components: componentSchema.array() }),
 
   deck_created: deckSchema,
   // Always both, even where the edit was to the deck's own row: one fixed shape

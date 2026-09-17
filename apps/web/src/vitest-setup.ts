@@ -8,6 +8,12 @@ import { afterEach } from 'vitest';
 import { FakeWebSocket } from './api/testUtils.ts';
 import { realtime } from './lib/realtime.svelte.ts';
 
+// jsdom implements no part of the Web Animations API, and Svelte's `animate:flip`
+// asks an element what it is already animating before it starts. Absent, the
+// first row a keyed list reorders throws where nothing catches it -- an unhandled
+// error beside a green suite.
+Element.prototype.getAnimations ??= () => [];
+
 afterEach(() => {
   // The store outlives the test that started it: a socket left open reconnects
   // on a timer, and the next test then reads a socket it did not open.

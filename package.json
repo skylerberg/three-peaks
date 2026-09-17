@@ -41,6 +41,7 @@
     "check:upload": "pnpm --filter @three-peaks/web run check:upload",
     "check:model3d": "pnpm --filter @three-peaks/web run check:model3d",
     "check:print": "pnpm --filter @three-peaks/web run check:print",
+    "check:reorder": "pnpm --filter @three-peaks/web run check:reorder",
     "check:scene": "pnpm --filter @three-peaks/web run check:scene",
     "check:scene-shots": "node scripts/check-scene-shots.mjs",
     "blender:smoke": "tools/blender/smoke.sh",

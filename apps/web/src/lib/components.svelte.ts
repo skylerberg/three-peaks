@@ -6,6 +6,13 @@ import { SAVE_DELAY_MS } from './autosave.ts';
 export type ProjectComponent = ApiComponents['schemas']['Component'];
 export type ComponentSettings = ProjectComponent['settings'];
 
+// The order the server lists a section in, so a row inserted here lands where a
+// reload would have put it. The name breaks a tie, because a tombstone keeps
+// the position it had and a restore can collide with whatever took it.
+function byPlace(a: ProjectComponent, b: ProjectComponent): number {
+  return a.position - b.position || a.name.localeCompare(b.name);
+}
+
 class ComponentStore {
   // The section currently on screen, and the one component open in the studio.
   list = $state<ProjectComponent[]>([]);
@@ -88,16 +95,36 @@ class ComponentStore {
       // knows only its own: it cannot tell that from a row it has not loaded.
       if (hidden) return true;
       if (this.#kind !== null && row.kind !== this.#kind) return true;
-      this.list = [...this.list, row].sort((a, b) => a.name.localeCompare(b.name));
+      this.list = [...this.list, row].sort(byPlace);
       return true;
     }
 
     this.list = hidden
       ? this.list.filter((one) => one.id !== row.id)
-      : this.list
-          .map((one) => (one.id === row.id ? row : one))
-          .sort((a, b) => a.name.localeCompare(b.name));
+      : this.list.map((one) => (one.id === row.id ? row : one)).sort(byPlace);
     return true;
+  }
+
+  // The whole section in its new order, applied rather than read back. A
+  // reorder moves rows this client already holds, so a list of ids would only
+  // send it back for them; what it cannot know is which section moved, which is
+  // why the kind rides alongside.
+  applyOrder(kind: string, components: readonly ProjectComponent[]): void {
+    if (this.#kind !== null && kind !== this.#kind) return;
+    this.list = [...components];
+  }
+
+  async reorder(
+    projectId: string,
+    kind: ComponentKind,
+    componentIds: readonly string[]
+  ): Promise<void> {
+    const saved = assertOk(
+      await api.PUT('/api/components/order', {
+        body: { project_id: projectId, kind, component_ids: [...componentIds] },
+      })
+    );
+    if (this.#projectId === projectId && this.#kind === kind) this.list = saved.components;
   }
 
   update(patch: Partial<ComponentSettings>): void {

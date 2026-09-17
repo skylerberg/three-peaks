@@ -290,6 +290,53 @@ describe('realtime over a websocket', () => {
     socket.close();
   });
 
+  // A section's order is the one thing here that changes several rows at once,
+  // so the event carries the section rather than the row that moved.
+  it('carries a reordered section, and says nothing when the order did not move', async () => {
+    const { socket, events } = await connect(owner.token);
+
+    const made: string[] = [];
+    for (const name of ['Rook piece', 'Pawn piece']) {
+      const res = await owner.api.post('/api/components', {
+        project_id: projectId,
+        kind: 'wood',
+        name,
+      });
+      made.push((await res.json()).id as string);
+    }
+    const wanted = [made[1], made[0]];
+
+    await owner.api.put('/api/components/order', {
+      project_id: projectId,
+      kind: 'wood',
+      component_ids: wanted,
+    });
+    await settle();
+
+    const event = events.findLast((entry) => entry.type === 'component_order_changed')!.data as {
+      kind: string;
+      components: { id: string; name: string }[];
+    };
+    expect(event.kind).toBe('wood');
+    expect(event.components.map((one) => one.id)).toEqual(wanted);
+    // The rows themselves, so a section that has this open redraws without
+    // going back for the names and the artwork it already holds.
+    expect(event.components[0].name).toBe('Pawn piece');
+
+    const announced = events.filter((entry) => entry.type === 'component_order_changed').length;
+    await owner.api.put('/api/components/order', {
+      project_id: projectId,
+      kind: 'wood',
+      component_ids: wanted,
+    });
+    await settle();
+    expect(events.filter((entry) => entry.type === 'component_order_changed')).toHaveLength(
+      announced
+    );
+
+    socket.close();
+  });
+
   it('ignores a subscribe naming something that is not a uuid', async () => {
     const { socket, events } = await connect(owner.token);
     socket.send(JSON.stringify({ type: 'subscribe', project_id: '../../etc/passwd' }));

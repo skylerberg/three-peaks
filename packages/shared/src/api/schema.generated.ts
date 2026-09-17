@@ -558,6 +558,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/components/order': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Reorder a section
+     * @description The whole ordered list of one kind in one request, the way a deck’s cards are replaced. The ids have to be exactly the section’s live components, each once: a reorder arranges what is there and can neither add nor remove anything, so anything else is a client working from a listing that has moved on.
+     */
+    put: operations['putApiComponentsOrder'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/components/{componentId}': {
     parameters: {
       query?: never;
@@ -1103,6 +1123,7 @@ export interface components {
       kind: string;
       missing_roles: ('artwork' | 'cut')[];
       name: string;
+      position: number;
       project_id: string;
       settings:
         | {
@@ -1187,6 +1208,7 @@ export interface components {
         kind: string;
         missing_roles: ('artwork' | 'cut')[];
         name: string;
+        position: number;
         project_id: string;
         settings:
           | {
@@ -4282,6 +4304,94 @@ export interface operations {
       };
       /** @description Conflict */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  putApiComponentsOrder: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          component_ids: components['schemas']['Uuid'][];
+          /** @enum {unknown} */
+          kind: 'board' | 'box' | 'punchboard' | 'wood';
+          project_id: components['schemas']['Uuid'];
+        };
+      };
+    };
+    responses: {
+      /** @description The section in its new order */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ComponentList'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
         headers: {
           [name: string]: unknown;
         };
