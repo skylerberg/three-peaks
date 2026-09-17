@@ -238,6 +238,131 @@ describe('choosing what goes on paper', () => {
   });
 });
 
+describe('how many of each card', () => {
+  async function openCards() {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Choose cards' }));
+  }
+
+  function countFor(filename: string): HTMLInputElement {
+    return screen.getByLabelText(`Copies of ${filename}`);
+  }
+
+  async function setCount(filename: string, value: string) {
+    await fireEvent.change(countFor(filename), { target: { value } });
+  }
+
+  it('starts every card at the count its deck holds', async () => {
+    open();
+    await openCards();
+    expect(countFor('ace.png').value).toBe('2');
+    expect(countFor('two.png').value).toBe('1');
+    // The back is a card row the deck keeps none of, and starts there.
+    expect(countFor('back.png').value).toBe('0');
+  });
+
+  it('prints the count somebody typed rather than the deck’s', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '5');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks[0].cards).toEqual([
+      { file_id: STALE, copies: 5 },
+      { file_id: FRESH, copies: 1 },
+    ]);
+  });
+
+  it('records the run at the count that went through the printer', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '5');
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+
+    await waitFor(() => expect(recorded).toHaveLength(1));
+    const body = recorded[0] as { cards: { file_id: string; copies: number }[] };
+    expect(body.cards.find((card) => card.file_id === STALE)?.copies).toBe(5);
+  });
+
+  it('leaves out a card set to no copies', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '0');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1 }]);
+  });
+
+  it('prints a card the deck holds none of once its count is typed over', async () => {
+    open();
+    await openCards();
+    await setCount('back.png', '1');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks[0].cards).toContainEqual({ file_id: BACK, copies: 1 });
+  });
+
+  // Clamped onto the number already held, which is the case the field is written
+  // back for: the state does not change, so nothing re-renders it, and the
+  // number left on screen would be one no sheet is packed from.
+  it('holds a typed count to what the deck may ask for', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '999');
+    await waitFor(() => expect(countFor('ace.png').value).toBe('999'));
+
+    await setCount('ace.png', '4000');
+    expect(countFor('ace.png').value).toBe('999');
+
+    await setCount('ace.png', '0');
+    await waitFor(() => expect(countFor('ace.png').value).toBe('0'));
+    await setCount('ace.png', '-3');
+    expect(countFor('ace.png').value).toBe('0');
+  });
+
+  // The mode moves the default under every card still following it, and leaves
+  // a number somebody chose exactly where they put it.
+  it('keeps a typed count when the mode changes', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '5');
+    await chooseChanged();
+
+    await waitFor(() => expect(countFor('two.png').value).toBe('0'));
+    expect(countFor('ace.png').value).toBe('5');
+  });
+
+  it('puts a deck’s counts back where the mode wants them', async () => {
+    open();
+    await openCards();
+    await setCount('ace.png', '5');
+
+    const reset = await screen.findByRole('button', { name: 'Reset the counts for Base game' });
+    await fireEvent.click(reset);
+    await waitFor(() => expect(countFor('ace.png').value).toBe('2'));
+    expect(
+      screen.queryByRole('button', { name: 'Reset the counts for Base game' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers no reset until a count has been typed over', async () => {
+    open();
+    await openCards();
+    expect(
+      screen.queryByRole('button', { name: 'Reset the counts for Base game' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('leaves the count of an unticked card alone', async () => {
+    open();
+    await openCards();
+    await fireEvent.click(screen.getByRole('checkbox', { name: /ace.png/ }));
+    await waitFor(() => expect(countFor('ace.png').disabled).toBe(true));
+  });
+});
+
 describe('printing only what has changed', () => {
   it('says when each deck was last printed and why a card is owed', async () => {
     open();

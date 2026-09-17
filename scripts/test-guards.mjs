@@ -86,7 +86,7 @@ export const guards = [
     // the call leaves every card imported, versioned and named exactly right,
     // in whatever order the pages happened to arrive in and the deck happened
     // to already hold. Nothing else in the run says a word about it.
-    name: 'a finished import leaves the deck in the design\u2019s order',
+    name: 'a finished import leaves the deck in the design’s order',
     package: 'api',
     file: 'src/services/deckImport.ts',
     find: '  await orderDeckToExport(c, access);\n',
@@ -1248,6 +1248,20 @@ export const guards = [
     replace: '',
     tests: ['src/routes/DeckAsOf.svelte.test.ts'],
     testName: 'opens a card at the version that import left, not at today\u2019s artwork',
+    runner: 'web',
+  },
+  {
+    // The deck's copy count is what a card starts at and nothing more. Dropping
+    // the number somebody typed leaves every field on the screen editable and
+    // none of them read -- the sheets packed from the deck's own counts, the
+    // ledger recording them, and the one thing on screen saying otherwise.
+    name: 'a count somebody typed is the count that prints',
+    package: 'web',
+    file: 'src/routes/Print.svelte',
+    find: '    return copies[key(deckId, card.file_id)] ?? startingCopies(deckId, card);',
+    replace: '    return startingCopies(deckId, card);',
+    tests: ['src/routes/Print.svelte.test.ts'],
+    testName: 'prints the count somebody typed rather than the deck’s',
     runner: 'web',
   },
 ];

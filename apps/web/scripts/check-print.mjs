@@ -359,7 +359,7 @@ async function run() {
         { image: 'beta', quantity: 2 },
         { image: 'delta', quantity: 0 },
       ]);
-      await makeDeck('Beta deck', 'back-two', [{ image: 'gamma', quantity: 3 }]);
+      const beta = await makeDeck('Beta deck', 'back-two', [{ image: 'gamma', quantity: 3 }]);
 
       // A full sheet of minis. The planner turns these on their side to fit
       // eighteen, and the sheet is sorted after the poker run by deck name.
@@ -373,7 +373,7 @@ async function run() {
         [44, 67]
       );
 
-      return { projectId, alpha };
+      return { projectId, alpha, beta };
     }, files);
 
     // Read back rather than assumed. A quantity of zero the API had refused
@@ -663,6 +663,78 @@ async function run() {
       'nothing is left owing once the reprint is recorded',
       settled.length === 0,
       JSON.stringify(settled)
+    );
+
+    // --- a count typed over the deck's own --------------------------------
+    //
+    // The copy count is the number a field starts at and nothing more, and only
+    // a real file can say that what is in the field is what reaches the paper:
+    // the count beside a card and the summary above the button are computed
+    // from the same expression the plan is, so a screen reading five over a
+    // planner that had quietly kept three would agree with itself.
+    await browser.goto(`${base}/projects/${setup.projectId}/print?deck=${setup.beta.id}`, {
+      wait: 0,
+    });
+    await browser.page.waitForSelector('button:has-text("Generate PDF")', { timeout: 30_000 });
+    await browser.page
+      .locator('li', { hasText: 'Beta deck' })
+      .getByRole('button', { name: 'Choose cards' })
+      .click();
+
+    const count = browser.page.getByLabel('Copies of gamma.png');
+    const started = await count.inputValue();
+    check('a card’s field starts at the count its deck holds', started === '3', started);
+
+    // Clicked and typed rather than filled: the field selects what is in it on
+    // focus, and the change the screen reads is the one a person's keystrokes
+    // and Tab produce.
+    await count.click();
+    await browser.page.keyboard.type('5');
+    await browser.page.keyboard.press('Tab');
+    const typed = await count.inputValue();
+    check('the field takes the number that was typed', typed === '5', typed);
+
+    const typedSaid = await browser.page.textContent('p:has-text("sheets of US Letter")');
+    check(
+      'the sheets are counted from the typed number, not the deck’s',
+      /\b5\s+cards on 2\s+sheets/.test(typedSaid ?? ''),
+      typedSaid ?? ''
+    );
+
+    await browser.page.evaluate(() => {
+      const original = URL.createObjectURL.bind(URL);
+      window.__printed = null;
+      URL.createObjectURL = (blob) => {
+        window.__printed = blob;
+        return original(blob);
+      };
+    });
+    await browser.click('button:has-text("Generate PDF")');
+    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+
+    const typedBytes = Uint8Array.from(
+      await browser.page.evaluate(async () => [
+        ...new Uint8Array(await window.__printed.arrayBuffer()),
+      ])
+    );
+    const typedPages = readPlacements(typedBytes).map(inSlotOrder);
+    check(
+      'the sheet holds the five copies that were asked for',
+      typedPages[0]?.length === 5,
+      `${typedPages[0]?.length} slots`
+    );
+    check(
+      'all five are the one card',
+      new Set((typedPages[0] ?? []).map((placement) => placement.image)).size === 1,
+      `${new Set((typedPages[0] ?? []).map((placement) => placement.image)).size} artworks`
+    );
+
+    await browser.page.waitForSelector('p:has-text("Recorded as printed")', { timeout: 30_000 });
+    const ledger = await browser.page.textContent('p:has-text("Recorded as printed")');
+    check(
+      'the ledger is written at the typed count',
+      /5\s+copies of 1\s+card/.test(ledger ?? ''),
+      ledger ?? ''
     );
 
     if (pageErrors.length > 0) {

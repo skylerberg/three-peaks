@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    DECK_QUANTITY_LIMITS,
     DEFAULT_PAGE_SIZE_ID,
     DEFAULT_PRINTER_MARGIN_MM,
     PAGE_SIZES,
@@ -23,7 +24,7 @@
     type PrintMode,
     type PrintRun,
     type RecordedCard,
-    copiesToPrint,
+    defaultCopies,
     outstandingLabel,
     readOutstanding,
     recordPrintRun,
@@ -53,6 +54,11 @@
   // one print job's opinion. A deck's own box is counted back off this rather
   // than held beside it, so the two cannot disagree.
   let included = $state<Record<string, boolean>>({});
+  // And how many of each, for the cards somebody has typed a number over. Only
+  // those: the deck's copy count is the default, so a key absent here is a card
+  // still following it, and the mode below can move that default without
+  // overwriting a number anyone chose.
+  let copies = $state<Record<string, number>>({});
 
   // What each card still owes the printer, as the API works it out. Held beside
   // the decks rather than folded into them: it is a fact about print runs, and
@@ -69,13 +75,13 @@
   let flip = $state<FlipEdge>('long');
   let cutMarks = $state(true);
   let fit = $state<'fill' | 'fit'>('fill');
-  let oneOfEach = $state(false);
   let mode = $state<PrintMode>('all');
   let generating = $state(false);
   let progress = $state<{ drawn: number; total: number } | null>(null);
 
   const uid = $props.id();
   const page = $derived(pageSize(pageId) ?? PAGE_SIZES[0]);
+  const [minCopies, maxCopies] = DECK_QUANTITY_LIMITS;
 
   const key = (deck: string, file: string) => `${deck}:${file}`;
 
@@ -103,10 +109,40 @@
     return owed[deckId]?.[fileId];
   }
 
-  // What one card puts on paper, read by the plan and by the count beside its
-  // name so the two cannot disagree.
+  // What one card puts on paper: the number in its field, which is the plan's
+  // number too -- the field is not a display of the count, it is the count.
   function printedCopies(deckId: string, card: DeckCard): number {
-    return copiesToPrint(card.quantity, outstandingFor(deckId, card.file_id), mode, oneOfEach);
+    return copies[key(deckId, card.file_id)] ?? startingCopies(deckId, card);
+  }
+
+  function startingCopies(deckId: string, card: DeckCard): number {
+    return defaultCopies(card.quantity, outstandingFor(deckId, card.file_id), mode);
+  }
+
+  function setCopies(
+    deckId: string,
+    card: DeckCard,
+    event: Event & { currentTarget: HTMLInputElement }
+  ) {
+    const typed = Number(event.currentTarget.value);
+    const slot = key(deckId, card.file_id);
+    if (!Number.isFinite(typed)) {
+      delete copies[slot];
+    } else {
+      copies[slot] = Math.max(minCopies, Math.min(maxCopies, Math.round(typed)));
+    }
+    // Written back because a number that clamps onto the one already held
+    // leaves the state unchanged, and with it the field showing what was typed
+    // over a sheet that prints something else.
+    event.currentTarget.value = String(printedCopies(deckId, card));
+  }
+
+  function resetCopies(entry: LoadedDeck) {
+    for (const card of entry.cards) delete copies[key(entry.deck.id, card.file_id)];
+  }
+
+  function selectAll(event: FocusEvent & { currentTarget: HTMLInputElement }) {
+    event.currentTarget.select();
   }
 
   // Only what is ticked, with the version each card is drawn at carried
@@ -193,14 +229,16 @@
 
   // Every deck's box, counted off its own cards: checked when the whole deck is
   // ticked, mixed when part of it is, and nothing to tick at all when a deck
-  // holds no printable card.
+  // holds no printable card. `typed` is what puts the reset beside it, and is
+  // counted here rather than scanned for separately.
   const deckChoice = $derived.by(() => {
-    const counted: Record<string, { total: number; chosen: number }> = {};
+    const counted: Record<string, { total: number; chosen: number; typed: boolean }> = {};
     for (const entry of loaded) {
       const cards = entry.cards.filter(printable);
       counted[entry.deck.id] = {
         total: cards.length,
         chosen: cards.filter((card) => included[key(entry.deck.id, card.file_id)] === true).length,
+        typed: cards.some((card) => copies[key(entry.deck.id, card.file_id)] !== undefined),
       };
     }
     return counted;
@@ -231,6 +269,7 @@
         loaded = full;
         outstanding = pending;
         recorded = null;
+        copies = {};
         included = Object.fromEntries(
           full
             .filter((entry) => preselect === null || preselect === entry.deck.id)
@@ -379,6 +418,15 @@
                 {#if entry.deck.back_file_id === null}
                   <span class="text-sm text-warning">no back</span>
                 {/if}
+                {#if choice.typed}
+                  <Button
+                    variant="ghost"
+                    aria-label="Reset the counts for {entry.deck.name}"
+                    onclick={() => resetCopies(entry)}
+                  >
+                    Reset counts
+                  </Button>
+                {/if}
                 <Button
                   variant="ghost"
                   aria-expanded={expanded[entry.deck.id] === true}
@@ -393,10 +441,10 @@
                   class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2"
                 >
                   {#each entry.cards as card (card.file_id)}
-                    <li>
-                      <label
-                        class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
-                      >
+                    <li
+                      class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
+                    >
+                      <label class="flex min-w-0 flex-1 items-center gap-3">
                         <input
                           type="checkbox"
                           class="focus-ring size-4"
@@ -414,24 +462,34 @@
                         >
                           {card.file.filename}
                         </span>
-                        {#if !card.file.deleted_at}
-                          {@const label = outstandingLabel(
-                            outstandingFor(entry.deck.id, card.file_id)
-                          )}
-                          {#if label}
-                            <span
-                              class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-                            >
-                              {label}
-                            </span>
-                          {/if}
-                        {/if}
-                        <span class="text-muted">
-                          {card.file.deleted_at
-                            ? 'deleted'
-                            : `×${printedCopies(entry.deck.id, card)}`}
-                        </span>
                       </label>
+                      {#if card.file.deleted_at}
+                        <span class="text-muted">deleted</span>
+                      {:else}
+                        {@const label = outstandingLabel(
+                          outstandingFor(entry.deck.id, card.file_id)
+                        )}
+                        {#if label}
+                          <span
+                            class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
+                          >
+                            {label}
+                          </span>
+                        {/if}
+                        <span class="text-muted" aria-hidden="true">×</span>
+                        <input
+                          type="number"
+                          aria-label="Copies of {card.file.filename}"
+                          class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
+                          value={printedCopies(entry.deck.id, card)}
+                          min={minCopies}
+                          max={maxCopies}
+                          step="1"
+                          disabled={included[key(entry.deck.id, card.file_id)] !== true}
+                          onfocus={selectAll}
+                          onchange={(event) => setCopies(entry.deck.id, card, event)}
+                        />
+                      {/if}
                     </li>
                   {:else}
                     <li class="px-2 text-sm text-muted">This deck has no cards.</li>
@@ -458,7 +516,8 @@
           </select>
           <p class="max-w-96 text-xs text-muted">
             Changed means a card nothing has printed yet, artwork that has been updated since it was
-            last printed, a card back the deck has replaced, or a copy count that has gone up.
+            last printed, a card back the deck has replaced, or a copy count that has gone up. It
+            fills in the count beside each card; one you set yourself stays as you set it.
           </p>
         </div>
 
@@ -470,10 +529,6 @@
           <label class="flex items-center gap-2 text-sm">
             <input type="checkbox" class="focus-ring size-4" bind:checked={cutMarks} />
             Cut marks
-          </label>
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" class="focus-ring size-4" bind:checked={oneOfEach} />
-            One of each, ignoring copy counts
           </label>
         </div>
 
