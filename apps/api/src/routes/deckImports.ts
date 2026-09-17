@@ -16,7 +16,7 @@ import {
   readRunDetail,
   readTimeline,
   startRun,
-} from '../services/deckImport.ts';
+} from '../services/deckImport/index.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
 import { AppError } from '../utils/errors.ts';
 import {

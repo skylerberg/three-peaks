@@ -650,6 +650,14 @@ Canva only while there is one, because a deck with no open run has nothing for
 anybody to do here. Everything below is the API's half, which both ends of that
 arrangement rest on.
 
+It is a directory rather than a file, and the modules are the steps of a run in
+order: `planning.ts` works out which page becomes which card, `start.ts` writes
+that plan down, `page.ts` lands one image onto the card the plan named, `card.ts`
+is the card row underneath it, and `finish.ts` is the two ways a run ends.
+`binding.ts` is the `deck_import` row, `runs.ts` reads a run back, `history.ts`
+answers what a finished one left, and `common.ts` is what more than one of them
+needs. `index.ts` is the only thing the routes import.
+
 - **A page is matched on three tiers, strongest first**: the page's own id, then
   its title, then its number. `planPages` runs them as three passes rather than
   one interleaved walk, because a weaker claim walked earlier would take the card
@@ -693,9 +701,12 @@ arrangement rest on.
   the card and an order somebody set by hand is undone by the next import. A
   copy count is not the design's to say and survives one. Whatever the export
   does not account for -- a card added by hand, one already deleted that the
-  design has stopped naming -- trails the pages in the order it already had,
-  and the whole list is renumbered rather than the pages alone, because two
-  rows on one position leave the tie-break to choose between them.
+  design has stopped naming -- trails the pages in the order it already had.
+  Which order is the import's to decide and `renumberDeckCards` is what writes
+  one, because what a dense zero-based arrangement is belongs to the deck: it
+  renumbers every row rather than the pages alone, or two of them share a number
+  and the listing's tie-break chooses between them. Every position written
+  earlier in a run is provisional for the same reason.
 - **Nothing turns a back back into a card.** A page that stops being titled Back
   keeps its card and the deck goes on pointing at it. This end cannot tell a
   back the import set from one somebody chose on the deck screen, and undoing
