@@ -1178,4 +1178,19 @@ export const guards = [
     testName: 'draws every card at the version it records, backs included',
     runner: 'web',
   },
+  {
+    // The deck's box is counted off its cards rather than held beside them, so
+    // that a deck somebody has part-ticked says so. Dropping the mixed state
+    // leaves a box reading fully checked over a deck printing two cards of
+    // three -- the one arrangement where what is on screen and what comes out
+    // of the printer disagree, with nothing on the row to say which is right.
+    name: 'a part-ticked deck reports itself as mixed',
+    package: 'web',
+    file: 'src/routes/Print.svelte',
+    find: '                    indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
+    replace: '',
+    tests: ['src/routes/Print.svelte.test.ts'],
+    testName: 'reports the deck as mixed while only some of its cards are ticked',
+    runner: 'web',
+  },
 ];
