@@ -1,6 +1,6 @@
 import '../api/testUtils.ts';
 import { fetchMock, jsonResponse } from '../api/testUtils.ts';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deckImports } from './deckImports.svelte.ts';
 
 const PROJECT = '2f1c9e5a-8b3d-4f1e-9c2a-7d6b5e4f3a21';
@@ -41,7 +41,6 @@ describe('DeckImportStore', () => {
 
     expect(deckImports.binding).toBeNull();
     expect(deckImports.bindingDeckId).toBe(DECK);
-    expect(deckImports.loadingBinding).toBe(false);
   });
 
   it('lets any other failure from the binding route through', async () => {
@@ -113,6 +112,39 @@ describe('DeckImportStore', () => {
 
       deckImports.applyOpenRun(DECK, null);
       expect(deckImports.binding?.open_run_id).toBeNull();
+    });
+
+    // The deck had no row at all, so there was nothing to patch and the event
+    // was dropped -- leaving a run the screen could not offer to discard until
+    // somebody loaded it again.
+    it('reads the row a first import has just created', async () => {
+      let bindings = 0;
+      fetchMock.mockImplementation(async () => {
+        bindings += 1;
+        return bindings === 1
+          ? jsonResponse(404, { error: 'This deck has no import' })
+          : jsonResponse(200, binding({ open_run_id: RUN }));
+      });
+      await deckImports.loadBinding(PROJECT, DECK);
+      expect(deckImports.binding).toBeNull();
+
+      deckImports.applyOpenRun(DECK, RUN);
+
+      await vi.waitFor(() => expect(deckImports.binding?.open_run_id).toBe(RUN));
+    });
+
+    // Nothing to draw and nothing to clear, so a closing run on a deck with no
+    // row is not worth a request.
+    it('asks for nothing when a run closes on a deck it has no row for', async () => {
+      fetchMock.mockImplementation(async () =>
+        jsonResponse(404, { error: 'This deck has no import' })
+      );
+      await deckImports.loadBinding(PROJECT, DECK);
+      const reads = fetchMock.mock.calls.length;
+
+      deckImports.applyOpenRun(DECK, null);
+
+      expect(fetchMock.mock.calls.length).toBe(reads);
     });
 
     // Every project's deck events reach every screen subscribed to it, and one

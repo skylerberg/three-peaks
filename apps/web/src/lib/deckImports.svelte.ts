@@ -3,16 +3,15 @@ import { ApiError, api, assertOk } from '../api/client.ts';
 
 type DeckImport = components['schemas']['DeckImport'];
 
-// The marker beside a deck: what it was last imported from, and whether a run
-// is open. Importing itself happens in the Canva app, so nothing here uploads
-// anything -- what the web still owns is saying where a deck's cards came from
-// and clearing a run the app left open.
+// The marker beside a deck, read for the one field the deck screen still draws
+// from it: whether a run is open. Importing itself happens in the Canva app, so
+// nothing here uploads anything, and the deck screen says nothing about one
+// until a run left open needs clearing.
 //
 // Reading the history is deckHistory's job rather than more of this: that store
 // is scoped to a timeline somebody is looking at, and this one to the deck.
 class DeckImportStore {
   binding = $state<DeckImport | null>(null);
-  loadingBinding = $state(false);
   // Which deck the row above belongs to. The route block is not keyed, so
   // moving between two decks swaps props on a screen already mounted and
   // nothing unmounts. Cleared before the read rather than only overwritten
@@ -27,7 +26,16 @@ class DeckImportStore {
   // A run opening and closing is the only thing about this row that moves, so
   // it is derived from the run event rather than announced twice.
   applyOpenRun(deckId: string, runId: string | null): void {
-    if (this.bindingDeckId !== deckId || !this.binding) return;
+    if (this.bindingDeckId !== deckId) return;
+    if (!this.binding) {
+      // The first import into a deck is the one run there is no row here to
+      // patch: `ensureImport` creates it, and this store read the 404 that came
+      // before it. Read it back rather than inventing one -- the open run is
+      // the whole of what the deck screen draws, so dropping this event leaves
+      // a run nobody can discard until the screen is loaded again.
+      if (runId !== null) void this.#refreshBinding();
+      return;
+    }
     this.binding = { ...this.binding, open_run_id: runId };
   }
 
@@ -38,16 +46,11 @@ class DeckImportStore {
     this.#deckId = deckId;
     this.bindingDeckId = null;
     this.binding = null;
-    this.loadingBinding = true;
 
-    try {
-      const binding = await this.#readBinding(deckId);
-      if (generation !== this.#bindingGeneration) return;
-      this.binding = binding;
-      this.bindingDeckId = deckId;
-    } finally {
-      if (generation === this.#bindingGeneration) this.loadingBinding = false;
-    }
+    const binding = await this.#readBinding(deckId);
+    if (generation !== this.#bindingGeneration) return;
+    this.binding = binding;
+    this.bindingDeckId = deckId;
   }
 
   /**
@@ -70,7 +73,6 @@ class DeckImportStore {
     // store nobody is reading rather than back in this one.
     this.#bindingGeneration += 1;
     this.binding = null;
-    this.loadingBinding = false;
     this.bindingDeckId = null;
     this.#projectId = null;
     this.#deckId = null;

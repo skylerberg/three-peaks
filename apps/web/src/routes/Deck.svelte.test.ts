@@ -258,8 +258,8 @@ describe('Deck editor', () => {
   describe('a run the Canva app left open', () => {
     const RUN = '5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a';
 
-    function stubOpenRun(): { abandons: () => number } {
-      let abandoned = false;
+    function stubOpenRun(open = true): { abandons: () => number } {
+      let abandoned = !open;
       fetchMock.mockImplementation(async (input) => {
         const url = typeof input === 'string' ? input : (input as Request).url;
         if (url.includes('/abandon')) {
@@ -305,17 +305,22 @@ describe('Deck editor', () => {
       );
     });
 
-    it('says what the deck was last imported from', async () => {
-      stubOpenRun();
+    // The open run is the whole of what this screen says about importing. A
+    // deck that has been imported into before is a deck with nothing to do.
+    it('says nothing once the run is settled', async () => {
+      stubOpenRun(false);
 
       render(Deck, { projectId: PROJECT, deckId: DECK });
+      await screen.findByRole('button', { name: 'Move in from Assets' });
+      await waitFor(() => expect(deckImports.bindingDeckId).toBe(DECK));
 
-      expect(await screen.findByText('Last imported from Base game.')).toBeInTheDocument();
+      expect(screen.queryByText(/Canva/)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Discard this import' })).toBeNull();
     });
   });
 
-  // The history screen is read-only, so it is offered outside the editor-only
-  // section the Canva import sits in -- and it costs this screen no request.
+  // The history screen is read-only, so it is offered whether or not this
+  // account may edit -- and it costs this screen no request.
   it('links to the import history whether or not this account may edit', async () => {
     for (const role of ['editor', 'viewer']) {
       fetchMock.mockReset();
@@ -350,14 +355,16 @@ describe('Deck editor', () => {
     }
   });
 
-  it('offers nothing to discard on a deck with no open run', async () => {
+  it('offers nothing to discard on a deck nothing has imported into', async () => {
     stubApi();
 
     render(Deck, { projectId: PROJECT, deckId: DECK });
-    await screen.findByRole('link', { name: 'Import history' });
+    await screen.findByRole('button', { name: 'Move in from Assets' });
+    // Waited for, or the absence below is only the answer not having landed.
+    await waitFor(() => expect(deckImports.bindingDeckId).toBe(DECK));
 
     expect(screen.queryByRole('button', { name: 'Discard this import' })).toBeNull();
-    expect(await screen.findByText('Never imported into.')).toBeInTheDocument();
+    expect(screen.queryByText(/Canva/)).toBeNull();
   });
 
   // Every save sends the whole list and shows the response, so all three rows
