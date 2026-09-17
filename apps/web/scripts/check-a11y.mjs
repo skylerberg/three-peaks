@@ -44,6 +44,7 @@ const SCREENS = [
   { name: 'file-versions', authed: true, reach: reachFileVersions },
   { name: 'deleted', authed: true, reach: reachDeleted },
   { name: 'deck-editor', authed: true, reach: reachDeckEditor },
+  { name: 'deck-card-viewer', authed: true, reach: reachCardViewer },
   { name: 'deck-history', authed: true, reach: reachDeckHistory },
   { name: 'deck-run', authed: true, reach: reachDeckRun },
   { name: 'deck-as-of', authed: true, reach: reachDeckAsOf },
@@ -237,6 +238,18 @@ async function reachImportedDeck(browser, base, scheme) {
   await browser.goto(`${base}/projects/${projectId}/decks`, { wait: 250 });
   await browser.click(`a:has-text("${deckName}")`);
   await browser.page.waitForSelector('h2:has-text("Cards")', { timeout: 15_000 });
+}
+
+// The viewer is drawn over a screen rather than as one of its own, and it is
+// the only surface here with a scrim and a raised panel to answer for. It needs
+// a deck with artwork in it, which the imports are what produce.
+async function reachCardViewer(browser, base, scheme) {
+  await reachImportedDeck(browser, base, `viewer-${scheme}`);
+  await browser.page.locator('button:has-text("1.png")').first().click();
+  await browser.page.waitForSelector('[role="dialog"]', { timeout: 15_000 });
+  // The artwork, not merely the frame around it: axe reading an empty panel
+  // would leave the one thing this screen is drawn for unmeasured.
+  await browser.page.waitForSelector('[role="dialog"] img', { timeout: 15_000 });
 }
 
 async function reachDeckHistory(browser, base, scheme) {

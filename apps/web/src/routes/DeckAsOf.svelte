@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { components } from '@three-peaks/shared/api';
+  import CardViewer from '../components/CardViewer.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError } from '../api/client.ts';
@@ -17,11 +18,35 @@
   let { projectId, deckId, runId }: Props = $props();
 
   let error = $state<string | null>(null);
+  let viewing = $state<string | null>(null);
 
   const key = $derived(`${deckId}:${runId}`);
   const loaded = $derived(deckHistory.asOfKey === key);
   const asOf = $derived(loaded ? deckHistory.asOf : null);
   const refusal = $derived(loaded ? deckHistory.asOfRefusal : null);
+
+  // A card the run left no version of is drawn without artwork, so it is not
+  // one of the viewer's stops either.
+  const viewerCards = $derived(
+    (asOf?.cards ?? []).flatMap((card) =>
+      card.file_version_number === null
+        ? []
+        : [
+            {
+              id: card.card_id,
+              fileId: card.file_id,
+              title: card.name,
+              version: card.file_version_number,
+              note: [
+                `Version ${card.file_version_number}`,
+                tombstone(card, asOf?.run.finished_at ?? null),
+              ]
+                .filter((part) => part !== null)
+                .join(' \u00b7 '),
+            },
+          ]
+    )
+  );
 
   $effect(() => {
     const deck = deckId;
@@ -108,17 +133,25 @@
           <li class="flex flex-col gap-2 rounded-md border border-edge bg-surface p-3">
             {#if card.file_version_number === null}
               <p class="text-sm text-muted">The version this import left is not recorded.</p>
+              <p class="min-w-0 truncate font-medium">{card.name}</p>
             {:else}
-              <!-- contain, not cover: a card cropped to a square answers nothing. -->
-              <Thumbnail
-                fileId={card.file_id}
-                version={card.file_version_number}
-                class="h-40 w-full"
-                fit="contain"
-                alt="{card.name} at version {card.file_version_number}"
-              />
+              <button
+                type="button"
+                class="focus-ring flex w-full min-w-0 flex-col gap-2 rounded-md text-left"
+                onclick={() => (viewing = card.card_id)}
+              >
+                <span class="sr-only">View</span>
+                <!-- contain, not cover: a card cropped to a square answers nothing. -->
+                <Thumbnail
+                  fileId={card.file_id}
+                  version={card.file_version_number}
+                  class="h-40 w-full"
+                  fit="contain"
+                  alt=""
+                />
+                <span class="w-full min-w-0 truncate font-medium">{card.name}</span>
+              </button>
             {/if}
-            <p class="min-w-0 truncate font-medium">{card.name}</p>
             <p class="flex flex-wrap items-center gap-2 text-sm text-muted">
               {#if card.file_version_number !== null}
                 <span>Version {card.file_version_number}</span>
@@ -139,5 +172,7 @@
         {/each}
       </ul>
     {/if}
+
+    <CardViewer cards={viewerCards} bind:openId={viewing} />
   {/if}
 </div>

@@ -1,6 +1,6 @@
 import '../api/testUtils.ts';
 import { fetchMock, jsonResponse } from '../api/testUtils.ts';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DeckRun from './DeckRun.svelte';
 import { deckHistory } from '../lib/deckHistory.svelte.ts';
@@ -167,5 +167,42 @@ describe('What one import changed', () => {
         `/projects/${PROJECT}/files/${FILE_A}/versions`
       )
     );
+  });
+  // The response arrives in one order and this screen draws it in another, with
+  // the removed cards lifted to the top. The arrow keys follow the screen.
+  it('walks the cards in the order the sections draw them', async () => {
+    cards = [
+      card({ outcome: 'unchanged', name: 'Two of cups', file_id: FILE_B }),
+      card({ outcome: 'added', name: 'Three of swords', file_id: FILE_C, matched_by: null }),
+      card({ outcome: 'removed', name: 'Ace of coins', matched_by: 'page_id' }),
+    ];
+    open();
+
+    const trigger = await screen.findByRole('button', { name: /^View Ace of coins/u });
+    await fireEvent.click(trigger);
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Ace of coins' })).toBeInTheDocument();
+    expect(within(dialog).getByText('1 of 3 \u00b7 matched by Canva page')).toBeInTheDocument();
+
+    await fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(
+      within(screen.getByRole('dialog')).getByRole('heading', { name: 'Three of swords' })
+    ).toBeInTheDocument();
+  });
+
+  // A card nothing can draw is a stop the arrow keys would land on with an
+  // empty frame.
+  it('leaves a purged card out of the viewer', async () => {
+    cards = [
+      card({ outcome: 'removed', name: 'Gone for good', file_id: null, file_version_number: null }),
+      card({ outcome: 'added', name: 'Three of swords', file_id: FILE_C, matched_by: null }),
+    ];
+    open();
+
+    const trigger = await screen.findByRole('button', { name: /^View Three of swords/u });
+    await fireEvent.click(trigger);
+
+    expect(within(screen.getByRole('dialog')).getByText(/^1 of 1/u)).toBeInTheDocument();
   });
 });

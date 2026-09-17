@@ -1,6 +1,6 @@
 import '../api/testUtils.ts';
 import { fetchMock, jsonResponse } from '../api/testUtils.ts';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DeckAsOf from './DeckAsOf.svelte';
 import { deckHistory } from '../lib/deckHistory.svelte.ts';
@@ -187,5 +187,20 @@ describe('The deck as it stood', () => {
       expect(screen.getByText('The version this import left is not recorded.')).toBeInTheDocument()
     );
     expect(downloads()).toHaveLength(0);
+  });
+  // The whole point of this screen is the artwork as it stood, so the viewer it
+  // opens has to be pinned the same way the grid behind it is.
+  it('opens a card at the version that import left, not at today\u2019s artwork', async () => {
+    body = asOf([card({ card_id: 'card-1', name: 'Ace of coins', file_version_number: 3 })]);
+    open();
+
+    const trigger = await screen.findByRole('button', { name: 'View Ace of coins' });
+    await fireEvent.click(trigger);
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Ace of coins' })).toBeInTheDocument();
+    expect(within(dialog).getByText('1 of 1 \u00b7 Version 3')).toBeInTheDocument();
+    await waitFor(() => expect(downloads().length).toBeGreaterThan(1));
+    expect(downloads().every((url) => url.includes('/download?version=3'))).toBe(true);
   });
 });

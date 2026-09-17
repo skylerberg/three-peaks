@@ -11,6 +11,7 @@
   } from '@three-peaks/shared';
   import type { components } from '@three-peaks/shared/api';
   import FilePicker from '../components/decks/FilePicker.svelte';
+  import CardViewer from '../components/CardViewer.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import Button from '../components/ui/Button.svelte';
   import Input from '../components/ui/Input.svelte';
@@ -39,6 +40,7 @@
   let discarding = $state(false);
   let name = $state('');
   let backFile = $state<File | null>(null);
+  let viewing = $state<string | null>(null);
 
   const deck = $derived(decks.deck);
   const cards = $derived(decks.cards);
@@ -101,6 +103,17 @@
 
   const backChoices = $derived(
     cards.filter((card) => card.file.deleted_at === null || card.file_id === backFileId)
+  );
+
+  // The deck's own order, so the arrow keys in the viewer walk the list the
+  // screen is showing.
+  const viewerCards = $derived(
+    cards.map((card) => ({
+      id: card.file_id,
+      fileId: card.file_id,
+      title: card.file.filename,
+      note: cardNote(card),
+    }))
   );
 
   // The back is named by id only, so its row has to be read to draw it.
@@ -314,6 +327,16 @@
   // The file rows already carry their pixel dimensions, so this costs nothing to
   // say and is the difference between a proof that looks right on screen and one
   // that prints soft.
+  // What the row says beside the name, for the viewer to say under it: at the
+  // size the artwork is finally drawn, the count and the back are the two
+  // things that are no longer anywhere on screen.
+  function cardNote(card: DeckCard): string {
+    const parts = [`${card.quantity} ${card.quantity === 1 ? 'copy' : 'copies'}`];
+    if (card.file_id === backFileId) parts.push('this deck\u2019s back');
+    if (card.file.deleted_at) parts.push('deleted');
+    return parts.join(' \u00b7 ');
+  }
+
   function resolution(card: DeckCard): number | null {
     if (!deck || card.file.image_width === null || card.file.image_height === null) return null;
     return Math.min(
@@ -544,30 +567,25 @@
         <ul class="flex flex-col gap-2">
           {#each cards as card, index (card.file_id)}
             {@const dpi = resolution(card)}
+            {@const isBack = card.file_id === backFileId}
             <li
               class="flex flex-wrap items-center gap-3 rounded-md border border-edge bg-surface p-2"
             >
-              <Thumbnail fileId={card.file_id} alt="" />
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm {card.file.deleted_at ? 'line-through text-muted' : ''}">
+              <button
+                type="button"
+                class="focus-ring flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
+                onclick={() => (viewing = card.file_id)}
+              >
+                <span class="sr-only">View</span>
+                <Thumbnail fileId={card.file_id} alt="" />
+                <span
+                  class="min-w-0 flex-1 truncate text-sm {card.file.deleted_at
+                    ? 'text-muted line-through'
+                    : ''}"
+                >
                   {card.file.filename}
-                </p>
-                {#if card.file.deleted_at}
-                  <p class="text-xs text-danger">Deleted. Restore it to print this card.</p>
-                {:else}
-                  {#if card.file_id === backFileId}
-                    <p class="text-xs text-accent">
-                      This deck’s back. It prints on the reverse of every card rather than as one,
-                      which is what no copies of it means.
-                    </p>
-                  {/if}
-                  {#if dpi !== null && dpi < PRINT_DPI}
-                    <p class="text-xs text-warning">
-                      {Math.round(dpi)} DPI at this size — under the {PRINT_DPI} DPI a printer wants.
-                    </p>
-                  {/if}
-                {/if}
-              </div>
+                </span>
+              </button>
 
               <label class="flex items-center gap-2 text-sm">
                 <span class="text-muted">Copies</span>
@@ -608,10 +626,32 @@
                   <Button variant="ghost" onclick={() => void removeCard(card)}>Delete</Button>
                 </div>
               {/if}
+
+              {#if card.file.deleted_at || isBack || (dpi !== null && dpi < PRINT_DPI)}
+                <div class="basis-full">
+                  {#if card.file.deleted_at}
+                    <p class="text-xs text-danger">Deleted. Restore it to print this card.</p>
+                  {:else}
+                    {#if isBack}
+                      <p class="text-xs text-accent">
+                        This deck’s back. It prints on the reverse of every card rather than as one,
+                        which is what no copies of it means.
+                      </p>
+                    {/if}
+                    {#if dpi !== null && dpi < PRINT_DPI}
+                      <p class="text-xs text-warning">
+                        {Math.round(dpi)} DPI at this size — under the {PRINT_DPI} DPI a printer wants.
+                      </p>
+                    {/if}
+                  {/if}
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
       {/if}
     </section>
+
+    <CardViewer cards={viewerCards} bind:openId={viewing} />
   {/if}
 </div>

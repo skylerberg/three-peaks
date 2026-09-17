@@ -369,6 +369,20 @@ router library.
   effect for every item, key or no key. An effect doing real work off a prop
   reads it through a `$derived`, which compares by value and stops there;
   `Thumbnail.svelte` is the one that has to.
+- **The card viewer is a hand-rolled modal, and holds its card by id.**
+  `components/CardViewer.svelte` is the overlay three screens open when somebody
+  clicks a card -- the deck editor and the two import-history screens. Not a
+  native `<dialog>`: jsdom implements no `showModal`, which would leave the one
+  component in the app with a focus trap and a key map covered by nothing. It
+  keeps the focus, gives it back to whatever opened it, and answers keys on the
+  window rather than on the panel, because clicking the artwork leaves the focus
+  on nothing and a panel-level listener then stops answering. The open card is
+  named by id: a save or a realtime event replaces the whole list, and a
+  position would go on pointing at whatever moved into that slot -- so a card
+  that leaves the list closes the viewer instead of quietly becoming its
+  neighbour. Each screen hands over its rows in the order it drew them, with the
+  version it drew them at, so the arrow keys walk the screen and a card opened
+  from a run in February is February's artwork.
 
 # The 3D studio
 

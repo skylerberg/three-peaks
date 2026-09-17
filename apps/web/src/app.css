@@ -20,6 +20,10 @@
   --tph-on-danger: #ffffff;
   --tph-success: #2f6d46;
   --tph-warning: #8a6314;
+  /* The dimmer behind a modal. It is dark in both schemes -- ink at an alpha
+     would be a pale wash over a dark page -- so it is a colour of its own
+     rather than an opacity on one of the others. */
+  --tph-scrim: rgb(29 35 33 / 0.55);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,6 +42,7 @@
     --tph-on-danger: #2a100d;
     --tph-success: #7cc39a;
     --tph-warning: #d8ab4f;
+    --tph-scrim: rgb(0 0 0 / 0.7);
   }
 }
 
@@ -56,6 +61,7 @@
   --color-on-danger: var(--tph-on-danger);
   --color-success: var(--tph-success);
   --color-warning: var(--tph-warning);
+  --color-scrim: var(--tph-scrim);
 }
 
 /* One focus ring, in three placements. Defined here so a component never
