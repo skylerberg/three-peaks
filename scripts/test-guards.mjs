@@ -81,6 +81,20 @@ export const guards = [
     testName: 'lets a page id outrank a title another page holds',
   },
   {
+    // A deck reads in the order its design does, and every screen downstream
+    // draws that order -- the explorer, the sheets, the Blender table. Dropping
+    // the call leaves every card imported, versioned and named exactly right,
+    // in whatever order the pages happened to arrive in and the deck happened
+    // to already hold. Nothing else in the run says a word about it.
+    name: 'a finished import leaves the deck in the design\u2019s order',
+    package: 'api',
+    file: 'src/services/deckImport.ts',
+    find: '  await orderDeckToExport(c, access);\n',
+    replace: '',
+    tests: ['tests/e2e/deckImport.test.ts'],
+    testName: 'follows the design when its pages are moved around',
+  },
+  {
     name: 'a caller with no access gets 404, not 403',
     package: 'api',
     file: 'src/services/authorization.ts',

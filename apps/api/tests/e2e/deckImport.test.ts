@@ -307,6 +307,12 @@ describe('deck imports', () => {
     return (await readDeck(deckId)).cards.map((card) => card.file.filename).sort();
   }
 
+  // The same names unsorted, which is the deck's own arrangement: what the
+  // explorer draws, what the sheets pack and what the scene lays out.
+  async function cardOrderIn(deckId: string): Promise<string[]> {
+    return (await readDeck(deckId)).cards.map((card) => card.file.filename);
+  }
+
   async function uploadByHand(deckId: string, filename: string, bytes: Buffer): Promise<string> {
     const query = new URLSearchParams({ project_id: projectId, filename, deck_id: deckId });
     const res = await owner.api.postBytes(
@@ -769,7 +775,7 @@ describe('deck imports', () => {
   });
 
   describe('a deck somebody has arranged by hand', () => {
-    it('keeps a hand-set order and copy count through the next import', async () => {
+    it('keeps a hand-set copy count, and takes the design\u2019s order back', async () => {
       const { deckId } = await scenario('hand-arranged');
       const first = await importPages(deckId, [
         { title: 'Alpha', bytes: png('alpha') },
@@ -793,9 +799,13 @@ describe('deck imports', () => {
         { title: 'Gamma', bytes: png('gamma redrawn') },
       ]);
 
+      // The design is where the order comes from, so a hand-set one is undone
+      // by the next import. How many of each to print is not the design's to
+      // say, and survives it.
       const deck = await readDeck(deckId);
-      expect(deck.cards.map((card) => card.file_id)).toEqual([gamma, alpha, beta]);
-      expect(deck.cards.map((card) => card.quantity)).toEqual([5, 2, 1]);
+      expect(deck.cards.map((card) => card.file_id)).toEqual([alpha, beta, gamma]);
+      expect(deck.cards.map((card) => card.quantity)).toEqual([2, 1, 5]);
+      expect(deck.cards.map((card) => card.position)).toEqual([0, 1, 2]);
     });
 
     it('refuses a card list that would leave one of its own images out', async () => {
@@ -831,6 +841,130 @@ describe('deck imports', () => {
       expect(await versionCount(beta)).toBe(1);
       expect((await readFile(beta)).body.deleted_at).toBeNull();
       expect((await readFile(beta)).body.deck_id).toBeNull();
+    });
+  });
+
+  describe('the order a deck ends up in', () => {
+    it('follows the design when its pages are moved around', async () => {
+      const { deckId } = await scenario('canva-order-moved');
+      await importPages(deckId, [
+        { title: 'Alpha', bytes: png('alpha') },
+        { title: 'Beta', bytes: png('beta') },
+        { title: 'Gamma', bytes: png('gamma') },
+      ]);
+      expect(await cardOrderIn(deckId)).toEqual(['1 - Alpha.png', '2 - Beta.png', '3 - Gamma.png']);
+
+      // Every page matches the card it matched before -- by title, since the
+      // numbers have all moved -- so nothing is added or removed and the whole
+      // of what changed is where each one sits.
+      const second = await importPages(deckId, [
+        { title: 'Gamma', bytes: png('gamma') },
+        { title: 'Alpha', bytes: png('alpha') },
+        { title: 'Beta', bytes: png('beta') },
+      ]);
+      expect(second.run.counts.added).toBe(0);
+      expect(second.run.counts.removed).toBe(0);
+      expect(await cardOrderIn(deckId)).toEqual(['1 - Gamma.png', '2 - Alpha.png', '3 - Beta.png']);
+    });
+
+    it('trails a card somebody put in the deck themselves', async () => {
+      const { deckId } = await scenario('canva-order-hand-added');
+      await importPages(deckId, [
+        { title: 'Alpha', bytes: png('alpha') },
+        { title: 'Beta', bytes: png('beta') },
+      ]);
+      const byHand = await uploadByHand(deckId, 'Token.png', png('token'));
+
+      // In front of both pages, so trailing it afterwards is a move rather than
+      // where an upload happened to land it.
+      const deck = await readDeck(deckId);
+      const arranged = await owner.api.put(`/api/decks/${deckId}/cards`, {
+        cards: [
+          { file_id: byHand, quantity: 4 },
+          ...deck.cards
+            .filter((card) => card.file_id !== byHand)
+            .map((card) => ({ file_id: card.file_id, quantity: card.quantity })),
+        ],
+      });
+      expect(arranged.status).toBe(200);
+
+      await importPages(deckId, [
+        { title: 'Beta', bytes: png('beta') },
+        { title: 'Alpha', bytes: png('alpha') },
+      ]);
+
+      // The design's pages in the design's order, and then the card the design
+      // knows nothing about, still holding its own copy count.
+      expect(await cardOrderIn(deckId)).toEqual(['1 - Beta.png', '2 - Alpha.png', 'Token.png']);
+      const after = await readDeck(deckId);
+      expect(after.cards[2].file_id).toBe(byHand);
+      expect(after.cards[2].quantity).toBe(4);
+    });
+
+    it('trails a card the design has stopped naming and somebody had deleted', async () => {
+      const { deckId } = await scenario('canva-order-deleted-card');
+      const first = await importPages(deckId, [
+        { title: 'Alpha', bytes: png('alpha') },
+        { title: 'Beta', bytes: png('beta') },
+        { title: 'Gamma', bytes: png('gamma') },
+      ]);
+      const beta = first.pages.get(2)!.file_id!;
+      expect((await owner.api.delete(`/api/files/${beta}`)).status).toBe(204);
+
+      // A card tombstoned before the run started is not one the run removed, so
+      // its row stays in the deck and a restore is still exact. The design has
+      // no page for it, so it has no place among them either.
+      const second = await importPages(deckId, [
+        { title: 'Gamma', bytes: png('gamma') },
+        { title: 'Alpha', bytes: png('alpha') },
+      ]);
+      expect(second.run.counts.removed).toBe(0);
+      expect(await cardOrderIn(deckId)).toEqual(['1 - Gamma.png', '2 - Alpha.png', '2 - Beta.png']);
+    });
+
+    it('puts the back where the design puts it', async () => {
+      const { deckId } = await scenario('canva-order-back-moved');
+      const first = await importPages(deckId, [
+        { title: 'Goblin', bytes: png('goblin') },
+        { title: 'Back', bytes: png('the back') },
+        { title: 'Dragon', bytes: png('dragon') },
+      ]);
+      const back = first.pages.get(2)!.file_id!;
+
+      await importPages(deckId, [
+        { title: 'Back', bytes: png('the back') },
+        { title: 'Goblin', bytes: png('goblin') },
+        { title: 'Dragon', bytes: png('dragon') },
+      ]);
+
+      // A back is a card of the deck held at no copies, so it takes a place in
+      // the arrangement like any other page of the design.
+      const deck = await readDeck(deckId);
+      expect(deck.deck.back_file_id).toBe(back);
+      expect(deck.cards.map((card) => card.file_id)[0]).toBe(back);
+      expect(deck.cards.map((card) => card.quantity)).toEqual([0, 1, 1]);
+    });
+
+    it('is the same whichever order the pages were posted in', async () => {
+      const pages = [
+        { title: 'Alpha', bytes: png('alpha') },
+        { title: 'Beta', bytes: png('beta') },
+        { title: 'Gamma', bytes: png('gamma') },
+      ];
+      const forwards = await scenario('canva-order-posted-forwards');
+      const backwards = await scenario('canva-order-posted-backwards');
+
+      await importPages(forwards.deckId, pages);
+      await importPages(backwards.deckId, pages, { reverse: true });
+
+      // The arrangement is the design's, and a page of it is no more or less
+      // itself for having been uploaded last.
+      expect(await cardOrderIn(backwards.deckId)).toEqual(await cardOrderIn(forwards.deckId));
+      expect(await cardOrderIn(forwards.deckId)).toEqual([
+        '1 - Alpha.png',
+        '2 - Beta.png',
+        '3 - Gamma.png',
+      ]);
     });
   });
 
