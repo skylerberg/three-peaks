@@ -11,6 +11,10 @@
 //
 // It needs an API. Point API_PROXY_TARGET at one (default localhost:17310) and
 // it will sign up its own throwaway account.
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'vite';
 import { createBrowser } from './lib/browser.mjs';
@@ -20,6 +24,9 @@ import { createProject, inspectApi, probeRefusal, signUp } from './lib/session.m
 const PORT = Number(process.env.PRINT_PROBE_PORT ?? 17331);
 const API = process.env.API_PROXY_TARGET ?? 'http://localhost:17310';
 const selftest = process.argv.includes('--selftest');
+// Set on the child the selection arm spawns, so its own --selftest cannot
+// recurse into another one.
+const MUTATED = 'PRINT_PROBE_MUTATED';
 
 // US Letter in PDF points, which is the unit a MediaBox is written in.
 const LETTER_WIDTH_PT = 612;
@@ -723,6 +730,165 @@ async function run() {
       /5\s+copies of 1\s+card/.test(ledger ?? ''),
       ledger ?? ''
     );
+    // --- choosing what goes on paper -------------------------------------
+    //
+    // The boxes above the Generate button were covered by nothing that ran a
+    // browser: every pass above printed whatever the screen selected for itself.
+    // Two things have to hold -- a deck's box reports what its own cards say,
+    // and the file holds exactly what is left ticked. The second is a fact about
+    // the finished document, and the counts on the screen cannot settle it: they
+    // are computed from the same selection the plan is, so they would agree with
+    // a renderer that had quietly kept every card.
+    await browser.goto(`${base}/projects/${setup.projectId}/print`, { wait: 0 });
+    await browser.page.waitForSelector('button:has-text("Generate PDF")', { timeout: 30_000 });
+
+    const deckRow = (name) => browser.page.getByRole('listitem').filter({ hasText: name });
+    const deckBox = (name) => browser.page.getByRole('checkbox', { name });
+    const cardBox = (deck, filename) => deckRow(deck).getByRole('checkbox', { name: filename });
+    const boxState = (box) =>
+      box.evaluate((input) => ({ checked: input.checked, mixed: input.indeterminate }));
+
+    // Svelte settles in a microtask that a click does not wait for, so the count
+    // is waited for rather than read -- and a wait that times out still reports
+    // whatever the screen actually says, which is the number worth seeing.
+    const counts = async (pattern) => {
+      const found = await browser.page
+        .waitForFunction(
+          (source) => new RegExp(source).test(document.body.textContent ?? ''),
+          pattern.source,
+          { timeout: 10_000 }
+        )
+        .then(() => true)
+        .catch(() => false);
+      const said = await browser.page.textContent('p:has-text("sheets of US Letter")');
+      return { found, said: said ?? '' };
+    };
+
+    const opening = await Promise.all(
+      ['Alpha deck', 'Beta deck', 'Mini deck'].map((name) => boxState(deckBox(name)))
+    );
+    const whole = await counts(/29\s+cards on 6\s+sheets/);
+    check(
+      'every deck starts fully ticked, none of them mixed',
+      opening.every((box) => box.checked && !box.mixed) && whole.found,
+      `${JSON.stringify(opening)} ${whole.said}`
+    );
+
+    await deckRow('Alpha deck').getByRole('button', { name: 'Choose cards' }).click();
+    await cardBox('Alpha deck', 'alpha.png').click();
+    await browser.page.waitForSelector('text=2 of 3 cards', { timeout: 10_000 });
+
+    const mixed = await boxState(deckBox('Alpha deck'));
+    check(
+      'unticking one card reports its deck as mixed',
+      !mixed.checked && mixed.mixed,
+      JSON.stringify(mixed)
+    );
+
+    // Alpha prints six of that card, so the run loses six of its twenty-nine and
+    // the eleven-card poker run comes down to one sheet.
+    const short = await counts(/23\s+cards on 4\s+sheets/);
+    check('the run loses exactly that card’s copies', short.found, short.said);
+
+    await deckBox('Alpha deck').click();
+    const filled = await boxState(deckBox('Alpha deck'));
+    const refilled = await counts(/29\s+cards on 6\s+sheets/);
+    check(
+      'a mixed box ticks the rest of the deck rather than clearing it',
+      filled.checked && !filled.mixed && refilled.found,
+      `${JSON.stringify(filled)} ${refilled.said}`
+    );
+
+    await deckBox('Alpha deck').click();
+    const cleared = await Promise.all(
+      ['alpha.png', 'beta.png', 'delta.png'].map((name) =>
+        cardBox('Alpha deck', name).evaluate((input) => input.checked)
+      )
+    );
+    const emptied = await boxState(deckBox('Alpha deck'));
+    const without = await counts(/21\s+cards on 4\s+sheets/);
+    check(
+      'a ticked box clears every card under it',
+      cleared.every((ticked) => !ticked) && !emptied.checked && !emptied.mixed && without.found,
+      `${JSON.stringify(cleared)} ${without.said}`
+    );
+
+    // Back to a part-ticked deck with a second deck cleared outright, which is a
+    // sheet no default selection could have produced: two copies of one deck's
+    // card beside three of another's, and nothing else on the paper.
+    await deckBox('Alpha deck').click();
+    await cardBox('Alpha deck', 'alpha.png').click();
+    await deckBox('Mini deck').click();
+    const chosen = await counts(/5\s+cards on 2\s+sheets/);
+    check('the screen counts the part-ticked selection', chosen.found, chosen.said);
+
+    await browser.page.evaluate(() => {
+      const original = URL.createObjectURL.bind(URL);
+      window.__printed = null;
+      URL.createObjectURL = (blob) => {
+        window.__printed = blob;
+        return original(blob);
+      };
+    });
+    await browser.click('button:has-text("Generate PDF")');
+    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+
+    const chosenBytes = Uint8Array.from(
+      await browser.page.evaluate(async () => [
+        ...new Uint8Array(await window.__printed.arrayBuffer()),
+      ])
+    );
+    const chosenLatin = Buffer.from(chosenBytes).toString('latin1');
+    const chosenPages = readPlacements(chosenBytes).map(inSlotOrder);
+    const chosenImages = (chosenLatin.match(/\/Subtype \/Image/g) ?? []).length;
+
+    check(
+      'the chosen cards come to one sheet and its back',
+      (chosenLatin.match(/\/Type \/Page[^s]/g) ?? []).length === 2,
+      String((chosenLatin.match(/\/Type \/Page[^s]/g) ?? []).length)
+    );
+    // Not an early return: every assertion below says something different about
+    // the same sheet, and a run that stopped here would name one symptom of a
+    // selection that never reached the file instead of all four.
+    const chosenFront = chosenPages[0] ?? [];
+    check(
+      'the sheet holds only what was left ticked',
+      chosenFront.length === 5,
+      `${chosenFront.length} slots`
+    );
+
+    const chosenArtwork = new Set(chosenFront.map((placement) => placement.image));
+    check(
+      'the unticked card takes none of those slots',
+      chosenArtwork.size === 2,
+      `${chosenArtwork.size} artworks over ${chosenFront.length} slots`
+    );
+    // The mini deck was cleared from its own box, so nothing on the page may
+    // measure 67 x 44: a turned card there would say the box moved the screen
+    // and not the run.
+    const upright = chosenFront.map((placement) => ({
+      width: placement.width * MM_PER_PT,
+      height: placement.height * MM_PER_PT,
+    }));
+    check(
+      'the deck cleared from its own box put nothing on the page',
+      upright.every((size) => Math.abs(size.width - 63) < 0.2 && Math.abs(size.height - 88) < 0.2),
+      upright.map((size) => `${size.width.toFixed(1)}x${size.height.toFixed(1)}`).join(' ')
+    );
+    check(
+      'nothing but those two cards and their backs is embedded',
+      chosenImages === 4,
+      `${chosenImages} image XObjects`
+    );
+
+    // A part-ticked run still resolves a back per slot: the cards left on the
+    // sheet come from two decks and have to find two different backs.
+    const chosenSheet = pairFrontsToBacks(chosenFront, chosenPages[1] ?? [], LETTER_WIDTH_PT);
+    check(
+      'each chosen card still finds its own deck’s back at its mirror',
+      chosenSheet.problems.length === 0 && new Set(chosenSheet.pairs.values()).size === 2,
+      chosenSheet.problems.join('; ') || `${new Set(chosenSheet.pairs.values()).size} backs`
+    );
 
     if (pageErrors.length > 0) {
       check('the page threw nothing while building the sheets', false, pageErrors.join(' | '));
@@ -830,6 +996,61 @@ async function run() {
         return 1;
       }
       console.log('  ok   an upright placement is read back at its box, facing north');
+
+      // The arms above prove the reader reads a document correctly. This one
+      // proves the boxes reach the document at all, which no amount of reading
+      // can say -- so it re-runs the whole probe against a screen carrying the
+      // one bug the counts cannot show: the plan honours the selection and the
+      // renderer is handed every card regardless. Every assertion above the
+      // Generate button still passes there, and only the placements catch it.
+      if (!process.env[MUTATED]) {
+        console.log('\n[selftest] the selection section against a renderer that ignores it:');
+        const ignored = spawnSync(process.execPath, [new URL(import.meta.url).pathname], {
+          env: {
+            ...process.env,
+            [MUTATED]: '1',
+            GUARD_CACHE_DIR: join(mkdtempSync(join(tmpdir(), 'print-probe-')), 'vite'),
+            GUARD_MUTATION: JSON.stringify({
+              file: 'src/routes/Print.svelte',
+              find: '{ decks: runDecks, options, versions: $state.snapshot(versions) }',
+              replace:
+                '{ decks: loaded.map((entry) => ({ name: entry.deck.name, card: deckCardSize(entry.deck), back_file_id: entry.deck.back_file_id, cards: entry.cards.filter((card) => card.quantity > 0).map((card) => ({ file_id: card.file_id, copies: card.quantity })) })), options, versions: $state.snapshot(versions) }',
+            }),
+          },
+          encoding: 'utf8',
+          timeout: 600_000,
+        });
+
+        const output = `${ignored.stdout ?? ''}${ignored.stderr ?? ''}`;
+        // Two assertions the full sheet cannot satisfy: it carries nine slots
+        // rather than five, and a third deck's artwork beyond the two decks
+        // that were left ticked. The card-size check is deliberately not one of
+        // them -- a full poker sheet is 63 x 88 throughout and passes it, which
+        // is exactly why it is not the assertion this rests on.
+        const caught = [
+          'the sheet holds only what was left ticked',
+          'nothing but those two cards and their backs is embedded',
+        ].filter((name) => output.includes(`FAIL ${name}`));
+
+        // The mutation has to have been applied, the counts on the screen have
+        // to have gone on passing, and the file has to have been the thing that
+        // complained. A run that failed for some other reason proves nothing.
+        if (!output.includes('ok   the screen counts the part-ticked selection')) {
+          console.error('[selftest] FAILED: the mutated run did not reach the selection section');
+          console.error(output.split('\n').slice(-25).join('\n'));
+          return 1;
+        }
+        if (ignored.status === 0 || caught.length !== 2) {
+          console.error(
+            `[selftest] FAILED: a document that ignored the selection was accepted (exit ${ignored.status}, caught ${caught.length} of 2)`
+          );
+          console.error(output.split('\n').slice(-25).join('\n'));
+          return 1;
+        }
+        console.log(
+          `  ok   a document that ignored the selection is rejected (${caught.join('; ')})`
+        );
+      }
     }
   } finally {
     await browser.close();
