@@ -167,6 +167,77 @@ function job(): Job {
   return generatePrintPdf.mock.calls[0][0];
 }
 
+describe('choosing what goes on paper', () => {
+  async function openCards() {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Choose cards' }));
+  }
+
+  function deckBox(): HTMLInputElement {
+    return screen.getByRole('checkbox', { name: 'Base game' });
+  }
+
+  function cardBox(filename: string): HTMLInputElement {
+    return screen.getByRole('checkbox', { name: new RegExp(filename) });
+  }
+
+  it('reports the deck as mixed while only some of its cards are ticked', async () => {
+    open();
+    await openCards();
+    expect(deckBox().checked).toBe(true);
+    expect(deckBox().indeterminate).toBe(false);
+
+    await fireEvent.click(cardBox('ace.png'));
+    await waitFor(() => expect(deckBox().indeterminate).toBe(true));
+    expect(deckBox().checked).toBe(false);
+    expect(screen.getByText('2 of 3 cards')).toBeInTheDocument();
+
+    await fireEvent.click(cardBox('ace.png'));
+    await waitFor(() => expect(deckBox().checked).toBe(true));
+    expect(deckBox().indeterminate).toBe(false);
+  });
+
+  it('clears the whole deck from its own box, and ticks it back', async () => {
+    open();
+    await openCards();
+
+    await fireEvent.click(deckBox());
+    await waitFor(() => expect(cardBox('ace.png').checked).toBe(false));
+    expect(cardBox('two.png').checked).toBe(false);
+    expect(screen.getByRole('button', { name: 'Generate PDF' })).toBeDisabled();
+
+    await fireEvent.click(deckBox());
+    await waitFor(() => expect(cardBox('ace.png').checked).toBe(true));
+    expect(cardBox('two.png').checked).toBe(true);
+    expect(deckBox().checked).toBe(true);
+  });
+
+  // A mixed box ticks the rest rather than clearing what is already there --
+  // the way an unchecked one behaves, which is what the browser hands the
+  // handler.
+  it('ticks the rest of the deck from a mixed box', async () => {
+    open();
+    await openCards();
+    await fireEvent.click(cardBox('ace.png'));
+    await waitFor(() => expect(deckBox().indeterminate).toBe(true));
+
+    await fireEvent.click(deckBox());
+    await waitFor(() => expect(cardBox('ace.png').checked).toBe(true));
+    expect(deckBox().checked).toBe(true);
+    expect(deckBox().indeterminate).toBe(false);
+  });
+
+  it('prints only the cards left ticked', async () => {
+    open();
+    await openCards();
+    await fireEvent.click(cardBox('ace.png'));
+    await waitFor(() => expect(deckBox().indeterminate).toBe(true));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1 }]);
+  });
+});
+
 describe('printing only what has changed', () => {
   it('says when each deck was last printed and why a card is owed', async () => {
     open();

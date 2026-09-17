@@ -47,11 +47,12 @@
   let error = $state<string | null>(null);
   let loading = $state(true);
   let loaded = $state<LoadedDeck[]>([]);
-  let selected = $state<Record<string, boolean>>({});
   let expanded = $state<Record<string, boolean>>({});
-  // A card left out of this run without changing what the deck holds. The deck's
-  // own counts are the persistent truth; this is one print job's opinion.
-  let excluded = $state<Record<string, boolean>>({});
+  // Which cards this run puts on paper, keyed deck:file, without changing what
+  // the deck holds -- the deck's own counts are the persistent truth and this is
+  // one print job's opinion. A deck's own box is counted back off this rather
+  // than held beside it, so the two cannot disagree.
+  let included = $state<Record<string, boolean>>({});
 
   // What each card still owes the printer, as the API works it out. Held beside
   // the decks rather than folded into them: it is a fact about print runs, and
@@ -77,6 +78,10 @@
   const page = $derived(pageSize(pageId) ?? PAGE_SIZES[0]);
 
   const key = (deck: string, file: string) => `${deck}:${file}`;
+
+  // A card whose image is in the bin has no bytes to place, so it is neither
+  // tickable nor counted towards its deck's box.
+  const printable = (card: DeckCard) => card.file.deleted_at === null;
 
   // One lookup for the whole screen. A deck of five hundred cards is scanned
   // once here rather than once per row per recompute.
@@ -104,20 +109,16 @@
     return copiesToPrint(card.quantity, outstandingFor(deckId, card.file_id), mode, oneOfEach);
   }
 
-  // Only what is both selected and printable, with the version each card is
-  // drawn at carried alongside -- the same number the run is recorded with, so
-  // the ledger names the artwork that went through the printer.
-  //
-  // A card whose image is in the bin has no bytes to place, so it is dropped
-  // here rather than failing mid-render.
+  // Only what is ticked, with the version each card is drawn at carried
+  // alongside -- the same number the run is recorded with, so the ledger names
+  // the artwork that went through the printer.
   const runEntries = $derived(
     loaded
-      .filter((entry) => selected[entry.deck.id])
       .map((entry) => ({
         deck: entry.deck,
         state: owedDecks[entry.deck.id],
         cards: entry.cards
-          .filter((card) => !card.file.deleted_at && !excluded[key(entry.deck.id, card.file_id)])
+          .filter((card) => included[key(entry.deck.id, card.file_id)] === true)
           .map((card) => ({
             file_id: card.file_id,
             copies: printedCopies(entry.deck.id, card),
@@ -189,7 +190,29 @@
   const summary = $derived(summarizeRuns(planRuns(runDecks), page, printerMargin, includeBacks));
 
   const anyBacks = $derived(runDecks.some((entry) => entry.back_file_id !== null));
-  const anySelected = $derived(loaded.some((entry) => selected[entry.deck.id]));
+
+  // Every deck's box, counted off its own cards: checked when the whole deck is
+  // ticked, mixed when part of it is, and nothing to tick at all when a deck
+  // holds no printable card.
+  const deckChoice = $derived.by(() => {
+    const counted: Record<string, { total: number; chosen: number }> = {};
+    for (const entry of loaded) {
+      const cards = entry.cards.filter(printable);
+      counted[entry.deck.id] = {
+        total: cards.length,
+        chosen: cards.filter((card) => included[key(entry.deck.id, card.file_id)] === true).length,
+      };
+    }
+    return counted;
+  });
+
+  const anySelected = $derived(Object.values(deckChoice).some((choice) => choice.chosen > 0));
+
+  function chooseWholeDeck(entry: LoadedDeck, choose: boolean) {
+    for (const card of entry.cards) {
+      if (printable(card)) included[key(entry.deck.id, card.file_id)] = choose;
+    }
+  }
 
   $effect(() => {
     const project = projectId;
@@ -208,8 +231,12 @@
         loaded = full;
         outstanding = pending;
         recorded = null;
-        selected = Object.fromEntries(
-          full.map((entry) => [entry.deck.id, preselect === null || preselect === entry.deck.id])
+        included = Object.fromEntries(
+          full
+            .filter((entry) => preselect === null || preselect === entry.deck.id)
+            .flatMap((entry) =>
+              entry.cards.filter(printable).map((card) => [key(entry.deck.id, card.file_id), true])
+            )
         );
       } catch (caught) {
         error =
@@ -321,16 +348,23 @@
           {#each loaded as entry (entry.deck.id)}
             {@const perSheet = cardsPerSheet(entry.deck)}
             {@const printedAt = owedDecks[entry.deck.id]?.last_printed_at ?? null}
+            {@const choice = deckChoice[entry.deck.id]}
             <li class="rounded-md border border-edge bg-surface p-3">
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex min-h-11 min-w-0 flex-1 items-center gap-3">
                   <input
                     type="checkbox"
                     class="focus-ring size-4"
-                    bind:checked={selected[entry.deck.id]}
+                    checked={choice.total > 0 && choice.chosen === choice.total}
+                    indeterminate={choice.chosen > 0 && choice.chosen < choice.total}
+                    disabled={choice.total === 0}
+                    onchange={(event) => chooseWholeDeck(entry, event.currentTarget.checked)}
                   />
                   <span class="min-w-0 flex-1 truncate font-medium">{entry.deck.name}</span>
                 </label>
+                {#if choice.chosen > 0 && choice.chosen < choice.total}
+                  <span class="text-sm text-muted">{choice.chosen} of {choice.total} cards</span>
+                {/if}
                 <span class="text-sm text-muted">{sizeLabel(entry.deck)}</span>
                 <span class="text-sm text-muted">
                   {perSheet > 0 ? `${perSheet} per sheet` : 'too large for this paper'}
@@ -366,12 +400,11 @@
                         <input
                           type="checkbox"
                           class="focus-ring size-4"
-                          disabled={card.file.deleted_at !== null}
-                          checked={!excluded[key(entry.deck.id, card.file_id)] &&
-                            card.file.deleted_at === null}
+                          disabled={!printable(card)}
+                          checked={included[key(entry.deck.id, card.file_id)] === true}
                           onchange={(event) => {
-                            excluded[key(entry.deck.id, card.file_id)] =
-                              !event.currentTarget.checked;
+                            included[key(entry.deck.id, card.file_id)] =
+                              event.currentTarget.checked;
                           }}
                         />
                         <span
