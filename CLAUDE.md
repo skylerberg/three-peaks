@@ -707,8 +707,11 @@ the one part Canva exposes no API for. The plain `build` bakes in whatever
 
 It needs `CANVA_APP_ID` in `apps/canva/.env` and reads it nowhere else, because
 that is the only place the Canva CLI looks — an id in the environment it is
-spawned with does not reach it. `apps/api/.env` already holds the same id, since
-the audience the API pins its tokens to is this app.
+spawned with does not reach it. The example carries the id, so `pnpm setup:env`
+writes it and a fresh worktree can release without being told what it is. One
+`.env` is only ever written from that example once, though, so a file that
+predates the id still lacks it and `pnpm canva:release` says so with the line to
+add.
 
 **It authenticates by exchanging Canva's word for ours.** The app can prove
 which Canva user is running it and nothing else, so somebody signed in here

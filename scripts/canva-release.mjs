@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const canvaEnv = join(root, 'apps/canva/.env');
+const canvaExample = join(root, 'apps/canva/.env.example');
 const apiEnv = join(root, 'apps/api/.env');
 const bundle = join(root, 'apps/canva/dist/app.js');
 const portal = 'https://www.canva.com/developers/app';
@@ -52,15 +53,19 @@ function appId() {
   const own = envValue(canvaEnv, 'CANVA_APP_ID');
   if (own) return own;
 
-  const known = envValue(apiEnv, 'CANVA_APP_ID');
+  // The example names the id, so a .env without one was copied from an earlier
+  // version of it -- setup:env writes that file once and never revisits it.
+  const fromExample = envValue(canvaExample, 'CANVA_APP_ID');
+  const known = envValue(apiEnv, 'CANVA_APP_ID') ?? fromExample;
+  const stale = fromExample ? ` The example carries one, so this file predates it.` : '';
   const line = known
-    ? `The API pins its token audience to the same app, so the id is already here:\n\n` +
+    ? `The id is checked in, so the line to add is:\n\n` +
       `    echo 'CANVA_APP_ID=${known}' >> apps/canva/.env`
     : `Copy it from ${portal}s and add it:\n\n` + `    echo 'CANVA_APP_ID=<id>' >> apps/canva/.env`;
 
   fail(
     `apps/canva/.env has no CANVA_APP_ID, and the Canva CLI reads the id from that\n` +
-      `file and nowhere else.\n\n${line}\n\n` +
+      `file and nowhere else.${stale}\n\n${line}\n\n` +
       `Or pick the app from a list, which writes the same line:\n\n` +
       `    pnpm --filter @three-peaks/canva exec canva apps link`
   );
