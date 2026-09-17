@@ -1468,6 +1468,7 @@ export async function finishRun(c: Ctx, access: ImportRunAccess): Promise<RunDet
   await applyPlannedIdentities(db, access.runId);
   const removed = await tombstoneUnmatched(c, access);
   await syncDeckMembership(c, access, removed);
+  await orderDeckToExport(c, access);
 
   // The backstop for the check the run start already made: a hand edit can add
   // cards while the run is open, and past the cap the deck editor can never
@@ -1663,8 +1664,9 @@ async function tombstoneUnmatched(c: Ctx, access: ImportRunAccess): Promise<Tomb
 
 // The import owns membership only where it created it: it hands over a card it
 // has never handed over, and takes back one it has just tombstoned. It never
-// reorders, and never puts back a card somebody took out of the deck by hand.
-// It leaves a copy count alone as well, bar the one case placeCardInDeck names.
+// puts back a card somebody took out of the deck by hand, and leaves a copy
+// count alone as well, bar the one case placeCardInDeck names. Where each card
+// then sits is orderDeckToExport's, immediately after.
 async function syncDeckMembership(
   c: Ctx,
   access: ImportRunAccess,
@@ -1721,6 +1723,9 @@ async function syncDeckMembership(
         deck_id: access.deckId,
         file_id: card.file_id,
         quantity: 1,
+        // Provisional: orderDeckToExport rewrites every position a moment
+        // later. It has to be a number the constraint accepts, and one past
+        // the end is the number that is right if this row never reaches it.
         position: base + 1 + index,
       }))
     )
@@ -1738,4 +1743,76 @@ async function syncDeckMembership(
       pending.map((card) => card.card_id)
     )
     .execute();
+}
+
+// The deck reads in the design's order once a run has finished: the pages as
+// the export numbers them, and then every row the export does not account for
+// -- a card somebody added by hand, and one they deleted that the design has
+// stopped naming -- left in the order it already had.
+//
+// Positions are rewritten across the whole deck rather than over the pages
+// alone. A position is an index into one list, so giving the pages 0..n-1 and
+// leaving the rows around them where they were would put two cards on one
+// number and hand the choice of which comes first to readDeckCards' tie-break.
+//
+// It writes `position` and nothing else, which is what keeps it off the file
+// locks. Inserting a deck_card row, or updating its file_id, takes a key share
+// on the file it names, and a hand edit of the same deck takes those after
+// having rewritten deck_card -- the cycle lockImportFiles describes from the
+// other side. A position has no foreign key in it.
+async function orderDeckToExport(c: Ctx, access: ImportRunAccess): Promise<void> {
+  const db = c.get('db');
+
+  const pages = await db
+    .selectFrom('import_run_page')
+    .innerJoin('deck_import_card', 'deck_import_card.id', 'import_run_page.card_id')
+    .select(['deck_import_card.file_id as file_id'])
+    .where('import_run_page.run_id', '=', access.runId)
+    .orderBy('import_run_page.page_number', 'asc')
+    .execute();
+
+  const held = await db
+    .selectFrom('deck_card')
+    .select([
+      'deck_card.id as id',
+      'deck_card.file_id as file_id',
+      'deck_card.position as position',
+    ])
+    .where('deck_card.deck_id', '=', access.deckId)
+    // readDeckCards' own order, so what trails the pages trails in the order
+    // the person was last shown rather than whatever the planner returned.
+    .orderBy('deck_card.position', 'asc')
+    .orderBy('deck_card.id', 'asc')
+    .execute();
+
+  const byFile = new Map(held.map((row) => [row.file_id, row]));
+  const placed = new Set<string>();
+  const order: typeof held = [];
+  for (const page of pages) {
+    const row = byFile.get(page.file_id);
+    // A page whose card the deck is not holding: purged while the run was open,
+    // or moved out of the deck and taken off the list by hand. There is no row
+    // to give a place to, and the pages after it close up over the gap.
+    if (row === undefined || placed.has(row.id)) continue;
+    placed.add(row.id);
+    order.push(row);
+  }
+  for (const row of held) {
+    if (!placed.has(row.id)) order.push(row);
+  }
+
+  const moved = order
+    .map((row, position) => ({ id: row.id, was: row.position, position }))
+    .filter((row) => row.was !== row.position);
+  // An export in the order the deck already stands in, which is what a
+  // re-import of an unchanged design is.
+  if (moved.length === 0) return;
+
+  await sql`
+    update deck_card set position = place.position
+    from (values ${sql.join(
+      moved.map((row) => sql`(${row.id}::uuid, ${row.position}::int)`)
+    )}) as place(id, position)
+    where deck_card.id = place.id
+  `.execute(db);
 }

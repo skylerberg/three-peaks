@@ -611,6 +611,14 @@ which both ends of that arrangement rest on.
   with no row is one nobody could choose again. `is_back` rides on the plan,
   because taking a card's copies to zero is a change to the arrangement and the
   plan the app shows before uploading is where it has to be visible.
+- **The deck comes out in the design's order.** Finishing a run numbers the
+  `deck_card` rows off the pages of the export, so moving a page in Canva moves
+  the card and an order somebody set by hand is undone by the next import. A
+  copy count is not the design's to say and survives one. Whatever the export
+  does not account for -- a card added by hand, one already deleted that the
+  design has stopped naming -- trails the pages in the order it already had,
+  and the whole list is renumbered rather than the pages alone, because two
+  rows on one position leave the tie-break to choose between them.
 - **Nothing turns a back back into a card.** A page that stops being titled Back
   keeps its card and the deck goes on pointing at it. This end cannot tell a
   back the import set from one somebody chose on the deck screen, and undoing
