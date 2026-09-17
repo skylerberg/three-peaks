@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { createServer } from 'vite';
 import { createBrowser } from './lib/browser.mjs';
-import { createProject, inspectApi, signUp } from './lib/session.mjs';
+import { createProject, inspectApi, probeRefusal, signUp } from './lib/session.mjs';
 
 const PORT = Number(process.env.MODEL_PROBE_PORT ?? 17332);
 const API = process.env.API_PROXY_TARGET ?? 'http://localhost:17310';
@@ -215,20 +215,8 @@ async function downloadedGlb(browser) {
 
 async function run() {
   const api = await inspectApi(API);
-  if (!api.ok) {
-    const message = `[check:model3d] ${api.reason}`;
-    if (!api.absent) {
-      console.error(message);
-      return 1;
-    }
-    // Same contract as check-upload.mjs, which explains why.
-    if (process.env.CI) {
-      console.error(`${message}; refusing to skip under CI`);
-      return 1;
-    }
-    console.warn(`${message}; skipping. Start it with \`pnpm dev:api\`.`);
-    return 0;
-  }
+  const refusal = probeRefusal('check:model3d', api);
+  if (refusal !== null) return refusal;
 
   const server = await createServer({
     root: fileURLToPath(new URL('..', import.meta.url)),

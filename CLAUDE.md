@@ -1069,6 +1069,21 @@ everywhere, with the reason. `check:a11y` skips only the screens behind the
 session, because it is in `check:all` and that has to keep passing on a checkout
 with nothing else running.
 
+**The branch is part of what is interrogated.** Two worktrees serve the same
+name and the same routes on two ports, and whichever bound first is what answers
+— so `inspectApi` compares `/health`'s branch against this checkout's and
+refuses a mismatch outright, the way it refuses an older set of routes. That is
+the case a green run is worst for: the probes pass, against somebody else's
+code. A detached HEAD names nothing and is not compared, which is every CI
+checkout.
+
+**A skip is only ever a local kindness, and `REQUIRE_PROBES=1` withdraws it.**
+Set it for a run whose result is going to be believed — before a PR, most
+obviously — and an absent API fails the probe instead of being warned about,
+exactly as it does under CI. The warning itself carries the word `SKIPPED`, so a
+gate log that scrolled past it still answers `grep SKIPPED`; `probeRefusal` in
+`apps/web/scripts/lib/session.mjs` is the one copy of all of this.
+
 Those two guards are the same problem from opposite ends, and both are worth
 having: `inspectApi` lets a probe refuse a server that cannot serve it, and the
 branch and commit on `/health` let a person recognise one.

@@ -12,7 +12,14 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { createBrowser } from './lib/browser.mjs';
 import { TINY_PNG, solidPng } from './lib/fixtures.mjs';
-import { createProject, inspectApi, openAssets, signOut, signUp } from './lib/session.mjs';
+import {
+  createProject,
+  inspectApi,
+  openAssets,
+  probeRefusal,
+  signOut,
+  signUp,
+} from './lib/session.mjs';
 
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
@@ -323,12 +330,6 @@ async function reachDeleted(browser, base, scheme) {
 }
 
 async function run() {
-  // The signed-out screens need no API, and check:a11y is part of check:all --
-  // which has to keep passing on a checkout with nothing else running. An
-  // authenticated screen cannot be reached without one, so those are skipped
-  // rather than allowed to fail, except under CI where an absent API is a
-  // broken gate rather than a local convenience.
-  //
   // The import routes are named alongside the shared list because the history
   // screens are reached by driving them, and an API that does not serve them
   // should say so here rather than inside a screen fifteen seconds later.
@@ -337,23 +338,13 @@ async function run() {
     ['post', '/api/decks/import/runs/{runId}/pages'],
     ['post', '/api/decks/import/runs/{runId}/finish'],
   ]);
-  // A server that is there but is not this build is a failure everywhere: the
-  // screens behind the session cannot be reached, and saying so beats both
-  // skipping them and letting them time out.
-  if (!api.ok && !api.absent) {
-    console.error(`[check:a11y] ${api.reason}`);
-    return 1;
-  }
-  if (!api.ok) {
-    if (process.env.CI) {
-      console.error(`[check:a11y] ${api.reason}; refusing to skip its screens under CI`);
-      return 1;
-    }
-    console.warn(
-      `[check:a11y] ${api.reason}; skipping ${SCREENS.filter((s) => s.authed).length} ` +
-        'screen(s) behind the session. Start one with `pnpm dev:api`.'
-    );
-  }
+  // Partial, because the three signed-out screens need no API at all and
+  // check:all has to keep passing on a checkout with nothing else running.
+  const refusal = probeRefusal('check:a11y', api, {
+    skips: `${SCREENS.filter((screen) => screen.authed).length} screen(s) behind the session were not read`,
+    partial: true,
+  });
+  if (refusal !== null) return refusal;
 
   const screens = SCREENS.filter((screen) => api.ok || !screen.authed);
 
@@ -443,7 +434,12 @@ async function run() {
     return 1;
   }
 
-  console.log(`check:a11y passed (${cases} screen/scheme combinations)`);
+  const unread = (SCREENS.length - screens.length) * SCHEMES.length;
+  console.log(
+    `check:a11y passed (${cases} screen/scheme combinations` +
+      (unread > 0 ? `; ${unread} SKIPPED for want of an API` : '') +
+      ')'
+  );
   return 0;
 }
 

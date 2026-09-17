@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { createBrowser } from './lib/browser.mjs';
 import { TINY_PNG } from './lib/fixtures.mjs';
-import { createProject, inspectApi, openAssets, signUp } from './lib/session.mjs';
+import { createProject, inspectApi, openAssets, probeRefusal, signUp } from './lib/session.mjs';
 
 const PORT = Number(process.env.UPLOAD_PROBE_PORT ?? 17331);
 const API = process.env.API_PROXY_TARGET ?? 'http://localhost:17310';
@@ -33,21 +33,8 @@ function check(name, condition, detail = '') {
 
 async function run() {
   const api = await inspectApi(API);
-  if (!api.ok) {
-    const message = `[check:upload] ${api.reason}`;
-    if (!api.absent) {
-      console.error(message);
-      return 1;
-    }
-    // Under CI the API is a service the workflow starts, so its absence is a
-    // broken gate rather than a local convenience.
-    if (process.env.CI) {
-      console.error(`${message}; refusing to skip under CI`);
-      return 1;
-    }
-    console.warn(`${message}; skipping. Start it with \`pnpm dev:api\`.`);
-    return 0;
-  }
+  const refusal = probeRefusal('check:upload', api);
+  if (refusal !== null) return refusal;
 
   const server = await createServer({
     root: fileURLToPath(new URL('..', import.meta.url)),
