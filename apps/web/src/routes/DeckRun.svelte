@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { components } from '@three-peaks/shared/api';
   import { IMPORT_OUTCOMES } from '@three-peaks/shared';
+  import CardViewer from '../components/CardViewer.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError } from '../api/client.ts';
@@ -9,6 +10,14 @@
   import { apiMessage } from '../lib/session.svelte.ts';
 
   type RunCard = components['schemas']['ImportRunDetail']['cards'][number];
+  // A card and the id the viewer knows it by. The response's own order is what
+  // mints the id, because the groups below scatter these rows across four
+  // sections and nothing else about a row is unique -- two pages may carry one
+  // name.
+  interface Shown {
+    id: string;
+    card: RunCard;
+  }
 
   interface Props {
     projectId: string;
@@ -18,6 +27,7 @@
   let { projectId, deckId, runId }: Props = $props();
 
   let error = $state<string | null>(null);
+  let viewing = $state<string | null>(null);
 
   // Removed first: it is the outcome somebody came to find, and burying it under
   // fifty unchanged rows is what this ordering exists to avoid.
@@ -38,17 +48,37 @@
   const loaded = $derived(deckHistory.detailKey === `${deckId}:${runId}`);
   const detail = $derived(loaded ? deckHistory.detail : null);
   const cards = $derived<RunCard[]>(detail?.cards ?? []);
+  const shown = $derived<Shown[]>(cards.map((card, index) => ({ id: String(index), card })));
   const groups = $derived(
     GROUPS.map((outcome) => ({
       outcome,
       heading: HEADINGS[outcome],
-      rows: cards.filter((card) => card.outcome === outcome),
+      rows: shown.filter((row) => row.card.outcome === outcome),
     })).filter((group) => group.rows.length > 0)
   );
   // Anything the API has learned to say since this bundle was built. Without
   // this its rows would simply not be on the screen.
   const other = $derived(
-    cards.filter((card) => !GROUPS.some((outcome) => outcome === card.outcome))
+    shown.filter((row) => !GROUPS.some((outcome) => outcome === row.card.outcome))
+  );
+
+  // The order the sections are drawn in, not the order the rows arrived, so the
+  // arrow keys walk the screen. A card whose image has been purged has nothing
+  // to open and is no stop along the way.
+  const viewerCards = $derived(
+    [...groups.flatMap((group) => group.rows), ...other].flatMap((row) =>
+      row.card.file_id === null
+        ? []
+        : [
+            {
+              id: row.id,
+              fileId: row.card.file_id,
+              title: row.card.name,
+              version: row.card.file_version_number ?? undefined,
+              note: matchLabel(row.card),
+            },
+          ]
+    )
   );
 
   $effect(() => {
@@ -77,9 +107,10 @@
   }
 </script>
 
-{#snippet rows(list: RunCard[])}
+{#snippet rows(list: Shown[])}
   <ul class="flex flex-col divide-y divide-edge">
-    {#each list as card, index (`${card.name}:${index}`)}
+    {#each list as row (row.id)}
+      {@const card = row.card}
       <li class="flex flex-wrap items-center gap-3 p-3">
         {#if card.file_id === null}
           <div class="min-w-0 flex-1 text-muted">
@@ -87,22 +118,25 @@
             <p class="text-sm">This image has been permanently deleted.</p>
           </div>
         {:else}
-          <Thumbnail
-            fileId={card.file_id}
-            version={card.file_version_number ?? undefined}
-            alt="{card.name}, as this import left it"
-          />
-          <div class="min-w-0 flex-1">
-            <p class="flex flex-wrap items-center gap-2">
-              <span class="min-w-0 truncate font-medium">{card.name}</span>
-              {#if card.restored}
-                <span class="rounded-full bg-accent px-2 py-0.5 text-xs text-on-accent">
-                  Put back
-                </span>
-              {/if}
-            </p>
-            <p class="text-sm text-muted">{matchLabel(card)}</p>
-          </div>
+          <button
+            type="button"
+            class="focus-ring flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
+            onclick={() => (viewing = row.id)}
+          >
+            <span class="sr-only">View</span>
+            <Thumbnail
+              fileId={card.file_id}
+              version={card.file_version_number ?? undefined}
+              alt=""
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block truncate font-medium">{card.name}</span>
+              <span class="block text-sm text-muted">{matchLabel(card)}</span>
+            </span>
+          </button>
+          {#if card.restored}
+            <span class="rounded-full bg-accent px-2 py-0.5 text-xs text-on-accent">Put back</span>
+          {/if}
           <a
             class="focus-ring inline-flex min-h-11 items-center rounded px-3 text-sm underline"
             href="/projects/{projectId}/files/{card.file_id}/versions"
@@ -182,5 +216,7 @@
         {@render rows(other)}
       </section>
     {/if}
+
+    <CardViewer cards={viewerCards} bind:openId={viewing} />
   {/if}
 </div>

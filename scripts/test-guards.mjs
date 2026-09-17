@@ -1207,4 +1207,47 @@ export const guards = [
     testName: 'reports the deck as mixed while only some of its cards are ticked',
     runner: 'web',
   },
+  {
+    // Wrapping is the plausible alternative, and it is the wrong one: the ends
+    // of a deck are where somebody is checking whether they have seen every
+    // card, and a viewer that silently starts again says they have not.
+    name: 'the card viewer stops at the ends of the deck',
+    package: 'web',
+    file: 'src/components/CardViewer.svelte',
+    find: '    if (next < 0 || next >= cards.length) return;',
+    replace:
+      '    if (next < 0 || next >= cards.length) {\n' +
+      '      openId = cards[(next + cards.length) % cards.length].id;\n' +
+      '      return;\n' +
+      '    }',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'stops at the first and the last card rather than wrapping round',
+    runner: 'web',
+  },
+  {
+    // A modal takes the focus and has to give it back. Without this, closing
+    // one leaves the focus on nothing at all, and a keyboard is back at the top
+    // of a sixty-card list every time it looks at a card.
+    name: 'closing the card viewer returns the focus to what opened it',
+    package: 'web',
+    file: 'src/components/CardViewer.svelte',
+    find: '      opener?.focus();\n',
+    replace: '',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'closes on Escape and gives the focus back to the row that opened it',
+    runner: 'web',
+  },
+  {
+    // The same pinning the grid behind it already does, and the one thing this
+    // screen exists not to get wrong: a card opened from a run in February has
+    // to be the artwork that run left, not the artwork the file carries today.
+    name: 'a card opened from a history screen is opened at that run\u2019s version',
+    package: 'web',
+    file: 'src/routes/DeckAsOf.svelte',
+    find: '              version: card.file_version_number,\n',
+    replace: '',
+    tests: ['src/routes/DeckAsOf.svelte.test.ts'],
+    testName: 'opens a card at the version that import left, not at today\u2019s artwork',
+    runner: 'web',
+  },
 ];

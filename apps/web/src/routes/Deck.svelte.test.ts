@@ -1,6 +1,6 @@
 import '../api/testUtils.ts';
 import { FakeWebSocket, fetchMock, jsonResponse } from '../api/testUtils.ts';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Deck from './Deck.svelte';
 import { deckImports } from '../lib/deckImports.svelte.ts';
@@ -564,5 +564,98 @@ describe('Deck editor', () => {
     // does.
     expect(await fireEvent.keyDown(copies[0], { key: 'Tab', shiftKey: true })).toBe(true);
     expect(await fireEvent.keyDown(copies[2], { key: 'Tab' })).toBe(true);
+  });
+  // A 48px square says nothing about a bleed or a typo, and the artwork is the
+  // one thing this screen holds that a person came to look at.
+  describe('the card viewer', () => {
+    // Focused first, the way a real click leaves it: the viewer hands the focus
+    // back to whatever opened it, and jsdom's click moves it nowhere by itself.
+    async function openCard(position: number): Promise<HTMLElement> {
+      const triggers = await screen.findAllByRole('button', { name: /^View card-/u });
+      triggers[position].focus();
+      await fireEvent.click(triggers[position]);
+      return triggers[position];
+    }
+
+    function heading(): string {
+      return within(screen.getByRole('dialog')).getByRole('heading').textContent?.trim() ?? '';
+    }
+
+    it('opens the card that was clicked and walks the deck with the arrow keys', async () => {
+      stubDeckWithCards();
+
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await openCard(0);
+
+      expect(heading()).toBe('card-1.png');
+      // What the row said and the artwork cannot: which of them this is, and
+      // how many of it the deck asks for.
+      expect(
+        within(screen.getByRole('dialog')).getByText('1 of 3 \u00b7 1 copy')
+      ).toBeInTheDocument();
+
+      await fireEvent.keyDown(window, { key: 'ArrowRight' });
+      expect(heading()).toBe('card-2.png');
+
+      await fireEvent.keyDown(window, { key: 'ArrowDown' });
+      expect(heading()).toBe('card-3.png');
+
+      await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+      expect(heading()).toBe('card-2.png');
+    });
+
+    it('stops at the first and the last card rather than wrapping round', async () => {
+      stubDeckWithCards();
+
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await openCard(0);
+
+      await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+      expect(heading()).toBe('card-1.png');
+      expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+
+      for (let step = 0; step < 4; step += 1) {
+        await fireEvent.keyDown(window, { key: 'ArrowRight' });
+      }
+      expect(heading()).toBe('card-3.png');
+      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    });
+
+    it('closes on Escape and gives the focus back to the row that opened it', async () => {
+      stubDeckWithCards();
+
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      const trigger = await openCard(1);
+      expect(document.activeElement).toBe(screen.getByRole('dialog'));
+
+      await fireEvent.keyDown(window, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    // The open card is named by id rather than by position. Held by position,
+    // this would go on showing whatever the deck moved into that slot.
+    it('closes when the card it is showing leaves the deck', async () => {
+      stubDeckWithCards();
+      realtime.start('tok');
+      FakeWebSocket.last().open();
+
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await openCard(0);
+      expect(heading()).toBe('card-1.png');
+
+      FakeWebSocket.last().receive({
+        type: 'deck_updated',
+        project_id: PROJECT,
+        data: {
+          deck: DECK_ROW,
+          cards: JSON.parse(deckPayload([1, 1, 1])).cards.slice(1),
+          actor_user_id: 'someone-else',
+        },
+      });
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
   });
 });
