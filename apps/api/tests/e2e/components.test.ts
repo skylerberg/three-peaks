@@ -231,6 +231,99 @@ describe('components', () => {
     });
   });
 
+  describe('the order a section is drawn in', () => {
+    let section: string;
+    let pieces: string[];
+    let box: string;
+
+    async function make(name: string, kind = 'wood'): Promise<string> {
+      const res = await owner.api.post('/api/components', { project_id: section, kind, name });
+      return (await res.json()).id as string;
+    }
+
+    async function listed(kind = 'wood'): Promise<string[]> {
+      const res = await owner.api.get(`/api/components?project_id=${section}&kind=${kind}`);
+      return (await res.json()).components.map((one: { id: string }) => one.id);
+    }
+
+    function reorder(ids: string[], user: TestUser = owner, kind = 'wood') {
+      return user.api.put('/api/components/order', {
+        project_id: section,
+        kind,
+        component_ids: ids,
+      });
+    }
+
+    beforeAll(async () => {
+      section = (await (await owner.api.post('/api/projects', { name: 'Ordering' })).json()).id;
+      await owner.api.put(`/api/projects/${section}/members`, {
+        email: viewer.email,
+        role: 'viewer',
+      });
+      // Named out of alphabetical order, so a listing that has quietly gone back
+      // to sorting by name fails rather than agreeing by accident.
+      pieces = [await make('Zebra'), await make('Ant'), await make('Mole')];
+      box = await make('One box', 'box');
+    });
+
+    it('draws a new component after the ones its section already holds', async () => {
+      expect(await listed()).toEqual(pieces);
+    });
+
+    it('takes the order it is given', async () => {
+      const wanted = [pieces[2], pieces[0], pieces[1]];
+      const res = await reorder(wanted);
+      expect(res.status).toBe(200);
+      expect((await res.json()).components.map((one: { id: string }) => one.id)).toEqual(wanted);
+      // Read back rather than trusted: the response is built from the same
+      // statement the write used, and a listing is what every other screen gets.
+      expect(await listed()).toEqual(wanted);
+    });
+
+    it('keeps a component created afterwards at the end', async () => {
+      const late = await make('Aardvark');
+      expect((await listed()).at(-1)).toBe(late);
+      await reorder((await listed()).filter((id) => id !== late));
+      await owner.api.delete(`/api/components/${late}`);
+    });
+
+    it('leaves every other section alone', async () => {
+      expect(await listed('box')).toEqual([box]);
+    });
+
+    it.each([
+      ['one left out', (ids: string[]) => ids.slice(1)],
+      ['one named twice', (ids: string[]) => [ids[0], ...ids]],
+      ['a component of another kind', (ids: string[]) => [...ids, box]],
+      ['an id belonging to nothing', (ids: string[]) => [...ids.slice(1), crypto.randomUUID()]],
+    ])('refuses an order with %s', async (_name, mangle) => {
+      const before = await listed();
+      const res = await reorder(mangle(before));
+      expect(res.status).toBe(422);
+      expect(await listed()).toEqual(before);
+    });
+
+    // A tombstone is not in the section, so the order cannot name it -- and the
+    // position it kept is what a restore brings it back to.
+    it('refuses a deleted component and restores one where it was', async () => {
+      const wanted = await listed();
+      const gone = wanted[1];
+      await owner.api.delete(`/api/components/${gone}`);
+
+      expect((await reorder(wanted)).status).toBe(422);
+      expect(await listed()).toEqual(wanted.filter((id) => id !== gone));
+
+      await owner.api.post(`/api/components/${gone}/restore`);
+      expect(await listed()).toEqual(wanted);
+    });
+
+    it('refuses a viewer with 403 and someone with no access with 404', async () => {
+      const wanted = await listed();
+      expect((await reorder(wanted, viewer)).status).toBe(403);
+      expect((await reorder(wanted, stranger)).status).toBe(404);
+    });
+  });
+
   describe('authorization', () => {
     let componentId: string;
 

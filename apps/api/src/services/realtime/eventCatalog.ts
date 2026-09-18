@@ -19,6 +19,7 @@ export const EVENT_CATALOG = {
   component_created: { carriesActor: true },
   component_updated: { carriesActor: true },
   component_deleted: { carriesActor: true },
+  component_order_changed: { carriesActor: true },
   deck_created: { carriesActor: true },
   deck_updated: { carriesActor: true },
   deck_deleted: { carriesActor: true },

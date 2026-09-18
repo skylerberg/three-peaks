@@ -1,12 +1,18 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
+import { sql } from 'kysely';
 import { type ComponentKind, defaultSettingsFor } from '@three-peaks/shared';
 import {
   assertComponentAccess,
   assertProjectAccess,
   assertProjectWrite,
 } from '../services/authorization.ts';
-import { listComponents, readComponent } from '../services/components.ts';
+import {
+  liveComponentOrder,
+  listComponents,
+  nextComponentPosition,
+  readComponent,
+} from '../services/components.ts';
 import { ownedStorageKeys } from '../services/files.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
 import { deleteStoredObjectsAfterCommit } from '../services/storage/index.ts';
@@ -19,6 +25,7 @@ import {
   componentQuerySchema,
   componentSchema,
   createComponentRequestSchema,
+  putComponentOrderRequestSchema,
   updateComponentRequestSchema,
 } from '../schemas/components.ts';
 import { purgeQuerySchema } from '../schemas/files.ts';
@@ -119,6 +126,7 @@ componentsRouter.post(
           project_id: body.project_id,
           kind: body.kind,
           name: body.name,
+          position: await nextComponentPosition(c.get('db'), body.project_id, body.kind),
           settings,
           created_by: c.get('user').id,
         })
@@ -139,6 +147,85 @@ componentsRouter.post(
       created
     );
     return c.json(created, 201);
+  }
+);
+
+componentsRouter.put(
+  '/order',
+  describeRoute({
+    tags: ['Components'],
+    summary: 'Reorder a section',
+    description:
+      'The whole ordered list of one kind in one request, the way a deck’s cards are replaced. The ids have to be exactly the section’s live components, each once: a reorder arranges what is there and can neither add nor remove anything, so anything else is a client working from a listing that has moved on.',
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'The section in its new order',
+        content: { 'application/json': { schema: resolver(componentListSchema) } },
+      },
+      ...forbiddenErrorResponse,
+      ...validationErrorResponse,
+      ...standardErrors,
+    },
+  }),
+  jsonValidator(putComponentOrderRequestSchema),
+  async (c) => {
+    const body = c.req.valid('json') as {
+      project_id: string;
+      kind: ComponentKind;
+      component_ids: string[];
+    };
+    await assertProjectWrite(c, body.project_id);
+    const db = c.get('db');
+
+    const held = await liveComponentOrder(db, body.project_id, body.kind);
+    const wanted = body.component_ids;
+    const holds = new Map(held.map((row) => [row.id, row.position]));
+    if (
+      new Set(wanted).size !== wanted.length ||
+      wanted.length !== held.length ||
+      wanted.some((id) => !holds.has(id))
+    ) {
+      throw new AppError(
+        422,
+        'The order has to name each of this section’s components exactly once'
+      );
+    }
+
+    // Only the rows that move, so a list dropped back where it came from writes
+    // nothing and announces nothing -- which is what most drags end as.
+    const moved = wanted
+      .map((id, position) => ({ id, position }))
+      .filter((row) => holds.get(row.id) !== row.position);
+
+    if (moved.length > 0) {
+      // `position` and nothing else, for the reason orderDeckToExport gives at
+      // its own statement: a position is an index into one list rather than a
+      // fact about the row, and writing the rest would take locks this has no
+      // business taking.
+      await sql`
+        update component set position = place.position
+        from (values ${sql.join(
+          moved.map((row) => sql`(${row.id}::uuid, ${row.position}::int)`)
+        )}) as place(id, position)
+        where component.id = place.id
+      `.execute(db);
+    }
+
+    const components = await listComponents(c, body.project_id, body.kind);
+    if (moved.length > 0) {
+      // The section as it now stands, because that is what the screen draws --
+      // a list of ids would send every client that has it open back for the
+      // rows they already hold.
+      publishAfterCommit(
+        c.get('postCommitHooks'),
+        c.get('user').id,
+        'component_order_changed',
+        body.project_id,
+        { kind: body.kind, components }
+      );
+    }
+    return c.json({ components });
   }
 );
 

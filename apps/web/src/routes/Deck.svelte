@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { flip } from 'svelte/animate';
+  import { SOURCES, TRIGGERS, type DndEvent, dragHandleZone } from 'svelte-dnd-action';
   import {
     CARD_PRESETS,
     DECK_QUANTITY_LIMITS,
@@ -14,10 +16,12 @@
   import CardViewer from '../components/CardViewer.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import Button from '../components/ui/Button.svelte';
+  import DragHandle from '../components/ui/DragHandle.svelte';
   import Input from '../components/ui/Input.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
   import { deckImports } from '../lib/deckImports.svelte.ts';
+  import { DROP_TARGET_STYLE, flipDuration, isDragPlaceholder } from '../lib/dnd.ts';
   import { type DeckCard, decks } from '../lib/decks.svelte.ts';
   import { files } from '../lib/files.svelte.ts';
   import { realtime } from '../lib/realtime.svelte.ts';
@@ -32,6 +36,10 @@
   let { projectId, deckId }: Props = $props();
 
   type File = components['schemas']['File'];
+  // svelte-dnd-action keys its items on `id`, and a deck card's own key is the
+  // file it draws. One field, added here and taken off again on the way to the
+  // save.
+  type DraggableCard = DeckCard & { id: string };
 
   let error = $state<string | null>(null);
   let canEdit = $state(false);
@@ -41,6 +49,14 @@
   let name = $state('');
   let backFile = $state<File | null>(null);
   let viewing = $state<string | null>(null);
+  // The list the zone draws, which is the store's except in two windows: while
+  // a drag is live, and for the round trip after a drop. The save answers with
+  // the order it wrote, and re-reading the store in between is what makes a
+  // dropped card jump back to where it came from and then forward again.
+  let localCards = $state<DraggableCard[]>([]);
+  // Plain, not `$state`: the sync below has to read it without subscribing to
+  // it, or the drag ending would re-run that effect and undo the drop.
+  let dragging = false;
 
   const deck = $derived(decks.deck);
   const cards = $derived(decks.cards);
@@ -179,6 +195,15 @@
     void deckImports.loadBinding(project, id).catch(() => {});
   });
 
+  // `dragging` is deliberately not read reactively: a drag ending would
+  // otherwise re-run this and draw the store's order over the one just dropped,
+  // for the round trip until the save answers.
+  $effect(() => {
+    const next = cards;
+    if (dragging) return;
+    localCards = next.map((card) => ({ ...card, id: card.file_id }));
+  });
+
   function asInput(list: readonly DeckCard[]) {
     return list.map((card) => ({ file_id: card.file_id, quantity: card.quantity }));
   }
@@ -278,8 +303,11 @@
 
   function setQuantity(fileId: string, quantity: number) {
     const clamped = Math.max(minQuantity, Math.min(maxQuantity, Math.round(quantity)));
+    // Off the drawn list rather than the store's: a save is the whole list, and
+    // for the round trip after a drop the store is still holding the order the
+    // drop replaced -- which this would then write back.
     void saveCards(
-      cards.map((card) => (card.file_id === fileId ? { ...card, quantity: clamped } : card))
+      localCards.map((card) => (card.file_id === fileId ? { ...card, quantity: clamped } : card))
     );
   }
 
@@ -302,12 +330,43 @@
     next.focus();
   }
 
-  function move(index: number, by: number) {
-    const next = [...cards];
-    const target = index + by;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    void saveCards(next);
+  function drawCards(): DraggableCard[] {
+    return cards.map((card) => ({ ...card, id: card.file_id }));
+  }
+
+  function handleConsider(event: CustomEvent<DndEvent<DraggableCard>>) {
+    localCards = event.detail.items.filter((card) => !isDragPlaceholder(card.id));
+    // Where a keyboard drag ends. The arrows finalize on every press, and only
+    // this says the card has been put down -- saving on each of those would be
+    // a request per keystroke and a realtime event per keystroke behind it.
+    if (event.detail.info.trigger === TRIGGERS.DRAG_STOPPED) {
+      dragging = false;
+      void commitOrder();
+      return;
+    }
+    dragging = true;
+  }
+
+  function handleFinalize(event: CustomEvent<DndEvent<DraggableCard>>) {
+    localCards = event.detail.items.filter((card) => !isDragPlaceholder(card.id));
+    if (event.detail.info.source === SOURCES.KEYBOARD) return;
+    dragging = false;
+    void commitOrder();
+  }
+
+  // A card put back where it came from is not a move: saving one would renumber
+  // the deck and fan an event out to every other tab for nothing.
+  async function commitOrder() {
+    const held = cards;
+    const unchanged =
+      localCards.length === held.length &&
+      localCards.every((card, index) => card.file_id === held[index]?.file_id);
+    if (unchanged) {
+      // Whatever landed while the drag was live has been held back until now.
+      localCards = drawCards();
+      return;
+    }
+    await saveCards(localCards);
   }
 
   function applyPreset(id: string) {
@@ -544,16 +603,39 @@
             : ''}
         </p>
       {:else}
-        <ul class="flex flex-col gap-2">
-          {#each cards as card, index (card.file_id)}
+        <ul
+          class="flex flex-col gap-2"
+          aria-label="Cards, in the order they print"
+          use:dragHandleZone={{
+            items: localCards,
+            type: 'deck-cards',
+            flipDurationMs: flipDuration(),
+            dropTargetStyle: DROP_TARGET_STYLE,
+            dropFromOthersDisabled: true,
+            dragDisabled: !canEdit,
+          }}
+          onconsider={handleConsider}
+          onfinalize={handleFinalize}
+        >
+          {#each localCards as card (card.id)}
             {@const dpi = resolution(card)}
             {@const isBack = card.file_id === backFileId}
+            <!-- The gap the lifted card left behind. It is a clone of that card
+                 with only its id swapped, so every control on it is disabled or
+                 absent: each would address an id no card has. -->
+            {@const inert = isDragPlaceholder(card.id)}
             <li
+              animate:flip={{ duration: flipDuration() }}
+              aria-label={card.file.filename}
               class="flex flex-wrap items-center gap-3 rounded-md border border-edge bg-surface p-2"
             >
+              {#if canEdit && !inert}
+                <DragHandle label="Reorder {card.file.filename}" />
+              {/if}
               <button
                 type="button"
                 class="focus-ring flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
+                disabled={inert}
                 onclick={() => (viewing = card.file_id)}
               >
                 <span class="sr-only">View</span>
@@ -577,31 +659,15 @@
                   min={minQuantity}
                   max={maxQuantity}
                   step="1"
-                  disabled={!canEdit}
+                  disabled={!canEdit || inert}
                   onfocus={selectAll}
                   onkeydown={moveBetweenCopies}
                   onchange={(event) => setQuantity(card.file_id, Number(event.currentTarget.value))}
                 />
               </label>
 
-              {#if canEdit}
+              {#if canEdit && !inert}
                 <div class="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    aria-label="Move {card.file.filename} earlier"
-                    disabled={index === 0}
-                    onclick={() => move(index, -1)}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    aria-label="Move {card.file.filename} later"
-                    disabled={index === cards.length - 1}
-                    onclick={() => move(index, 1)}
-                  >
-                    ↓
-                  </Button>
                   <Button variant="ghost" onclick={() => void moveOut(card)}>To Assets</Button>
                   <Button variant="ghost" onclick={() => void removeCard(card)}>Delete</Button>
                 </div>

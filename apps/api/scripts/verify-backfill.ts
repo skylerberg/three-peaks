@@ -1,7 +1,8 @@
 /**
  * Runs the migrations that rewrite existing rows against rows shaped like the
- * ones a project holds, on a scratch database of its own: 0009's homes backfill
- * and 0015's repair of deck cards that lost their place.
+ * ones a project holds, on a scratch database of its own: 0009's homes backfill,
+ * 0015's repair of deck cards that lost their place, and 0017 numbering a
+ * section that until then had only its names.
  *
  * Not a `check:*` script and not in the gate: a backfill runs once, against
  * data no test fixture has. What this is for is the hour before that run --
@@ -311,6 +312,84 @@ try {
   check('and nothing else was added', cards.length === 4, JSON.stringify(cards));
 
   await repaired.end();
+
+  // 0017, rehearsed the same way: components as the release before it held
+  // them, which is to say with no position at all. What the backfill has to be
+  // is invisible -- every section comes back in the order its names already
+  // gave it, and only a drag moves anything afterwards.
+  const named = new pg.Client({
+    host: env.db.hostname,
+    port: env.db.port,
+    user: env.db.user,
+    password: env.db.password,
+    database: scratch,
+  });
+  await named.connect();
+
+  const PROJECT = '22222222-2222-4222-8222-222222222222';
+  const plantComponent = async (name: string, kind: string, deletedAt: string | null) => {
+    await named.query(
+      `insert into component (id, project_id, kind, name, settings, created_by, deleted_at)
+       values (gen_random_uuid(), $1, $2, $3, $4::jsonb, '11111111-1111-4111-8111-111111111111', $5)`,
+      [PROJECT, kind, name, JSON.stringify({ kind }), deletedAt]
+    );
+  };
+  // Inserted in an order that is neither the alphabet nor its reverse, and
+  // cased against it: the index this replaces folded case, so a backfill that
+  // sorts on the raw name puts every capital ahead of every lower-case one.
+  await plantComponent('Zebra piece', 'wood', null);
+  await plantComponent('acorn piece', 'wood', null);
+  await plantComponent('Mallet', 'wood', null);
+  // A tombstone is numbered too. Left out, it would come back at the head of
+  // the section on the day somebody restored it.
+  await plantComponent('deleted piece', 'wood', new Date().toISOString());
+  await plantComponent('Big box', 'box', null);
+  await plantComponent('Another box', 'box', null);
+  // `meeple` is in this section too -- it is the component 0009 made out of a
+  // loose dial-in, further up.
+  await named.end();
+
+  await stepBackPast('0017_component_order');
+  migrate();
+
+  const numbered = new pg.Client({
+    host: env.db.hostname,
+    port: env.db.port,
+    user: env.db.user,
+    password: env.db.password,
+    database: scratch,
+  });
+  await numbered.connect();
+
+  const sectionOf = async (kind: string) =>
+    (
+      await numbered.query(
+        `select name, position from component where project_id = $1 and kind = $2 order by position`,
+        [PROJECT, kind]
+      )
+    ).rows as { name: string; position: number }[];
+
+  const wood = await sectionOf('wood');
+  check(
+    'a section is numbered in the order its names already read in',
+    wood.map((row) => row.name).join(', ') ===
+      'acorn piece, deleted piece, Mallet, meeple, Zebra piece',
+    JSON.stringify(wood)
+  );
+  check(
+    'from zero, one apart',
+    wood.every((row, index) => row.position === index),
+    JSON.stringify(wood)
+  );
+
+  const boxes = await sectionOf('box');
+  check(
+    'every section is numbered from its own start',
+    boxes.map((row) => `${row.name}:${row.position}`).join(', ') === 'Another box:0, Big box:1',
+    JSON.stringify(boxes)
+  );
+
+  await numbered.end();
 } finally {
   const teardown = maintenance();
   await teardown.connect();

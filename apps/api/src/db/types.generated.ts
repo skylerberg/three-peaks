@@ -70,6 +70,7 @@ export interface Component {
   id: string;
   kind: string;
   name: string;
+  position: Generated<number>;
   project_id: string;
   settings: Json;
   updated_at: Generated<Timestamp>;

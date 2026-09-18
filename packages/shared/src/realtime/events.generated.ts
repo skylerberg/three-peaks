@@ -8,6 +8,7 @@ export interface components {
     RealtimeEvent:
       | components['schemas']['ComponentCreatedEvent']
       | components['schemas']['ComponentDeletedEvent']
+      | components['schemas']['ComponentOrderChangedEvent']
       | components['schemas']['ComponentUpdatedEvent']
       | components['schemas']['DeckCreatedEvent']
       | components['schemas']['DeckDeletedEvent']
@@ -63,6 +64,7 @@ export interface components {
         kind: string;
         missing_roles: ('artwork' | 'cut')[];
         name: string;
+        position: number;
         project_id: string;
         settings:
           | {
@@ -152,6 +154,7 @@ export interface components {
         kind: string;
         missing_roles: ('artwork' | 'cut')[];
         name: string;
+        position: number;
         project_id: string;
         purged: boolean;
         settings:
@@ -207,6 +210,99 @@ export interface components {
         updated_at: string;
       };
     };
+    ComponentOrderChangedEvent: {
+      /** @constant */
+      type: 'component_order_changed';
+      project_id: string;
+      data: {
+        actor_user_id: string;
+        components: {
+          created_at: string;
+          created_by: string;
+          deleted_at: string | null;
+          files: {
+            file: {
+              byte_size: number;
+              component_id: string | null;
+              component_role: string | null;
+              content_type: string;
+              created_at: string;
+              deck_id: string | null;
+              deleted_at: string | null;
+              filename: string;
+              folder_id: string | null;
+              id: string;
+              image_height: number | null;
+              image_width: number | null;
+              name_locked: boolean;
+              project_id: string;
+              updated_at: string;
+              uploaded_by: string;
+            };
+            /** @enum {unknown} */
+            role: 'artwork' | 'cut';
+          }[];
+          id: string;
+          kind: string;
+          missing_roles: ('artwork' | 'cut')[];
+          name: string;
+          position: number;
+          project_id: string;
+          settings:
+            | {
+                back_color: string;
+                edge_color: string;
+                height_mm: number;
+                /** @constant */
+                kind: 'punchboard';
+                seed: number;
+                /** @enum {unknown} */
+                sheet_state: 'intact' | 'punched';
+                thickness_mm: number;
+                width_mm: number;
+              }
+            | {
+                bevel_mm: number;
+                grain_color: string;
+                grain_scale: number;
+                /** @constant */
+                kind: 'wood';
+                longest_side_mm: number;
+                printed: boolean;
+                seed: number;
+                simplify_tolerance: number;
+                thickness_mm: number;
+                /** @enum {unknown} */
+                trace_source: 'alpha' | 'luminance';
+                trace_threshold: number;
+                wood_color: string;
+              }
+            | {
+                corner_bevel_mm: number;
+                depth_mm: number;
+                height_mm: number;
+                /** @constant */
+                kind: 'box';
+                seed: number;
+                width_mm: number;
+              }
+            | {
+                edge_color: string;
+                /** @enum {unknown} */
+                fold: 'bifold' | 'none' | 'quadfold';
+                fold_gap_mm: number;
+                height_mm: number;
+                /** @constant */
+                kind: 'board';
+                seed: number;
+                thickness_mm: number;
+                width_mm: number;
+              };
+          updated_at: string;
+        }[];
+        kind: string;
+      };
+    };
     ComponentUpdatedEvent: {
       /** @constant */
       type: 'component_updated';
@@ -242,6 +338,7 @@ export interface components {
         kind: string;
         missing_roles: ('artwork' | 'cut')[];
         name: string;
+        position: number;
         project_id: string;
         settings:
           | {

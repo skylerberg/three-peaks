@@ -13,6 +13,7 @@ interface ComponentRow {
   project_id: string;
   kind: string;
   name: string;
+  position: number;
   settings: unknown;
   created_by: string;
   created_at: Date | string;
@@ -25,6 +26,7 @@ const COMPONENT_COLUMNS = [
   'component.project_id as project_id',
   'component.kind as kind',
   'component.name as name',
+  'component.position as position',
   'component.settings as settings',
   'component.created_by as created_by',
   'component.created_at as created_at',
@@ -44,6 +46,7 @@ function serializeComponent(row: ComponentRow, files: ComponentFile[]) {
     project_id: row.project_id,
     kind: row.kind,
     name: row.name,
+    position: row.position,
     settings: row.settings as ComponentSettings,
     created_by: row.created_by,
     created_at: new Date(row.created_at).toISOString(),
@@ -92,6 +95,10 @@ export async function listComponents(
     .where('component.project_id', '=', projectId)
     .where('component.deleted_at', 'is', null)
     .$if(kind !== undefined, (qb) => qb.where('component.kind', '=', kind as string))
+    .orderBy('component.position', 'asc')
+    // A tombstone keeps the position it had, so a restore can collide with
+    // whatever took it. The name settles that rather than leaving two rows to
+    // arrive in whichever order the plan happened to read them.
     .orderBy('component.name', 'asc')
     .execute();
 
@@ -113,4 +120,42 @@ export async function readComponent(c: Pick<AppContext, 'get'>, componentId: str
 
   const files = await filesFor(db, [componentId]);
   return serializeComponent(row, files.get(componentId) ?? []);
+}
+
+// Where a component created now belongs: after everything its section already
+// holds, tombstones included. A restore brings a row back at the position it
+// had, so numbering a new one over the top of one that is merely deleted would
+// put two components on one number for no reason.
+export async function nextComponentPosition(
+  db: Connection,
+  projectId: string,
+  kind: ComponentKind
+): Promise<number> {
+  const row = await db
+    .selectFrom('component')
+    .select((eb) => eb.fn.max('component.position').as('highest'))
+    .where('component.project_id', '=', projectId)
+    .where('component.kind', '=', kind)
+    .executeTakeFirst();
+  const highest = row?.highest ?? null;
+  return highest === null ? 0 : highest + 1;
+}
+
+// The rows a section draws, in the order it draws them. A reorder request has
+// to name exactly this list, which is what makes the order it sends an
+// arrangement of the section rather than a claim about what is in it.
+export async function liveComponentOrder(
+  db: Connection,
+  projectId: string,
+  kind: ComponentKind
+): Promise<{ id: string; position: number }[]> {
+  return db
+    .selectFrom('component')
+    .select(['component.id as id', 'component.position as position'])
+    .where('component.project_id', '=', projectId)
+    .where('component.kind', '=', kind)
+    .where('component.deleted_at', 'is', null)
+    .orderBy('component.position', 'asc')
+    .orderBy('component.name', 'asc')
+    .execute();
 }

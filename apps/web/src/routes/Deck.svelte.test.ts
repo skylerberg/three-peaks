@@ -2,6 +2,7 @@ import '../api/testUtils.ts';
 import { FakeWebSocket, fetchMock, jsonResponse } from '../api/testUtils.ts';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SOURCES, TRIGGERS } from 'svelte-dnd-action';
 import Deck from './Deck.svelte';
 import { deckImports } from '../lib/deckImports.svelte.ts';
 import { decks } from '../lib/decks.svelte.ts';
@@ -110,6 +111,27 @@ function stubDeckWithCards(backFileId: string | null = null): void {
   });
 }
 
+// The same deck seen by somebody who cannot edit it: the handles, the copy
+// fields and the row's own buttons are all the editor's.
+function stubDeckAsViewer(): void {
+  stubDeckWithCards();
+  const withCards = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : (input as Request).url;
+    if (url.includes(`/api/projects/${PROJECT}`)) {
+      return jsonResponse(200, {
+        id: PROJECT,
+        name: 'Colori',
+        description: null,
+        role: 'viewer',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
+    }
+    return withCards(input, init);
+  });
+}
+
 // One live card and one whose image has been deleted, which is a deck the
 // editor has to keep working in: the row stays in the list, marked.
 function stubDeckWithDeletedCard(backFileId: string | null = null): void {
@@ -174,6 +196,40 @@ function fileRowReads(fileId: string): number {
   return urlsRequested().filter((url) => url.endsWith(`/api/files/${fileId}`)).length;
 }
 
+// The names the rows carry, in the order they are drawn.
+function drawnCards(): string[] {
+  return screen
+    .getAllByRole('listitem')
+    .map((row) => row.getAttribute('aria-label') ?? '')
+    .filter((label) => label.startsWith('card-'));
+}
+
+// Leaves the save unanswered until it is let go, which is the only way to look
+// at the screen during the round trip a drop opens.
+function holdTheCardsPut(): { answer: () => void } {
+  stubDeckWithCards();
+  const otherwise = fetchMock.getMockImplementation()!;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  fetchMock.mockImplementation(async (input, init) => {
+    const request = typeof input === 'string' ? null : (input as Request);
+    if (request?.method === 'PUT' && request.url.includes(`/api/decks/${DECK}/cards`)) {
+      await held;
+    }
+    return otherwise(input, init);
+  });
+  return { answer: release };
+}
+
+function putsOfCards(): number {
+  return fetchMock.mock.calls.filter(([input]) => {
+    const request = typeof input === 'string' ? null : (input as Request);
+    return request?.method === 'PUT' && request.url.includes(`/api/decks/${DECK}/cards`);
+  }).length;
+}
+
 async function savedCards(): Promise<{ file_id: string; quantity: number }[] | null> {
   const call = fetchMock.mock.calls.find(([input]) => {
     const request = typeof input === 'string' ? null : (input as Request);
@@ -204,6 +260,39 @@ function stubApi(): void {
     }
     return jsonResponse(404, { error: `nothing stubbed for ${url}` });
   });
+}
+
+// The events svelte-dnd-action dispatches on the zone, which is the whole of
+// what the screen sees of a drag. jsdom has no pointer, no layout and no
+// animation, so the gesture itself belongs to check:reorder; what is settled
+// here is what the screen does with the list it is handed.
+type DragItem = { id: string; file_id: string; quantity: number };
+
+function zone(): HTMLElement {
+  return screen.getByRole('list', { name: 'Cards, in the order they print' });
+}
+
+function itemsAfterMoving(from: number, to: number): DragItem[] {
+  const items = decks.cards.map((card) => ({ ...card, id: card.file_id }));
+  const [moved] = items.splice(from, 1);
+  items.splice(to, 0, moved);
+  return items;
+}
+
+function dndEvent(name: string, items: DragItem[], info: Record<string, unknown>): CustomEvent {
+  return new CustomEvent(name, { detail: { items, info: { id: items[0].id, ...info } } });
+}
+
+async function dropCard(from: number, to: number): Promise<void> {
+  const items = itemsAfterMoving(from, to);
+  await fireEvent(
+    zone(),
+    dndEvent('consider', items, { trigger: TRIGGERS.DRAG_STARTED, source: SOURCES.POINTER })
+  );
+  await fireEvent(
+    zone(),
+    dndEvent('finalize', items, { trigger: TRIGGERS.DROPPED_INTO_ZONE, source: SOURCES.POINTER })
+  );
 }
 
 describe('Deck editor', () => {
@@ -663,6 +752,115 @@ describe('Deck editor', () => {
       });
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+  });
+
+  // The arrows are gone: a card is dragged by its handle, and the list the drop
+  // leaves behind is what gets saved.
+  describe('reordering by drag', () => {
+    beforeEach(() => {
+      stubDeckWithCards();
+    });
+
+    it('saves the whole list in the order the drop left it', async () => {
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+      const wanted = itemsAfterMoving(2, 0).map((card) => card.file_id);
+
+      await dropCard(2, 0);
+
+      await waitFor(async () =>
+        expect((await savedCards())?.map((card) => card.file_id)).toEqual(wanted)
+      );
+    });
+
+    // The drawn list is the dropped one until the save answers. Reading the
+    // store back in between is what made a dropped card jump home and then
+    // forward again, on every drop. Held open deliberately: with an answer that
+    // arrives immediately, a screen that draws the store would still be caught
+    // by the response and the assertion would pass for the wrong reason.
+    it('draws the dropped order while the save is in flight', async () => {
+      const save = holdTheCardsPut();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+
+      await dropCard(2, 0);
+      await wait(SETTLE_MS);
+
+      expect(drawnCards()[0]).toBe('card-3.png');
+      save.answer();
+    });
+
+    it('saves nothing for a card dropped where it came from', async () => {
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+
+      await dropCard(1, 1);
+      await wait(SETTLE_MS);
+
+      expect(await savedCards()).toBeNull();
+    });
+
+    // A keyboard drag finalizes on every arrow press and ends with a consider.
+    // Saving on each finalize would be a request and a realtime event per
+    // keystroke, all but the last of them describing an arrangement nobody
+    // asked for.
+    it('saves once at the end of a keyboard drag, not once per arrow', async () => {
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+
+      const first = itemsAfterMoving(2, 1);
+      const second = itemsAfterMoving(2, 0);
+      await fireEvent(
+        zone(),
+        dndEvent(
+          'consider',
+          decks.cards.map((card) => ({ ...card, id: card.file_id })),
+          {
+            trigger: TRIGGERS.DRAG_STARTED,
+            source: SOURCES.KEYBOARD,
+          }
+        )
+      );
+      await fireEvent(
+        zone(),
+        dndEvent('finalize', first, {
+          trigger: TRIGGERS.DROPPED_INTO_ZONE,
+          source: SOURCES.KEYBOARD,
+        })
+      );
+      await fireEvent(
+        zone(),
+        dndEvent('finalize', second, {
+          trigger: TRIGGERS.DROPPED_INTO_ZONE,
+          source: SOURCES.KEYBOARD,
+        })
+      );
+      await wait(SETTLE_MS);
+      expect(await savedCards()).toBeNull();
+
+      await fireEvent(
+        zone(),
+        dndEvent('consider', second, {
+          trigger: TRIGGERS.DRAG_STOPPED,
+          source: SOURCES.KEYBOARD,
+        })
+      );
+
+      await waitFor(async () =>
+        expect((await savedCards())?.map((card) => card.file_id)).toEqual(
+          second.map((card) => card.file_id)
+        )
+      );
+      expect(putsOfCards()).toBe(1);
+    });
+
+    it('offers no handle to someone who cannot edit', async () => {
+      stubDeckAsViewer();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+
+      expect(screen.queryByLabelText('Reorder card-1.png')).toBeNull();
     });
   });
 });
