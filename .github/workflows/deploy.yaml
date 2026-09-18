@@ -17,13 +17,26 @@ jobs:
   # Path filtering lives in a job rather than in `on.push.paths`, so the two
   # halves can be ordered against each other below.
   #
+  # The rule each image's filter follows: it covers every path that image's
+  # Dockerfile COPYs out of the build context, and nothing else. A filter
+  # narrower than its image skips a deploy that mattered, and production then
+  # serves the previous release with nothing saying so -- which is why
+  # `check:dockerfiles` reads these lists against the COPY lines rather than
+  # leaving them to be kept in step by hand.
+  #
   # One shared lockfile is the trade the monorepo makes: any dependency change
-  # touches pnpm-lock.yaml and matches both filters, so a web-only bump will
+  # touches pnpm-lock.yaml and matches every filter, so a web-only bump will
   # roll the API. That is accepted rather than overlooked -- the API deploy is
   # idempotent (the migration Job finds nothing pending, and the rollout is a
   # zero-downtime surge under a PDB). Dropping the lockfile from the API's
   # filter would be worse: a genuine API dependency bump would then ship an
-  # image built from a lockfile CI never tested.
+  # image built from a lockfile CI never tested, and a loose range re-resolving
+  # to a newer version changes the lockfile and nothing else.
+  #
+  # A consequence worth recognising rather than debugging: the API now sits at
+  # an older commit than main whenever a push does not reach it, so /health's
+  # `commit` disagreeing with main's HEAD is the filter working, not a deploy
+  # that failed.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -36,11 +49,16 @@ jobs:
         id: filter
         with:
           filters: |
+            # The sibling manifests below are in the image's context because a
+            # filtered install still validates the lockfile against the whole
+            # workspace; the Dockerfiles say so beside the COPY lines.
             api:
               - 'apps/api/**'
               - 'packages/shared/**'
               - 'infra/k8s/**'
-              - 'scripts/**'
+              - 'apps/web/package.json'
+              - 'apps/preview-edge/package.json'
+              - 'scripts/setup-hooks.mjs'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -54,6 +72,13 @@ jobs:
               - '.github/workflows/deploy.yaml'
             preview_edge:
               - 'apps/preview-edge/**'
+              - 'apps/api/package.json'
+              - 'apps/web/package.json'
+              - 'packages/shared/package.json'
+              - 'scripts/setup-hooks.mjs'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
               - '.github/workflows/deploy.yaml'
 
   api:

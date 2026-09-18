@@ -9,7 +9,8 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY apps/preview-edge/package.json ./apps/preview-edge/
 COPY packages/shared/package.json ./packages/shared/
-COPY scripts ./scripts
+# The root `prepare` runs during install; this is the only file it needs.
+COPY scripts/setup-hooks.mjs ./scripts/
 RUN pnpm install --frozen-lockfile --prod --filter "@three-peaks/preview-edge..."
 COPY apps/preview-edge ./apps/preview-edge
 
