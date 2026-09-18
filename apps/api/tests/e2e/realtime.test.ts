@@ -264,6 +264,81 @@ describe('realtime over a websocket', () => {
     socket.close();
   });
 
+  // A deck's totals leave out the cards whose images are deleted, and the decks
+  // listing hears about a deck through this event and nothing else -- a
+  // file_deleted names the file, not the numbers it moved.
+  describe('a deck whose card is deleted', () => {
+    type DeckUpdated = {
+      deck: { id: string; card_count: number; total_copies: number };
+      cards: { file_id: string; file: { deleted_at: string | null } }[];
+    };
+
+    async function deckWithOneCard(name: string) {
+      const deck = await (
+        await owner.api.post('/api/decks', {
+          project_id: projectId,
+          name,
+          card_width_mm: 63,
+          card_height_mm: 88,
+        })
+      ).json();
+      const fileId = await upload(`${name}.png`, { deck_id: deck.id });
+      return { deckId: deck.id as string, fileId };
+    }
+
+    function lastDeckUpdate(events: Record<string, unknown>[], since: number, deckId: string) {
+      return events
+        .slice(since)
+        .map((entry) => (entry.type === 'deck_updated' ? (entry.data as DeckUpdated) : null))
+        .findLast((data) => data?.deck.id === deckId);
+    }
+
+    it('announces the deck when the card is deleted, and again when it is restored', async () => {
+      const { socket, events } = await connect(owner.token);
+      const { deckId, fileId } = await deckWithOneCard('Loses a card');
+      await settle();
+
+      const beforeDelete = events.length;
+      await owner.api.delete(`/api/files/${fileId}`);
+      await settle();
+      const deleted = lastDeckUpdate(events, beforeDelete, deckId);
+      expect(deleted?.deck).toMatchObject({ card_count: 0, total_copies: 0 });
+      expect(deleted?.cards).toEqual([
+        expect.objectContaining({
+          file_id: fileId,
+          file: expect.objectContaining({ deleted_at: expect.any(String) }),
+        }),
+      ]);
+
+      // The card kept its place, so nothing about the arrangement moved -- the
+      // totals did.
+      const beforeRestore = events.length;
+      await owner.api.post(`/api/files/${fileId}/restore`);
+      await settle();
+      expect(lastDeckUpdate(events, beforeRestore, deckId)?.deck).toMatchObject({
+        card_count: 1,
+        total_copies: 1,
+      });
+
+      socket.close();
+    });
+
+    // A screen holding the deck sends back every row it was given, and one the
+    // cascade has already taken is refused.
+    it('announces the deck without the card once its bytes are purged', async () => {
+      const { socket, events } = await connect(owner.token);
+      const { deckId, fileId } = await deckWithOneCard('Loses a card for good');
+      await settle();
+
+      const before = events.length;
+      await owner.api.delete(`/api/files/${fileId}?purge=true`);
+      await settle();
+      expect(lastDeckUpdate(events, before, deckId)?.cards).toEqual([]);
+
+      socket.close();
+    });
+  });
+
   // One fixed shape: a rename carries the cards it did not touch, so no client
   // has to test which half of the payload turned up.
   it('carries both halves even when only the deck row moved', async () => {

@@ -193,8 +193,8 @@ function outstandingCard(
  * Every live card of every live deck in a project, with what it still owes.
  *
  * Deleted cards and deleted decks are left out rather than reported as up to
- * date: a tombstone has no bytes to put on paper, and the print screen already
- * draws one as unprintable.
+ * date: a tombstone has no bytes to put on paper, and the print screen does not
+ * list one.
  */
 export async function readOutstanding(
   c: Pick<AppContext, 'get'>,

@@ -1,5 +1,6 @@
-import { sql } from 'kysely';
+import { type ExpressionBuilder, sql } from 'kysely';
 import { MAX_DECK_CARDS } from '@three-peaks/shared';
+import type { DB } from '../db/types.ts';
 import { AppError } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
 import { FILE_COLUMNS, serializeFile } from './files.ts';
@@ -58,17 +59,25 @@ export function serializeDeck(row: DeckRow) {
 // The two totals every deck is listed with, as a correlated subquery each rather
 // than a join: a join to deck_card would multiply the deck rows and both numbers
 // would then have to be undone with a group by.
+//
+// Only live cards count. A deleted card keeps its row so a restore is exact,
+// but it prints nothing, and a total that included it would disagree with
+// every sheet the deck produces. The cap is the other question -- how many
+// rows a deck holds -- and `countDeckCards` answers it with the tombstones in.
 export function withCounts(db: Connection) {
+  const liveCards = (eb: ExpressionBuilder<DB, 'deck'>) =>
+    eb
+      .selectFrom('deck_card')
+      .innerJoin('file', 'file.id', 'deck_card.file_id')
+      .whereRef('deck_card.deck_id', '=', 'deck.id')
+      .where('file.deleted_at', 'is', null);
+
   return db.selectFrom('deck').select((eb) => [
     ...DECK_COLUMNS,
-    eb
-      .selectFrom('deck_card')
-      .whereRef('deck_card.deck_id', '=', 'deck.id')
+    liveCards(eb)
       .select((inner) => inner.fn.countAll<string>().as('count'))
       .as('card_count'),
-    eb
-      .selectFrom('deck_card')
-      .whereRef('deck_card.deck_id', '=', 'deck.id')
+    liveCards(eb)
       .select((inner) => inner.fn.sum<string>('deck_card.quantity').as('total'))
       .as('total_copies'),
   ]);

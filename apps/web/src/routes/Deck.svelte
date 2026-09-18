@@ -18,11 +18,13 @@
   import Button from '../components/ui/Button.svelte';
   import DragHandle from '../components/ui/DragHandle.svelte';
   import Input from '../components/ui/Input.svelte';
+  import MenuCheckbox from '../components/ui/MenuCheckbox.svelte';
+  import OverflowMenu from '../components/ui/OverflowMenu.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
   import { deckImports } from '../lib/deckImports.svelte.ts';
   import { DROP_TARGET_STYLE, flipDuration, isDragPlaceholder } from '../lib/dnd.ts';
-  import { type DeckCard, decks } from '../lib/decks.svelte.ts';
+  import { type DeckCard, decks, isLiveCard, withHiddenCards } from '../lib/decks.svelte.ts';
   import { files } from '../lib/files.svelte.ts';
   import { realtime } from '../lib/realtime.svelte.ts';
   import { link } from '../lib/router.svelte.ts';
@@ -49,6 +51,10 @@
   let name = $state('');
   let backFile = $state<File | null>(null);
   let viewing = $state<string | null>(null);
+  // Off by default: a deleted card prints nothing, and the list is the deck as
+  // it will come off the printer. The rows are still held, and still sent back
+  // with every save, so a restore lands where the card was.
+  let showDeleted = $state(false);
   // The list the zone draws, which is the store's except in two windows: while
   // a drag is live, and for the round trip after a drop. The save answers with
   // the order it wrote, and re-reading the store in between is what makes a
@@ -65,7 +71,10 @@
   const uid = $props.id();
 
   const presetId = $derived(deck ? (matchingCardPreset(deckCardSize(deck))?.id ?? '') : '');
-  const totalCopies = $derived(cards.reduce((sum, card) => sum + card.quantity, 0));
+  const liveCards = $derived(cards.filter(isLiveCard));
+  const deletedCount = $derived(cards.length - liveCards.length);
+  const shownCards = $derived(showDeleted ? cards : liveCards);
+  const totalCopies = $derived(liveCards.reduce((sum, card) => sum + card.quantity, 0));
   // Scoped to this deck: the route block is not keyed, so walking from one
   // deck to another swaps these props on the screen already mounted and the
   // row read for the deck just left would otherwise be drawn under this name.
@@ -109,13 +118,13 @@
   const backFileId = $derived(decks.deck?.back_file_id ?? null);
 
   const backChoices = $derived(
-    cards.filter((card) => card.file.deleted_at === null || card.file_id === backFileId)
+    cards.filter((card) => isLiveCard(card) || card.file_id === backFileId)
   );
 
   // The deck's own order, so the arrow keys in the viewer walk the list the
   // screen is showing.
   const viewerCards = $derived(
-    cards.map((card) => ({
+    shownCards.map((card) => ({
       id: card.file_id,
       fileId: card.file_id,
       title: card.file.filename,
@@ -199,7 +208,7 @@
   // otherwise re-run this and draw the store's order over the one just dropped,
   // for the round trip until the save answers.
   $effect(() => {
-    const next = cards;
+    const next = shownCards;
     if (dragging) return;
     localCards = next.map((card) => ({ ...card, id: card.file_id }));
   });
@@ -208,9 +217,10 @@
     return list.map((card) => ({ file_id: card.file_id, quantity: card.quantity }));
   }
 
+  // `next` is the drawn list; the rows hidden from it go back in where they were.
   async function saveCards(next: readonly DeckCard[]) {
     try {
-      await decks.saveCards(deckId, asInput(next));
+      await decks.saveCards(deckId, asInput(withHiddenCards(cards, next)));
     } catch (caught) {
       toasts.error(apiMessage(caught));
       // Refetch rather than roll back to a snapshot: the server's answer is the
@@ -331,7 +341,7 @@
   }
 
   function drawCards(): DraggableCard[] {
-    return cards.map((card) => ({ ...card, id: card.file_id }));
+    return shownCards.map((card) => ({ ...card, id: card.file_id }));
   }
 
   function handleConsider(event: CustomEvent<DndEvent<DraggableCard>>) {
@@ -357,7 +367,7 @@
   // A card put back where it came from is not a move: saving one would renumber
   // the deck and fan an event out to every other tab for nothing.
   async function commitOrder() {
-    const held = cards;
+    const held = shownCards;
     const unchanged =
       localCards.length === held.length &&
       localCards.every((card, index) => card.file_id === held[index]?.file_id);
@@ -408,8 +418,8 @@
         <a class="focus-ring rounded text-sm underline" href="/projects/{projectId}/decks">Decks</a>
         <h1 class="truncate text-2xl font-semibold">{deck.name}</h1>
         <p class="text-sm text-muted">
-          {cards.length}
-          {cards.length === 1 ? 'card' : 'cards'} · {totalCopies} to print
+          {liveCards.length}
+          {liveCards.length === 1 ? 'card' : 'cards'} · {totalCopies} to print
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -555,8 +565,8 @@
     <section class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-lg font-semibold">Cards</h2>
-        {#if canEdit}
-          <div class="flex flex-wrap items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          {#if canEdit}
             <label
               class="focus-within:focus-ring inline-flex min-h-11 cursor-pointer items-center
                      rounded-md bg-accent px-4 text-sm font-medium text-on-accent
@@ -581,8 +591,13 @@
             >
               Move in from Assets
             </Button>
-          </div>
-        {/if}
+          {/if}
+          <OverflowMenu label="More card options">
+            <MenuCheckbox bind:checked={showDeleted}>
+              Show deleted cards ({deletedCount})
+            </MenuCheckbox>
+          </OverflowMenu>
+        </div>
       </div>
 
       {#if picking === 'cards'}
@@ -601,6 +616,11 @@
           No cards yet. {canEdit
             ? 'Add images and set how many copies of each the deck holds.'
             : ''}
+        </p>
+      {:else if shownCards.length === 0}
+        <p class="text-sm text-muted">
+          Every card in this deck has been deleted. Show deleted cards, under More card options,
+          lists them.
         </p>
       {:else}
         <ul

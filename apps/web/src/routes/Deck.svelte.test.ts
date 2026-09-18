@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SOURCES, TRIGGERS } from 'svelte-dnd-action';
 import Deck from './Deck.svelte';
 import { deckImports } from '../lib/deckImports.svelte.ts';
-import { decks } from '../lib/decks.svelte.ts';
+import { decks, isLiveCard } from '../lib/decks.svelte.ts';
 import { realtime } from '../lib/realtime.svelte.ts';
 
 const PROJECT = '2f1c9e5a-8b3d-4f1e-9c2a-7d6b5e4f3a21';
@@ -178,6 +178,57 @@ function stubDeckWithDeletedCard(backFileId: string | null = null): void {
   });
 }
 
+// Three cards with the middle one's image deleted, and a save answered with the
+// list it was sent, the way the server answers one -- so what the screen draws
+// after a save is what the save asked for.
+function stubDeckWithDeletedMiddle(): void {
+  const files = [
+    cardFile(1),
+    { ...cardFile(2), deleted_at: '2026-02-01T00:00:00.000Z' },
+    cardFile(3),
+  ];
+  const rows = (list: { file_id: string; quantity: number }[]) =>
+    list.map((entry, position) => ({
+      ...entry,
+      position,
+      file: files.find((file) => file.id === entry.file_id)!,
+    }));
+  const held = rows([
+    { file_id: files[0].id, quantity: 1 },
+    { file_id: files[1].id, quantity: 4 },
+    { file_id: files[2].id, quantity: 2 },
+  ]);
+
+  fetchMock.mockImplementation(async (input) => {
+    const request = typeof input === 'string' ? null : (input as Request);
+    const url = request?.url ?? (input as string);
+    if (url.includes('/download')) {
+      return new Response('bytes', { status: 200, headers: { 'Content-Type': 'image/png' } });
+    }
+    if (url.includes(`/api/decks/${DECK}/import`)) {
+      return jsonResponse(404, { error: 'This deck has no import' });
+    }
+    if (url.includes(`/api/decks/${DECK}/cards`) && request?.method === 'PUT') {
+      const { cards } = await request.clone().json();
+      return jsonResponse(200, { deck: DECK_ROW, cards: rows(cards) });
+    }
+    if (url.includes(`/api/decks/${DECK}`)) {
+      return jsonResponse(200, { deck: DECK_ROW, cards: held });
+    }
+    if (url.includes(`/api/projects/${PROJECT}`)) {
+      return jsonResponse(200, {
+        id: PROJECT,
+        name: 'Colori',
+        description: null,
+        role: 'editor',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
+    }
+    return jsonResponse(404, { error: `nothing stubbed for ${url}` });
+  });
+}
+
 function urlsRequested(): string[] {
   return fetchMock.mock.calls.map((call) =>
     typeof call[0] === 'string' ? call[0] : (call[0] as Request).url
@@ -272,8 +323,9 @@ function zone(): HTMLElement {
   return screen.getByRole('list', { name: 'Cards, in the order they print' });
 }
 
+// Off the rows the zone draws, which leave the deleted cards out.
 function itemsAfterMoving(from: number, to: number): DragItem[] {
-  const items = decks.cards.map((card) => ({ ...card, id: card.file_id }));
+  const items = decks.cards.filter(isLiveCard).map((card) => ({ ...card, id: card.file_id }));
   const [moved] = items.splice(from, 1);
   items.splice(to, 0, moved);
   return items;
@@ -661,6 +713,142 @@ describe('Deck editor', () => {
     expect(await fireEvent.keyDown(copies[0], { key: 'Tab', shiftKey: true })).toBe(true);
     expect(await fireEvent.keyDown(copies[2], { key: 'Tab' })).toBe(true);
   });
+  // A deleted card prints nothing, so the list is the deck as it comes off the
+  // printer. Its row is still held, because a save that dropped it would lose
+  // the place and the copy count a restore is meant to give back.
+  describe('a card whose image is deleted', () => {
+    const [first, gone, third] = [cardFile(1).id, cardFile(2).id, cardFile(3).id];
+
+    async function showDeleted(): Promise<void> {
+      await fireEvent.click(await screen.findByRole('button', { name: 'More card options' }));
+      await fireEvent.click(
+        screen.getByRole('menuitemcheckbox', { name: /Show deleted cards \(1\)/u })
+      );
+    }
+
+    it('is left out of the list and the totals until it is asked for', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+
+      await waitFor(() => expect(drawnCards()).toEqual(['card-1.png', 'card-3.png']));
+      expect(screen.getByText('2 cards · 3 to print')).toBeInTheDocument();
+      expect(screen.queryByText(/Deleted\. Restore it/u)).toBeNull();
+
+      await showDeleted();
+
+      expect(drawnCards()).toEqual(['card-1.png', 'card-2.png', 'card-3.png']);
+      expect(screen.getByText('Deleted. Restore it to print this card.')).toBeInTheDocument();
+      // Showing it is not printing it.
+      expect(screen.getByText('2 cards · 3 to print')).toBeInTheDocument();
+    });
+
+    it('goes back into a reorder where it was, with its copies', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(drawnCards()).toEqual(['card-1.png', 'card-3.png']));
+
+      await dropCard(1, 0);
+
+      await waitFor(async () =>
+        expect(await savedCards()).toEqual([
+          { file_id: third, quantity: 2 },
+          { file_id: gone, quantity: 4 },
+          { file_id: first, quantity: 1 },
+        ])
+      );
+      // And the answer, which names it, does not put it back on screen.
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+      expect(drawnCards()).toEqual(['card-3.png', 'card-1.png']);
+    });
+
+    it('goes back into a copy count save', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await screen.findByRole('button', { name: 'Move in from Assets' });
+
+      const copies = await screen.findAllByLabelText('Copies');
+      expect(copies).toHaveLength(2);
+      await fireEvent.change(copies[1], { target: { value: '5' } });
+
+      await waitFor(async () =>
+        expect(await savedCards()).toEqual([
+          { file_id: first, quantity: 1 },
+          { file_id: gone, quantity: 4 },
+          { file_id: third, quantity: 5 },
+        ])
+      );
+    });
+
+    it('is skipped by the card viewer while it is hidden', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+
+      const [trigger] = await screen.findAllByRole('button', { name: /^View card-/u });
+      await fireEvent.click(trigger);
+      await fireEvent.keyDown(window, { key: 'ArrowRight' });
+
+      expect(within(screen.getByRole('dialog')).getByRole('heading').textContent?.trim()).toBe(
+        'card-3.png'
+      );
+    });
+
+    // Looking is not editing, so the menu is there for anyone who can read the
+    // deck.
+    it('can be shown by someone who cannot edit', async () => {
+      stubDeckAsViewer();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await waitFor(() => expect(decks.cards).toHaveLength(3));
+
+      expect(screen.getByRole('button', { name: 'More card options' })).toBeInTheDocument();
+    });
+  });
+
+  describe('the card options menu', () => {
+    it('opens from the keyboard and gives the focus back on Escape', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      const trigger = await screen.findByRole('button', { name: 'More card options' });
+      trigger.focus();
+
+      await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+
+      const item = await screen.findByRole('menuitemcheckbox');
+      await waitFor(() => expect(document.activeElement).toBe(item));
+      expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      expect(item).toHaveAttribute('aria-checked', 'false');
+
+      await fireEvent.keyDown(item, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      expect(document.activeElement).toBe(trigger);
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('closes once an option is chosen, and says it is on when opened again', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      const trigger = await screen.findByRole('button', { name: 'More card options' });
+
+      await fireEvent.click(trigger);
+      await fireEvent.click(screen.getByRole('menuitemcheckbox'));
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+
+      await fireEvent.click(trigger);
+      expect(screen.getByRole('menuitemcheckbox')).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('closes on a press anywhere else', async () => {
+      stubDeckWithDeletedMiddle();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await fireEvent.click(await screen.findByRole('button', { name: 'More card options' }));
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+
+      await fireEvent.pointerDown(screen.getByRole('heading', { name: 'Cards' }));
+
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    });
+  });
+
   // A 48px square says nothing about a bleed or a typo, and the artwork is the
   // one thing this screen holds that a person came to look at.
   describe('the card viewer', () => {

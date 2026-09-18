@@ -244,12 +244,7 @@ async function placeInDeck(
 // there is nothing left to come back to. The deck's back is neither -- it is a
 // pointer rather than a card, and a row for it would print the back as a front
 // as well.
-async function rejoinDeck(
-  c: AppContext,
-  projectId: string,
-  deckId: string,
-  fileId: string
-): Promise<void> {
+async function rejoinDeck(c: AppContext, deckId: string, fileId: string): Promise<void> {
   const db = c.get('db');
   const deck = await db
     .selectFrom('deck')
@@ -266,7 +261,6 @@ async function rejoinDeck(
     .set({ updated_at: new Date() })
     .where('deck.id', '=', deckId)
     .execute();
-  await publishDeck(c, projectId, deckId);
 }
 
 async function removeFromDeck(c: AppContext, deckId: string, fileId: string): Promise<void> {
@@ -1663,16 +1657,18 @@ filesRouter.delete(
         .executeTakeFirst();
 
       if (marked) {
+        const file = await fileWithUsage(c, access.projectId, id);
         publishAfterCommit(
           c.get('postCommitHooks'),
           c.get('user').id,
           'file_deleted',
           access.projectId,
-          {
-            ...(await fileWithUsage(c, access.projectId, id)),
-            purged: false,
-          }
+          { ...file, purged: false }
         );
+        // A deck counts only the cards it can print, so its totals move even
+        // though the card keeps its place.
+        const home = parseHome(file);
+        if (home.kind === 'deck') await publishDeck(c, access.projectId, home.deckId);
       }
       return c.body(null, 204);
     }
@@ -1709,6 +1705,10 @@ filesRouter.delete(
           purged: true,
         }
       );
+      // The cascade took the card's row, and a screen holding the deck would
+      // otherwise go on sending it back in every save.
+      const home = parseHome(doomed);
+      if (home.kind === 'deck') await publishDeck(c, access.projectId, home.deckId);
     }
     return c.body(null, 204);
   }
@@ -1745,7 +1745,11 @@ filesRouter.post(
     });
 
     const home = parseHome(restored);
-    if (home.kind === 'deck') await rejoinDeck(c, access.projectId, home.deckId, id);
+    if (home.kind === 'deck') {
+      await rejoinDeck(c, home.deckId, id);
+      // Whether or not the card needed a place, it counts towards the deck again.
+      await publishDeck(c, access.projectId, home.deckId);
+    }
     return c.json(restored);
   }
 );

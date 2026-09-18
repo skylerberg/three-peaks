@@ -10,6 +10,33 @@ interface DeckCardInput {
   quantity: number;
 }
 
+// A card whose image is deleted keeps its row so a restore lands where it was,
+// but it prints nothing and is not counted as one of the deck's cards.
+export function isLiveCard(card: DeckCard): boolean {
+  return card.file.deleted_at === null;
+}
+
+/**
+ * The whole list a save sends, from the rows a screen drew and the deck it
+ * drew them from. A save replaces the arrangement, so a row a screen is hiding
+ * still has to be named: one left out loses its place and its copy count, and
+ * a restore then brings it back at the end with one. Every hidden row keeps
+ * the slot it holds in `held`, and the drawn rows fill the rest in the order
+ * they were drawn -- anything drawn that `held` no longer has goes on the end.
+ */
+export function withHiddenCards(held: readonly DeckCard[], drawn: readonly DeckCard[]): DeckCard[] {
+  const shown: Record<string, boolean> = Object.fromEntries(
+    drawn.map((card) => [card.file_id, true])
+  );
+  const merged: DeckCard[] = [];
+  let next = 0;
+  for (const card of held) {
+    if (!shown[card.file_id]) merged.push(card);
+    else if (next < drawn.length) merged.push(drawn[next++]);
+  }
+  return [...merged, ...drawn.slice(next)];
+}
+
 class DeckStore {
   decks = $state<Deck[]>([]);
   // The deck currently open in the editor, and its cards. One request fills
@@ -96,15 +123,15 @@ class DeckStore {
     this.cards = [...cards];
   }
 
-  // The listing sorts on the server; a row added here has to land where a
-  // reload would have put it.
-  // A card embeds the file row it draws from, and renaming or deleting that
-  // file publishes a file event rather than a deck one. Nothing about deck
-  // membership moves here -- only the row inside the card.
+  // A card embeds the file row it draws from, and renaming that file or giving
+  // it a new version publishes a file event rather than a deck one. Nothing
+  // about deck membership moves here -- only the row inside the card.
   applyCardFile(file: DeckCard['file']): void {
     this.cards = this.cards.map((card) => (card.file_id === file.id ? { ...card, file } : card));
   }
 
+  // The listing sorts on the server; a row added here has to land where a
+  // reload would have put it.
   applyDeckCreated(deck: Deck): void {
     if (this.decks.some((entry) => entry.id === deck.id)) return;
     this.decks = [...this.decks, deck].sort((a, b) => a.name.localeCompare(b.name));

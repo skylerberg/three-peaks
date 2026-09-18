@@ -51,6 +51,7 @@ const SCREENS = [
   { name: 'file-versions', authed: true, reach: reachFileVersions },
   { name: 'deleted', authed: true, reach: reachDeleted },
   { name: 'deck-editor', authed: true, reach: reachDeckEditor },
+  { name: 'deck-card-options', authed: true, reach: reachDeckCardOptions },
   { name: 'deck-card-viewer', authed: true, reach: reachCardViewer },
   { name: 'deck-history', authed: true, reach: reachDeckHistory },
   { name: 'deck-run', authed: true, reach: reachDeckRun },
@@ -167,6 +168,30 @@ async function reachDeckEditor(browser, base, scheme) {
   await browser.page.waitForSelector('h2:has-text("Cards")', { timeout: 15_000 });
   await browser.click('button:has-text("Move in from Assets")');
   await browser.page.waitForSelector('button:has-text("Add every image here")', {
+    timeout: 15_000,
+  });
+}
+
+// A deck holding one card whose image is deleted, with the card options menu
+// open over it. The deleted row is drawn only once somebody asks for it and the
+// menu only while it is open, so no other screen here has either.
+async function reachDeckCardOptions(browser, base, scheme) {
+  await reachDeckEditor(browser, base, `options-${scheme}`);
+  const row = 'li[aria-label="token.png"]';
+  await browser.click('button:has-text("Add every image here")');
+  await browser.page.waitForSelector(`${row} button:has-text("Delete")`, { timeout: 15_000 });
+
+  // Claimed before the click, for the reason reachDeleted gives at its own.
+  browser.page.once('dialog', (dialog) => dialog.accept());
+  await browser.click(`${row} button:has-text("Delete")`);
+  await browser.page.waitForSelector(row, { state: 'detached', timeout: 15_000 });
+
+  const trigger = 'button[aria-label="More card options"]';
+  await browser.click(trigger);
+  await browser.click('[role="menuitemcheckbox"]');
+  await browser.page.waitForSelector(`${row} >> text=Deleted. Restore it`, { timeout: 15_000 });
+  await browser.click(trigger);
+  await browser.page.waitForSelector('[role="menuitemcheckbox"][aria-checked="true"]', {
     timeout: 15_000,
   });
 }

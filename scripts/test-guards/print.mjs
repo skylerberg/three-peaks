@@ -115,4 +115,16 @@ export const guards = [
     testName: 'prints the count somebody typed rather than the deck’s',
     runner: 'web',
   },
+  {
+    // Unticked and struck through is how the print screen drew one before, and
+    // it reads as a card this run is choosing to skip rather than one there is
+    // nothing of to print.
+    name: 'the print screen does not list a deleted card',
+    file: 'src/routes/Print.svelte',
+    find: '        loaded = full.map((entry) => ({ ...entry, cards: entry.cards.filter(isLiveCard) }));',
+    replace: '        loaded = full;',
+    tests: ['src/routes/Print.svelte.test.ts'],
+    testName: 'is neither listed nor counted towards its deck',
+    runner: 'web',
+  },
 ];

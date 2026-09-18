@@ -528,6 +528,16 @@ means no `.glb` in the bundle either. The bound is `DECK_QUANTITY_LIMITS` in
 where the two numbers come apart on screen. The print screen is where it is a
 default rather than an instruction — see below.
 
+**A card whose image is deleted is hidden, not dropped.** It prints nothing, so
+the deck's totals leave it out — the editor's own and `card_count` /
+`total_copies` on the row — the print screen does not list it, and the editor
+draws it only once its overflow menu is asked to. The row is still held, and
+`withHiddenCards` puts it back into every save at the slot it had: a save that
+left it out would take its place and its copy count, and the restore would
+bring it back at the end with one. Deleting or restoring a card publishes
+`deck_updated` for the same reason — the totals moved even where the
+arrangement did not, and the decks listing hears of a deck no other way.
+
 **Deleting a deck is soft**, because a deck owns its artwork and so owns bytes.
 It is tombstoned like a folder, `?purge=true` is the only path that reclaims, and
 its cards are never marked — restoring the deck brings back exactly what was
