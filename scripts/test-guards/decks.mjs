@@ -161,7 +161,7 @@ export const guards = [
     // that no list names -- which the deck editor then refuses to save.
     name: 'a restored card is given a place in its deck again',
     file: 'src/routes/files.ts',
-    find: "    if (home.kind === 'deck') await rejoinDeck(c, access.projectId, home.deckId, id);\n",
+    find: '      await rejoinDeck(c, home.deckId, id);\n',
     replace: '',
     tests: ['tests/e2e/decks.test.ts'],
     testName: 'gives a restored card a new place at the end',
@@ -192,6 +192,54 @@ export const guards = [
     replace: '',
     tests: ['src/routes/Deck.svelte.test.ts'],
     testName: 'closes on Escape and gives the focus back to the row that opened it',
+    runner: 'web',
+  },
+  {
+    // A deleted card keeps its deck_card row so a restore lands where it was,
+    // which makes counting the rows the obvious way to total a deck -- and a
+    // deck listed as holding cards and copies that no sheet will ever carry.
+    name: 'a deck’s totals leave out the cards whose images are deleted',
+    file: 'src/services/decks.ts',
+    find:
+      "      .whereRef('deck_card.deck_id', '=', 'deck.id')\n" +
+      "      .where('file.deleted_at', 'is', null);\n",
+    replace: "      .whereRef('deck_card.deck_id', '=', 'deck.id');\n",
+    tests: ['tests/e2e/decks.test.ts'],
+    testName: 'leaves the card out while it is deleted, and counts it again once restored',
+  },
+  {
+    // A delete that keeps the card's place moves no arrangement, so announcing
+    // the file alone reads as enough. It is not: the decks listing learns its
+    // totals from this event and from nothing else.
+    name: 'deleting a deck’s card announces the deck',
+    file: 'src/routes/files.ts',
+    find:
+      '        const home = parseHome(file);\n' +
+      "        if (home.kind === 'deck') await publishDeck(c, access.projectId, home.deckId);\n",
+    replace: '',
+    tests: ['tests/e2e/realtime.test.ts'],
+    testName: 'announces the deck when the card is deleted, and again when it is restored',
+  },
+  {
+    // Sending the drawn list is what the editor did while it drew every row.
+    // With the deleted ones hidden, that list leaves them out, and the server
+    // accepts it -- taking the rows, and with them the place and the copy count
+    // a restore was meant to give back.
+    name: 'a save sends back the cards the editor is hiding',
+    file: 'src/routes/Deck.svelte',
+    find: '      await decks.saveCards(deckId, asInput(withHiddenCards(cards, next)));',
+    replace: '      await decks.saveCards(deckId, asInput(next));',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'goes back into a reorder where it was, with its copies',
+    runner: 'web',
+  },
+  {
+    name: 'the deck editor hides deleted cards until asked',
+    file: 'src/routes/Deck.svelte',
+    find: '  let showDeleted = $state(false);',
+    replace: '  let showDeleted = $state(true);',
+    tests: ['src/routes/Deck.svelte.test.ts'],
+    testName: 'is left out of the list and the totals until it is asked for',
     runner: 'web',
   },
 ];

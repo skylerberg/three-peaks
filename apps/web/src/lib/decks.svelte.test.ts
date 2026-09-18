@@ -1,7 +1,7 @@
 import '../api/testUtils.ts';
 import { fetchMock, jsonResponse } from '../api/testUtils.ts';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { decks } from './decks.svelte.ts';
+import { decks, withHiddenCards } from './decks.svelte.ts';
 
 const PROJECT = '2f1c9e5a-8b3d-4f1e-9c2a-7d6b5e4f3a21';
 const DECK = '3c7f1b2e-9a4d-4c6b-8e1f-2a3b4c5d6e7f';
@@ -280,5 +280,57 @@ describe('DeckStore', () => {
       expect(decks.cards[0].quantity).toBe(9);
       expect(decks.loadingDeck).toBe(false);
     });
+  });
+});
+
+// What the deck editor saves while it is hiding some of the deck's rows. The
+// save is the whole arrangement, so a row missing from it loses its place.
+describe('withHiddenCards', () => {
+  const ids = (list: readonly { file_id: string }[]) => list.map((entry) => entry.file_id);
+
+  it('keeps a hidden card in its slot while the drawn ones are reordered around it', () => {
+    const held = [card('a', 1, 0), card('gone', 4, 1), card('b', 1, 2), card('c', 1, 3)];
+    const drawn = [card('c', 1, 3), card('a', 1, 0), card('b', 1, 2)];
+
+    const merged = withHiddenCards(held, drawn);
+
+    expect(ids(merged)).toEqual(['c', 'gone', 'a', 'b']);
+    expect(merged[1].quantity).toBe(4);
+  });
+
+  it('takes the drawn row over the held one, which is how a copy count reaches the save', () => {
+    const held = [card('gone', 2, 0), card('a', 1, 1)];
+
+    const merged = withHiddenCards(held, [card('a', 7, 1)]);
+
+    expect(merged.map((entry) => [entry.file_id, entry.quantity])).toEqual([
+      ['gone', 2],
+      ['a', 7],
+    ]);
+  });
+
+  it('sends the drawn list as it is when nothing is hidden', () => {
+    const held = [card('a', 1, 0), card('b', 1, 1)];
+    expect(ids(withHiddenCards(held, [card('b', 1, 1), card('a', 1, 0)]))).toEqual(['b', 'a']);
+  });
+
+  // A card that arrived while a drag was live is in the deck and not in the
+  // list the drop left; it keeps its place rather than being dropped.
+  it('keeps a card the drawn list has not caught up with', () => {
+    const held = [card('a', 1, 0), card('b', 1, 1), card('new', 1, 2)];
+    expect(ids(withHiddenCards(held, [card('b', 1, 1), card('a', 1, 0)]))).toEqual([
+      'b',
+      'a',
+      'new',
+    ]);
+  });
+
+  it('puts a drawn card the deck no longer holds on the end', () => {
+    const held = [card('gone', 1, 0), card('a', 1, 1)];
+    expect(ids(withHiddenCards(held, [card('a', 1, 1), card('left', 1, 2)]))).toEqual([
+      'gone',
+      'a',
+      'left',
+    ]);
   });
 });

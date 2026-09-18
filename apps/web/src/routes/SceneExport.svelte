@@ -24,7 +24,7 @@
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
   import type { ProjectComponent } from '../lib/components.svelte.ts';
-  import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
+  import { type Deck, type DeckCard, decks, isLiveCard } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import { newId } from '../lib/ids.ts';
   import { link } from '../lib/router.svelte.ts';
@@ -132,7 +132,7 @@
   // holds no copies of: it puts nothing on the table, and the count beside the
   // deck's name is a count of what is about to be laid out on one.
   function usableCards(cards: readonly DeckCard[]): DeckCard[] {
-    return cards.filter((card) => card.file.deleted_at === null && card.quantity > 0);
+    return cards.filter((card) => isLiveCard(card) && card.quantity > 0);
   }
 
   const chosenDecks = $derived(

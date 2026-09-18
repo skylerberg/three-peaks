@@ -16,7 +16,7 @@
   import Button from '../components/ui/Button.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError } from '../api/client.ts';
-  import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
+  import { type Deck, type DeckCard, decks, isLiveCard } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import {
     type OutstandingCard,
@@ -84,10 +84,6 @@
   const [minCopies, maxCopies] = DECK_QUANTITY_LIMITS;
 
   const key = (deck: string, file: string) => `${deck}:${file}`;
-
-  // A card whose image is in the bin has no bytes to place, so it is neither
-  // tickable nor counted towards its deck's box.
-  const printable = (card: DeckCard) => card.file.deleted_at === null;
 
   // One lookup for the whole screen. A deck of five hundred cards is scanned
   // once here rather than once per row per recompute.
@@ -229,16 +225,15 @@
 
   // Every deck's box, counted off its own cards: checked when the whole deck is
   // ticked, mixed when part of it is, and nothing to tick at all when a deck
-  // holds no printable card. `typed` is what puts the reset beside it, and is
-  // counted here rather than scanned for separately.
+  // holds no card. `typed` is what puts the reset beside it, and is counted
+  // here rather than scanned for separately.
   const deckChoice = $derived.by(() => {
     const counted: Record<string, { total: number; chosen: number; typed: boolean }> = {};
-    for (const entry of loaded) {
-      const cards = entry.cards.filter(printable);
-      counted[entry.deck.id] = {
+    for (const { deck, cards } of loaded) {
+      counted[deck.id] = {
         total: cards.length,
-        chosen: cards.filter((card) => included[key(entry.deck.id, card.file_id)] === true).length,
-        typed: cards.some((card) => copies[key(entry.deck.id, card.file_id)] !== undefined),
+        chosen: cards.filter((card) => included[key(deck.id, card.file_id)] === true).length,
+        typed: cards.some((card) => copies[key(deck.id, card.file_id)] !== undefined),
       };
     }
     return counted;
@@ -247,9 +242,7 @@
   const anySelected = $derived(Object.values(deckChoice).some((choice) => choice.chosen > 0));
 
   function chooseWholeDeck(entry: LoadedDeck, choose: boolean) {
-    for (const card of entry.cards) {
-      if (printable(card)) included[key(entry.deck.id, card.file_id)] = choose;
-    }
+    for (const card of entry.cards) included[key(entry.deck.id, card.file_id)] = choose;
   }
 
   $effect(() => {
@@ -266,16 +259,16 @@
           Promise.all(list.map((deck) => decks.readDeck(deck.id))),
           readOutstanding(project),
         ]);
-        loaded = full;
+        // A card whose image is deleted has no bytes to place, so it is not a card
+        // of the deck as far as a print run is concerned.
+        loaded = full.map((entry) => ({ ...entry, cards: entry.cards.filter(isLiveCard) }));
         outstanding = pending;
         recorded = null;
         copies = {};
         included = Object.fromEntries(
-          full
+          loaded
             .filter((entry) => preselect === null || preselect === entry.deck.id)
-            .flatMap((entry) =>
-              entry.cards.filter(printable).map((card) => [key(entry.deck.id, card.file_id), true])
-            )
+            .flatMap((entry) => entry.cards.map((card) => [key(entry.deck.id, card.file_id), true]))
         );
       } catch (caught) {
         error =
@@ -441,6 +434,7 @@
                   class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2"
                 >
                   {#each entry.cards as card (card.file_id)}
+                    {@const label = outstandingLabel(outstandingFor(entry.deck.id, card.file_id))}
                     <li
                       class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
                     >
@@ -448,48 +442,34 @@
                         <input
                           type="checkbox"
                           class="focus-ring size-4"
-                          disabled={!printable(card)}
                           checked={included[key(entry.deck.id, card.file_id)] === true}
                           onchange={(event) => {
                             included[key(entry.deck.id, card.file_id)] =
                               event.currentTarget.checked;
                           }}
                         />
-                        <span
-                          class="min-w-0 flex-1 truncate {card.file.deleted_at
-                            ? 'text-muted line-through'
-                            : ''}"
-                        >
-                          {card.file.filename}
-                        </span>
+                        <span class="min-w-0 flex-1 truncate">{card.file.filename}</span>
                       </label>
-                      {#if card.file.deleted_at}
-                        <span class="text-muted">deleted</span>
-                      {:else}
-                        {@const label = outstandingLabel(
-                          outstandingFor(entry.deck.id, card.file_id)
-                        )}
-                        {#if label}
-                          <span
-                            class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-                          >
-                            {label}
-                          </span>
-                        {/if}
-                        <span class="text-muted" aria-hidden="true">×</span>
-                        <input
-                          type="number"
-                          aria-label="Copies of {card.file.filename}"
-                          class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
-                          value={printedCopies(entry.deck.id, card)}
-                          min={minCopies}
-                          max={maxCopies}
-                          step="1"
-                          disabled={included[key(entry.deck.id, card.file_id)] !== true}
-                          onfocus={selectAll}
-                          onchange={(event) => setCopies(entry.deck.id, card, event)}
-                        />
+                      {#if label}
+                        <span
+                          class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
+                        >
+                          {label}
+                        </span>
                       {/if}
+                      <span class="text-muted" aria-hidden="true">×</span>
+                      <input
+                        type="number"
+                        aria-label="Copies of {card.file.filename}"
+                        class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
+                        value={printedCopies(entry.deck.id, card)}
+                        min={minCopies}
+                        max={maxCopies}
+                        step="1"
+                        disabled={included[key(entry.deck.id, card.file_id)] !== true}
+                        onfocus={selectAll}
+                        onchange={(event) => setCopies(entry.deck.id, card, event)}
+                      />
                     </li>
                   {:else}
                     <li class="px-2 text-sm text-muted">This deck has no cards.</li>

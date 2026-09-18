@@ -238,6 +238,47 @@ describe('choosing what goes on paper', () => {
   });
 });
 
+// A deleted card keeps its row in the deck so a restore is exact, and nothing
+// about a print run is any of its business.
+describe('a card whose image is deleted', () => {
+  const GONE = '6d5e4f3a-2b1c-4d0e-9f8a-7b6c5d4e3f2a';
+
+  beforeEach(() => {
+    const otherwise = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.includes(`/api/decks/${DECK}`)) {
+        const gone = { ...file(GONE, 'retired.png'), deleted_at: '2026-02-02T09:00:00.000Z' };
+        return jsonResponse(200, {
+          deck,
+          cards: [...cards, { file_id: GONE, quantity: 4, position: 3, file: gone }],
+        });
+      }
+      return otherwise(input, init);
+    });
+  });
+
+  it('is neither listed nor counted towards its deck', async () => {
+    open();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Choose cards' }));
+    await screen.findByText('ace.png');
+
+    expect(screen.queryByText('retired.png')).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(/^3 cards on/u);
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: /ace\.png/u }));
+    expect(await screen.findByText('2 of 3 cards')).toBeInTheDocument();
+  });
+
+  it('puts nothing of it on the sheets', async () => {
+    open();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Generate PDF' }));
+
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks[0].cards.map((card) => card.file_id)).toEqual([STALE, FRESH]);
+  });
+});
+
 describe('how many of each card', () => {
   async function openCards() {
     await fireEvent.click(await screen.findByRole('button', { name: 'Choose cards' }));

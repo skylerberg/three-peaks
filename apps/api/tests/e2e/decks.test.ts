@@ -276,6 +276,43 @@ describe('decks', () => {
     });
   });
 
+  // The row stays for the restore, and the totals are about what prints. The
+  // listing is read as well as the deck, because it is the decks screen that
+  // draws these numbers and it reads them from there.
+  describe('the totals of a deck holding a deleted card', () => {
+    it('leaves the card out while it is deleted, and counts it again once restored', async () => {
+      const deckId = (await createDeck('Counts the live ones')).body.id as string;
+      const [kept, gone] = await Promise.all([
+        uploadTo(owner, projectId, 'counted.png', { deck_id: deckId }),
+        uploadTo(owner, projectId, 'uncounted.png', { deck_id: deckId }),
+      ]);
+      await owner.api.put(`/api/decks/${deckId}/cards`, {
+        cards: [
+          { file_id: kept, quantity: 2 },
+          { file_id: gone, quantity: 3 },
+        ],
+      });
+
+      const listed = async () =>
+        (
+          (await (await owner.api.get(`/api/decks?project_id=${projectId}`)).json()).decks as {
+            id: string;
+            card_count: number;
+            total_copies: number;
+          }[]
+        ).find((deck) => deck.id === deckId)!;
+
+      await owner.api.delete(`/api/files/${gone}`);
+      const deleted = await (await owner.api.get(`/api/decks/${deckId}`)).json();
+      expect(deleted.cards).toHaveLength(2);
+      expect(deleted.deck).toMatchObject({ card_count: 1, total_copies: 2 });
+      expect(await listed()).toMatchObject({ card_count: 1, total_copies: 2 });
+
+      expect((await owner.api.post(`/api/files/${gone}/restore`)).status).toBe(200);
+      expect(await listed()).toMatchObject({ card_count: 2, total_copies: 5 });
+    });
+  });
+
   // What may be named and what must be named are two different sets, and this
   // is where they come apart.
   describe('editing a deck that holds a deleted card', () => {
