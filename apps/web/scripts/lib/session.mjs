@@ -1,6 +1,8 @@
 // Signing up and creating a project, driven through the real forms. Two probes
 // need an authenticated screen to look at, and neither should be the one that
 // owns how an account comes into being.
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 // The routes these probes drive, named the way the spec names them. `/health`
 // answers 200 from whatever holds the port -- on one machine that was a sibling
@@ -18,6 +20,25 @@ const REQUIRED_PATHS = [
 ];
 
 const APP_NAME = 'three-peaks-hub';
+
+const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+
+// Read the way apps/api/src/config/buildInfo.ts reads it, so the two answers are
+// comparable at all. A detached HEAD names nothing -- which is what a CI
+// checkout is -- and counts as unknown rather than as a name free to disagree.
+function checkoutBranch() {
+  try {
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim();
+    return branch && branch !== 'HEAD' ? branch : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Three outcomes, because they call for three different things: `ok` runs the
@@ -55,6 +76,26 @@ export async function inspectApi(api, also = []) {
     };
   }
 
+  // Two worktrees on two ports answer to the same name and serve the same
+  // routes, so nothing above can tell them apart -- and the port is first come,
+  // first served, which means the one that answers may be a branch nobody here
+  // is working on. /health names the build for exactly this reason; asking it
+  // now is the difference between a refusal and a green run against somebody
+  // else's code.
+  const here = checkoutBranch();
+  const there = identity.branch?.trim() || null;
+  if (here && there && here !== there) {
+    return {
+      ok: false,
+      absent: false,
+      reason:
+        `the API at ${api} is serving branch ${JSON.stringify(there)} ` +
+        `(${identity.commit ?? 'commit unknown'}), and this checkout is on ` +
+        `${JSON.stringify(here)}. Start one from here, or point API_PROXY_TARGET at ` +
+        'the port this branch already holds.',
+    };
+  }
+
   const response = await fetch(`${api}/api/openapi.json`);
   const spec = response.ok ? await response.json().catch(() => ({})) : {};
   const missing = [...REQUIRED_PATHS, ...also].filter(
@@ -72,6 +113,41 @@ export async function inspectApi(api, also = []) {
   }
 
   return { ok: true, absent: false, reason: '' };
+}
+
+/**
+ * What a probe does about the API it was handed, in one place rather than in
+ * five copies free to drift: something there that is not this build fails
+ * wherever it happens, an absent one is the local convenience of a checkout
+ * with nothing running, and `REQUIRE_PROBES=1` says this is a run where a skip
+ * is a broken gate rather than a kindness -- which is what to set when the gate
+ * is being trusted rather than iterated against.
+ *
+ * Returns the exit code to return, or null to carry on. `partial` belongs to a
+ * probe that still measures something without an API: check:a11y has three
+ * signed-out screens, and it is handed null once the warning is printed.
+ */
+export function probeRefusal(name, api, { skips = 'nothing was measured', partial = false } = {}) {
+  if (api.ok) return null;
+
+  const message = `[${name}] ${api.reason}`;
+  if (!api.absent) {
+    console.error(message);
+    return 1;
+  }
+
+  const required = process.env.CI ? 'CI' : process.env.REQUIRE_PROBES ? 'REQUIRE_PROBES' : null;
+  if (required) {
+    console.error(`${message}; refusing to skip under ${required}`);
+    return 1;
+  }
+
+  // One token, the same in every probe, so a gate log that scrolled past this
+  // still answers `grep SKIPPED` afterwards.
+  console.warn(
+    `[${name}] SKIPPED \u2014 ${api.reason}; ${skips}. Start one with \`pnpm dev:api\`.`
+  );
+  return partial ? null : 0;
 }
 
 // A fresh throwaway account per run: the probes upload files and save models,

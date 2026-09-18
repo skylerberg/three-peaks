@@ -15,6 +15,9 @@
 //     name can turn a five-second failure into a run with no upper bound.
 //   * The bug should be one a reviewer would plausibly introduce, not a
 //     syntactic nonsense that fails to compile.
+//   * `runner` names the package the tests run in, and defaults to `api`. It is
+//     the only field saying where a guard belongs -- there was a second one for
+//     a while, unread, and on nine guards it disagreed with this one.
 
 export const guards = [
   {
@@ -37,7 +40,6 @@ export const guards = [
     // that still verifies a real signature and still reads a real user id --
     // and accepts a token minted for somebody else's app.
     name: 'a Canva token issued to another app is refused',
-    package: 'api',
     file: 'src/services/canvaApp.ts',
     find: '      audience: appId,\n',
     replace: '',
@@ -48,7 +50,6 @@ export const guards = [
     // Expiry and reuse answering differently from a code nobody issued turns
     // eight characters of a small alphabet into an oracle worth grinding.
     name: 'a spent pairing code is not distinguishable from an invented one',
-    package: 'api',
     file: 'src/services/canvaApp.ts',
     find: "    .where('canva_app_pairing.claimed_at', 'is', null)\n",
     replace: '',
@@ -61,7 +62,6 @@ export const guards = [
     // reordering that reads as harmless and quietly hands each card to whatever
     // page happens to share its name.
     name: 'a page id outranks a title, never the other way round',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find:
       '  for (const [index, page] of pages.entries()) {\n' +
@@ -87,7 +87,6 @@ export const guards = [
     // in whatever order the pages happened to arrive in and the deck happened
     // to already hold. Nothing else in the run says a word about it.
     name: 'a finished import leaves the deck in the design’s order',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find: '  await orderDeckToExport(c, access);\n',
     replace: '',
@@ -96,7 +95,6 @@ export const guards = [
   },
   {
     name: 'a caller with no access gets 404, not 403',
-    package: 'api',
     file: 'src/services/authorization.ts',
     // The classic mistake: refusing with the "honest" status, which tells an
     // outsider the project exists.
@@ -111,7 +109,6 @@ export const guards = [
     // is what turns a partial write into a refusal rather than a row that is in
     // two places. Leaving the old folder behind is the way to write one.
     name: 'a file arriving in a deck leaves its folder behind',
-    package: 'api',
     file: 'src/services/fileHome.ts',
     find:
       '      return { folder_id: null, deck_id: home.deckId, ' +
@@ -126,7 +123,6 @@ export const guards = [
     // card of every deck back in the explorer, which is the duplication the
     // sections exist to remove -- and it reads as a harmless filter to delete.
     name: 'Assets lists nothing a deck or a component holds',
-    package: 'api',
     file: 'src/routes/files.ts',
     find: "        .where('file.deleted_at', 'is', null)\n        .where(unowned)",
     replace: "        .where('file.deleted_at', 'is', null)",
@@ -138,7 +134,6 @@ export const guards = [
     // the deck, and in no list any screen draws. The other half of the same
     // rule -- refusing a file the deck does not own -- has a test of its own.
     name: 'a deck may not be left holding artwork with no place in it',
-    package: 'api',
     file: 'src/services/decks.ts',
     find: '  if (stranded.length > 0) {',
     replace: '  if (false) {',
@@ -150,7 +145,6 @@ export const guards = [
     // make a restore resurrect artwork somebody deleted one card at a time,
     // which is exactly what the folder rule already refuses to do.
     name: 'a deck’s tombstone is never copied onto its cards',
-    package: 'api',
     file: 'src/routes/decks.ts',
     find: "      const marked = await db\n        .updateTable('deck')",
     replace:
@@ -162,7 +156,6 @@ export const guards = [
   },
   {
     name: 'project roles normalize fail-closed',
-    package: 'api',
     file: 'packages/shared/src/roles.ts',
     root: true,
     find: "  return role === 'editor' ? 'editor' : 'viewer';",
@@ -173,7 +166,6 @@ export const guards = [
   },
   {
     name: 'a viewer cannot write',
-    package: 'api',
     file: 'src/services/authorization.ts',
     find: "  if (access.role !== 'editor') {",
     replace: '  if (false) {',
@@ -182,7 +174,6 @@ export const guards = [
   },
   {
     name: 'the upload content type comes from magic bytes, not the client',
-    package: 'api',
     file: 'src/services/files.ts',
     find: "    contentType: sniffed ?? 'application/octet-stream',",
     replace: '    contentType: declaredContentType,',
@@ -191,7 +182,6 @@ export const guards = [
   },
   {
     name: 'an upload declaring an oversized length never starts',
-    package: 'api',
     file: 'src/routes/files.ts',
     // Without this the body is read to the cap and refused there, which costs
     // the whole transfer and can no longer say how big the file was.
@@ -204,7 +194,6 @@ export const guards = [
   },
   {
     name: 'an oversized upload is refused before it is sent',
-    package: 'web',
     file: 'src/lib/upload.ts',
     find: '  if (byteSize > MAX_UPLOAD_BYTES) {',
     replace: '  if (false) {',
@@ -214,7 +203,6 @@ export const guards = [
   },
   {
     name: 'a refused upload reaches the screen as what the API said',
-    package: 'web',
     file: 'src/lib/upload.ts',
     // apiMessage shows an ApiError and nothing else, so the plain Error the
     // explorer threw before reached the toast as "could not reach the server".
@@ -226,7 +214,6 @@ export const guards = [
   },
   {
     name: 'the upload cap does not leave its refusal unhandled',
-    package: 'api',
     file: 'src/services/files.ts',
     // Without the listener the cap emits on a stream nothing is watching yet,
     // which is an uncaught exception rather than a 413.
@@ -237,7 +224,6 @@ export const guards = [
   },
   {
     name: 'RIFF that is not WebP is not an image',
-    package: 'api',
     file: 'src/services/imageSniff.ts',
     find: 'startsWith(head, [0x57, 0x45, 0x42, 0x50], 8)',
     replace: 'true',
@@ -246,7 +232,6 @@ export const guards = [
   },
   {
     name: 'a mutation that fails rolls the whole request back',
-    package: 'api',
     file: 'src/middleware/transaction.ts',
     // Without the rethrow, Hono's compose has already swallowed the error onto
     // c.error and Kysely sees a clean return -- so the partial write commits.
@@ -257,7 +242,6 @@ export const guards = [
   },
   {
     name: 'a reset link cannot be spent twice',
-    package: 'api',
     file: 'src/routes/auth.ts',
     find: "        alternative_id: newId(),\n        updated_at: new Date(),\n      })\n      .where('app_user.id', '=', claims.sub)",
     replace:
@@ -267,7 +251,6 @@ export const guards = [
   },
   {
     name: 'one token family cannot be spent as another',
-    package: 'api',
     file: 'src/services/signedToken.ts',
     find: '  if (parsed[TYPE_CLAIM] !== tokenType) return null;',
     replace: '  if (false) return null;',
@@ -280,7 +263,6 @@ export const guards = [
     // STILL-PASSED forever. What a test CAN observe is that both answers are
     // byte-identical, so that is what this breaks.
     name: 'an unknown email and a wrong password give the same answer',
-    package: 'api',
     file: 'src/routes/auth.ts',
     find: "      throw new AppError(401, 'Invalid email or password');\n    }\n\n    if (!(await verifyPassword(row.password_hash, password))) {",
     replace:
@@ -290,7 +272,6 @@ export const guards = [
   },
   {
     name: 'undeclared request fields are stripped, not stored',
-    package: 'api',
     file: 'src/middleware/validators.ts',
     find: "  const stripped = schema.onDeepUndeclaredKey('delete');",
     replace: '  const stripped = schema;',
@@ -301,7 +282,6 @@ export const guards = [
     // The shallow form leaves a nested object untouched, and a settings blob is
     // stored as jsonb exactly as it survives validation.
     name: 'undeclared fields are stripped from a nested object too',
-    package: 'api',
     file: 'src/middleware/validators.ts',
     find: "  const stripped = schema.onDeepUndeclaredKey('delete');",
     replace: "  const stripped = schema.onUndeclaredKey('delete');",
@@ -313,7 +293,6 @@ export const guards = [
     // it, naming any project id in a subscribe frame would deliver that
     // project's events to anyone.
     name: 'realtime delivery re-checks access for every event',
-    package: 'api',
     file: 'src/services/realtime/transport.ts',
     find: '          if (allowed) connection.socket.send(message);',
     replace: '          void allowed; connection.socket.send(message);',
@@ -322,7 +301,6 @@ export const guards = [
   },
   {
     name: 'nothing is published for a request that rolled back',
-    package: 'api',
     file: 'src/services/realtime/index.ts',
     find: '  hooks.push(async () => {',
     replace: '  void hooks;\n  void (async () => {',
@@ -331,7 +309,6 @@ export const guards = [
   },
   {
     name: 'a superseded directory load does not overwrite a newer one',
-    package: 'web',
     file: 'src/lib/files.svelte.ts',
     find: '      if (generation !== this.#generation) return;',
     replace: '      if (false) return;',
@@ -341,7 +318,6 @@ export const guards = [
   },
   {
     name: 'a signed-out visitor is sent to login',
-    package: 'web',
     file: 'src/lib/session.svelte.ts',
     find: "    if (this.status === 'anon' && !isPublic) {",
     replace: '    if (false) {',
@@ -351,7 +327,6 @@ export const guards = [
   },
   {
     name: 'an html page containing an inline svg is not an svg',
-    package: 'api',
     file: 'src/services/imageSniff.ts',
     find: '  return /^<svg[\\s/>]/i.test(skipXmlPreamble(text));',
     replace: "  return text.includes('<svg');",
@@ -360,7 +335,6 @@ export const guards = [
   },
   {
     name: 'saving 3D settings needs write access, not merely read',
-    package: 'api',
     file: 'src/routes/models.ts',
     find: "    const access = await assertFileAccess(c, fileId, 'write');",
     replace: "    const access = await assertFileAccess(c, fileId, 'read');",
@@ -369,7 +343,6 @@ export const guards = [
   },
   {
     name: 'the back face of a card is mirrored',
-    package: 'web',
     file: 'src/lib/model3d/geometry/faceGroups.ts',
     find: '    const u = nz > 0 ? (x - bounds.minX) / width : (bounds.maxX - x) / width;',
     replace: '    const u = (x - bounds.minX) / width;',
@@ -379,7 +352,6 @@ export const guards = [
   },
   {
     name: 'a bevel does not grow the piece past the size it was given',
-    package: 'web',
     file: 'src/lib/model3d/geometry/extrude.ts',
     find: '    bevelOffset: -bevel,',
     replace: '    bevelOffset: 0,',
@@ -389,7 +361,6 @@ export const guards = [
   },
   {
     name: 'no screen is mounted before the first-load guard has run',
-    package: 'web',
     file: 'src/App.svelte',
     // Reading the status directly reopens the window the flag exists to close:
     // init() leaves `unknown` a microtask before the guard redirects, and a
@@ -402,7 +373,6 @@ export const guards = [
   },
   {
     name: 'the projects list is asked for once per screen',
-    package: 'web',
     file: 'src/lib/projects.svelte.ts',
     find: '    this.#attempt ??= this.#load();',
     replace: '    this.#attempt = this.#load();',
@@ -412,7 +382,6 @@ export const guards = [
   },
   {
     name: 'a reset forgets the attempt the previous account made',
-    package: 'web',
     file: 'src/lib/projects.svelte.ts',
     find: '    this.loading = false;\n    this.#attempt = null;',
     replace: '    this.loading = false;',
@@ -422,7 +391,6 @@ export const guards = [
   },
   {
     name: 'the storage meter counts every version, not just the current one',
-    package: 'api',
     file: 'src/services/files.ts',
     // Summing the mirror counts each file once, at its newest size, so the
     // meter drifts further from the truth with every version that is kept.
@@ -433,7 +401,6 @@ export const guards = [
   },
   {
     name: 'a restore copies the object forward rather than re-pointing at the old one',
-    package: 'api',
     file: 'src/routes/files.ts',
     // Two versions naming one object means deleting either takes the other's
     // bytes. The unique index on file_version.storage_key is what turns this
@@ -445,7 +412,6 @@ export const guards = [
   },
   {
     name: 'identical bytes do not create a version',
-    package: 'api',
     file: 'src/services/files.ts',
     find: '  return current.checksum !== null && current.checksum === candidate.checksum;',
     replace: '  return false;',
@@ -454,7 +420,6 @@ export const guards = [
   },
   {
     name: 'a superseded version listing cannot overwrite a newer one',
-    package: 'web',
     file: 'src/lib/versions.svelte.ts',
     find: '      if (generation !== this.#generation) return;',
     replace: '      if (false) return;',
@@ -464,7 +429,6 @@ export const guards = [
   },
   {
     name: 'the screen is told when identical bytes created nothing',
-    package: 'web',
     file: 'src/lib/versions.svelte.ts',
     find: '    return body.created === true;',
     replace: '    return true;',
@@ -474,7 +438,6 @@ export const guards = [
   },
   {
     name: 'the object URL outlives the click that reads it',
-    package: 'web',
     file: 'src/lib/download.ts',
     // Only Chromium takes its blob reference during the click's synchronous
     // dispatch, so a same-task revoke passes every check run against it and
@@ -487,7 +450,6 @@ export const guards = [
   },
   {
     name: 'a reconnected socket replays what it was watching',
-    package: 'web',
     file: 'src/lib/realtime.svelte.ts',
     // The subscriptions live on the store rather than on the socket precisely
     // so a reconnect can replay them. Dropping the replay leaves a healthy
@@ -500,7 +462,6 @@ export const guards = [
   },
   {
     name: 'a socket closed for a dead credential is not reopened',
-    package: 'web',
     file: 'src/lib/realtime.svelte.ts',
     find: "      if (action === 'revalidate') return;",
     replace: '      if (false) return;',
@@ -510,7 +471,6 @@ export const guards = [
   },
   {
     name: 'a thumbnail presents the credential its bytes are behind',
-    package: 'web',
     file: 'src/components/Thumbnail.svelte',
     // Exactly the shape the `<img src>` this replaced had: a request the
     // browser makes on its own carries no Authorization header, and every
@@ -528,7 +488,6 @@ export const guards = [
     // Yesterday's row drawn with today's artwork is precisely the lie the whole
     // history feature exists to prevent.
     name: 'a history thumbnail is drawn at the version the run left',
-    package: 'web',
     file: 'src/routes/DeckRun.svelte',
     find: 'version={card.file_version_number ?? undefined}',
     replace: 'version={undefined}',
@@ -540,7 +499,6 @@ export const guards = [
     // Both panes falling back to the current file makes every comparison look
     // like two copies of the same image.
     name: 'a comparison reads each side at its own version',
-    package: 'web',
     file: 'src/routes/FileVersions.svelte',
     find: 'version={side.version_number}',
     replace: 'version={undefined}',
@@ -552,7 +510,6 @@ export const guards = [
     // Purging is the one destructive act in the system, and a card it took is
     // named rather than requested as bytes nothing can serve.
     name: 'a purged card is named rather than drawn',
-    package: 'web',
     file: 'src/routes/DeckRun.svelte',
     find: '{#if card.file_id === null}',
     replace: '{#if false}',
@@ -564,7 +521,6 @@ export const guards = [
     // The route block is not keyed, so a slower listing landing late would
     // otherwise put one deck's runs under another deck's heading.
     name: 'a superseded run listing cannot overwrite a newer one',
-    package: 'web',
     file: 'src/lib/deckHistory.svelte.ts',
     find: '      if (generation !== this.#runsGeneration) return;',
     replace: '      if (false) return;',
@@ -574,7 +530,6 @@ export const guards = [
   },
   {
     name: "a deck's history belongs to the deck it was read for",
-    package: 'web',
     file: 'src/lib/deckHistory.svelte.ts',
     find: '    this.runsDeckId = null;\n    this.runs = [];\n',
     replace: '',
@@ -586,7 +541,6 @@ export const guards = [
     // A readiness probe that answers from memory alone puts a pod with no
     // database back into the load balancer's rotation.
     name: 'health reaches the database rather than answering ok regardless',
-    package: 'api',
     file: 'src/routes/health.ts',
     find: "    await ping(c.get('db'));",
     replace: '',
@@ -595,7 +549,6 @@ export const guards = [
   },
   {
     name: 'a database missing a migration is reported as behind',
-    package: 'api',
     file: 'src/db/migrate.ts',
     // The failure that matters is the quiet one: a check that always says the
     // database is current is indistinguishable from not having the check.
@@ -606,7 +559,6 @@ export const guards = [
   },
   {
     name: 'the directory listing hides what has been deleted',
-    package: 'api',
     file: 'src/routes/files.ts',
     find: "        .where('file.project_id', '=', projectId)\n        .where('file.deleted_at', 'is', null)",
     replace: "        .where('file.project_id', '=', projectId)",
@@ -615,7 +567,6 @@ export const guards = [
   },
   {
     name: 'deleting a file keeps its bytes unless a purge was asked for',
-    package: 'api',
     file: 'src/routes/files.ts',
     find: "  return query.purge === 'true';",
     replace: '  return true;',
@@ -624,7 +575,6 @@ export const guards = [
   },
   {
     name: 'a deleted file refuses a new version instead of quietly gaining one',
-    package: 'api',
     file: 'src/services/files.ts',
     find: '  if (file.deleted_at !== null) {',
     replace: '  if (false) {',
@@ -633,7 +583,6 @@ export const guards = [
   },
   {
     name: 'a purge reaches the tombstones inside the folder it is reclaiming',
-    package: 'api',
     file: 'src/routes/files.ts',
     // The mutation ADDS a predicate rather than removing one. Every listing
     // filters tombstones, so adding it here is the plausible mistake -- and it
@@ -646,7 +595,6 @@ export const guards = [
   },
   {
     name: 'a purge walks through the deleted folders inside what it is reclaiming',
-    package: 'api',
     file: 'src/routes/files.ts',
     // The same plausible edit as the guard above, one construct higher, and it
     // leaks strictly more: the cascade still takes every row under a deleted
@@ -659,7 +607,6 @@ export const guards = [
   },
   {
     name: 'a superseded deleted listing cannot overwrite a newer one',
-    package: 'web',
     file: 'src/lib/deleted.svelte.ts',
     find: '      if (generation !== this.#generation) return;',
     replace: '      if (false) return;',
@@ -672,7 +619,6 @@ export const guards = [
     // A three-column grid makes it worse: the set of positions a backing page
     // occupies is symmetric either way, so only the pairing gives it away.
     name: 'a backing page is mirrored, so a back lands behind its own front',
-    package: 'api',
     file: 'packages/shared/src/print.ts',
     root: true,
     find: '  return { index: row * grid.columns + (grid.columns - 1 - column), rotate_180 };',
@@ -686,7 +632,6 @@ export const guards = [
     // back still lands in the right box; every one comes out upside down once
     // the card is cut.
     name: 'a turned card’s back is inverted by the flip that crosses its top',
-    package: 'api',
     file: 'packages/shared/src/print.ts',
     root: true,
     find: "  const rotate_180 = (flip === 'short') !== grid.rotated;",
@@ -700,7 +645,6 @@ export const guards = [
     // cell and the renderer drew the artwork upright in it, so eighteen boxes
     // each held a clipped band of a card twice their height.
     name: 'artwork on a turned grid is drawn through the turn',
-    package: 'web',
     file: 'src/lib/print/pdf.ts',
     find: '    const turn: QuarterTurns = plan.grid.rotated ? 1 : 0;',
     replace: '    const turn: QuarterTurns = 0;',
@@ -712,7 +656,6 @@ export const guards = [
     // Six cards a sheet on minis, and nothing about the output looks wrong --
     // it is simply a third more paper than it needed to be.
     name: 'the packing tries the card turned as well as upright',
-    package: 'api',
     file: 'packages/shared/src/print.ts',
     root: true,
     find: '  const rotated = turned.columns * turned.rows > upright.columns * upright.rows;',
@@ -725,7 +668,6 @@ export const guards = [
     // Asserting access where a mutation needs write is the defect convention 4
     // names, and it reads as a plausible copy from the route above it.
     name: 'replacing a deck’s cards asserts write, not merely access',
-    package: 'api',
     file: 'src/routes/decks.ts',
     find:
       "    const access = await assertDeckAccess(c, deckId, 'write');\n" +
@@ -740,7 +682,6 @@ export const guards = [
     // Carrying the removal row forward reads as the card still standing, which
     // is the one thing an as-of view exists to get right.
     name: 'the deck as it stood stops carrying a card the import removed',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find: "where r.rn = 1 and r.outcome <> 'removed'",
     replace: 'where r.rn = 1',
@@ -751,7 +692,6 @@ export const guards = [
     // An open run has not removed anything yet, so answering it at all hands
     // back a deck that never existed.
     name: 'an import still running is refused rather than half-answered',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find: "  if (row.status === 'open') {",
     replace: '  if (false) {',
@@ -763,7 +703,6 @@ export const guards = [
     // history under this deck's name. One helper scopes both reads of a run,
     // so either of them catches this.
     name: 'a run from another deck is not readable through this deck',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find:
       "    .where('import_run.import_id', '=', importId)\n" +
@@ -780,7 +719,6 @@ export const guards = [
     // is the whole of what keeps those rows out of the answer -- the honesty of
     // the view rests on it and nothing else asserts it.
     name: 'an abandoned run is left out of the deck as it stood',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find: "where r.status = 'finished' and (r.started_at, r.id) <= (a.started_at, a.id)",
     replace: 'where (r.started_at, r.id) <= (a.started_at, a.id)',
@@ -791,7 +729,6 @@ export const guards = [
     // The route answers 404 for a deck that is not bound at all, which is not
     // the same 404 as a deck nobody may read.
     name: 'a deck with no import is offered a binding, not an error',
-    package: 'web',
     file: 'src/lib/deckImports.svelte.ts',
     find: '      if (caught instanceof ApiError && caught.status === 404) {',
     replace: '      if (false) {',
@@ -801,7 +738,6 @@ export const guards = [
   },
   {
     name: 'a superseded binding load does not overwrite a newer one',
-    package: 'web',
     file: 'src/lib/deckImports.svelte.ts',
     find: '    if (generation !== this.#bindingGeneration) return;',
     replace: '    if (false) return;',
@@ -826,7 +762,6 @@ export const guards = [
     // The screens are not remounted when the deck in the URL changes, so the
     // binding left in the store is read as the next deck's, open run and all.
     name: 'a binding belongs to the deck it was read for',
-    package: 'web',
     file: 'src/lib/deckImports.svelte.ts',
     find: '    this.bindingDeckId = null;\n    this.binding = null;\n',
     replace: '',
@@ -840,7 +775,6 @@ export const guards = [
     // prop is a getter over the row, so the effect subscribes to the row and one
     // copy count edit blanks and re-reads every image in the deck.
     name: 'an identity-only prop change does not re-read a thumbnail',
-    package: 'web',
     file: 'src/components/Thumbnail.svelte',
     find: '    const id = currentFileId;',
     replace: '    const id = fileId;',
@@ -853,7 +787,6 @@ export const guards = [
     // the row in the wrong place until the next load, which is exactly the kind
     // of drift that made patching look riskier than reloading.
     name: 'a row applied to the listing lands where a reload would have put it',
-    package: 'web',
     file: 'src/lib/files.svelte.ts',
     find: '    next.sort((a, b) => key(a).localeCompare(key(b)));',
     replace: '    void key;',
@@ -866,7 +799,6 @@ export const guards = [
     // absorb. Answering true leaves the explorer showing a folder that has
     // stopped existing.
     name: 'a deleted open folder falls back to a reload',
-    package: 'web',
     file: 'src/lib/files.svelte.ts',
     find: '        if (listing.folder?.id === gone || listing.breadcrumb.some((entry) => entry.id === gone)) {\n          return false;\n        }',
     replace: '        void gone;',
@@ -878,7 +810,6 @@ export const guards = [
     // The same shape one level out: decks.deck is a new object after every
     // save, so reading the field off it re-read a row whose id had not moved.
     name: 'an unchanged card back is not read again',
-    package: 'web',
     file: 'src/routes/Deck.svelte',
     find: '    const id = backFileId;',
     replace: '    const id = decks.deck?.back_file_id ?? null;',
@@ -890,7 +821,6 @@ export const guards = [
     // Nothing reads the deck back any more, so dropping the apply does not fall
     // through to a slower path -- the change simply never reaches the screen.
     name: 'what a deck_updated carried reaches the screen',
-    package: 'web',
     file: 'src/routes/Deck.svelte',
     find: '          decks.applyDeckUpdate(event.data.deck, event.data.cards);\n          return;',
     replace: '          return;',
@@ -903,7 +833,6 @@ export const guards = [
     // one project holds several decks, and an event for a sibling would
     // otherwise replace the open one wholesale.
     name: 'an event for another deck does not replace the open one',
-    package: 'web',
     file: 'src/lib/decks.svelte.ts',
     find: '    if (this.deck?.id !== deck.id) return;',
     replace: '    if (false) return;',
@@ -916,7 +845,6 @@ export const guards = [
     // that keep two loads in order. Without this the older of the two wins
     // whenever it is the one that lands second.
     name: 'a response older than what was applied does not overwrite it',
-    package: 'web',
     file: 'src/lib/decks.svelte.ts',
     find: '      if (this.#supersededBy(data.deck)) return;',
     replace: '      if (false) return;',
@@ -929,7 +857,6 @@ export const guards = [
     // document whose shots run past it, so a hand-supplied range is a bundle
     // Blender never opens.
     name: 'a scene ends on the last frame its shots reach',
-    package: 'api',
     file: 'packages/shared/src/scenes.ts',
     root: true,
     find: '      frame_range: sceneFrameRange(draft.shots, draft.instances, render.fps),',
@@ -942,7 +869,6 @@ export const guards = [
     // Deduplicating on the settings alone is the tempting version, and it hands
     // fifty-two cards one file: every card in a deck is cut to one size.
     name: 'two cards printed with different artwork are two files',
-    package: 'web',
     file: 'src/lib/scene/assets.ts',
     find:
       '    component.settings,\n' +
@@ -957,7 +883,6 @@ export const guards = [
     // Exporting a deck is a minute of geometry, and a document the importer
     // refuses is worth hearing about at the start of that minute.
     name: 'a document the importer would refuse is refused before a file is built',
-    package: 'web',
     file: 'src/lib/scene/bundle.ts',
     find: '  if (issues.length > 0) throw new SceneExportError(describeIssues(issues), issues);',
     replace: '  void issues;',
@@ -969,7 +894,6 @@ export const guards = [
     // The quarter turn the glTF Y-up conversion makes necessary. Without it
     // every card in the scene stands on its edge and no shot puts it down.
     name: 'an imported component is laid flat, and a library piece is not',
-    package: 'web',
     file: 'src/lib/scene/layout.ts',
     find: 'const FLAT_ROTATION_DEG: Vec3 = [-90, 0, 0];',
     replace: 'const FLAT_ROTATION_DEG: Vec3 = [0, 0, 0];',
@@ -984,7 +908,6 @@ export const guards = [
     // converted per value, which is what makes dropping it on one of them the
     // plausible slip rather than a nonsense.
     name: 'a dealt position crosses the millimetre boundary exactly once',
-    package: 'blender',
     file: 'shots.py',
     find:
       '            _pair(LOCATION, 0, start_s, rest[0] * MM, end_s, slot[0] * MM, ' +
@@ -1000,7 +923,6 @@ export const guards = [
     // faces sampling one piece of artwork -- and the box still builds, still
     // textures and still exports, wearing the front panel on its back.
     name: 'no two faces of a box net share a piece of the wrap',
-    package: 'api',
     file: 'packages/shared/src/models3d.ts',
     root: true,
     find: '    back: rect(2 * d + w, d, 2 * d + 2 * w, d + h),',
@@ -1015,7 +937,6 @@ export const guards = [
     // place it puts a card the deck prints none of on the table, and builds and
     // ships a .glb for it.
     name: 'a card the deck holds no copies of stays off the table',
-    package: 'web',
     file: 'src/lib/scene/assets.ts',
     find: '  return Math.max(0, Math.floor(count));',
     replace: '  return Math.max(1, Math.floor(count));',
@@ -1028,7 +949,6 @@ export const guards = [
     // the registry handing out a new id per selection, a deck of fifty-two
     // cards builds fifty-two geometries and the bundle carries every one.
     name: 'one component is built once however many times it was picked',
-    package: 'web',
     file: 'src/lib/scene/assets.ts',
     find:
       '    const key = assetKey(component);\n' +
@@ -1044,7 +964,6 @@ export const guards = [
     // does and is the natural slip -- and it buries the whole selection one
     // tabletop deep.
     name: 'the table hangs below the plane the pieces stand on',
-    package: 'blender',
     file: 'stage.py',
     find: '            [(-half, -thickness_m), (half, -thickness_m), (half, 0.0), (-half, 0.0)],',
     replace: '            [(-half, 0.0), (half, 0.0), (half, thickness_m), (-half, thickness_m)],',
@@ -1057,7 +976,6 @@ export const guards = [
     // wall. Leaving it standing is the version that reads fine until half the
     // shot is a render of the back of a backdrop.
     name: 'a shot that circles the table is given no backdrop to circle behind',
-    package: 'web',
     file: 'src/lib/scene/bundle.ts',
     find: "  const circles = shots.shots.some((shot) => shot.kind === 'orbit');",
     replace: '  const circles = false;',
@@ -1072,7 +990,6 @@ export const guards = [
     // frame, which is narrower than the real one by exactly that factor -- and
     // the world shows either side of it.
     name: 'a backdrop is cut to the whole frame, not to the subject-safe one',
-    package: 'web',
     file: 'src/lib/scene/layout.ts',
     find: '    half_width_mm: field.h * FRAMING_MARGIN * reach,',
     replace: '    half_width_mm: field.h * reach,',
@@ -1087,7 +1004,6 @@ export const guards = [
     // leaves a deck holding one deleted card unable to change any card's copy
     // count at all, which is what it did.
     name: 'a deck holding a deleted card can still be edited',
-    package: 'api',
     file: 'src/services/decks.ts',
     find: "    .where('file.deck_id', '=', deckId)\n",
     replace: "    .where('file.deck_id', '=', deckId)\n    .where('file.deleted_at', 'is', null)\n",
@@ -1100,7 +1016,6 @@ export const guards = [
     // jams the editor from the other side -- a list refused for leaving out a
     // card the deck no longer shows anywhere.
     name: 'only live artwork has to have a place in the deck',
-    package: 'api',
     file: 'src/services/decks.ts',
     find: '    (row) => row.deleted_at === null && !given.has(row.id) && row.id !== deck.back_file_id',
     replace: '    (row) => !given.has(row.id) && row.id !== deck.back_file_id',
@@ -1113,7 +1028,6 @@ export const guards = [
     // check reads like belt and braces beside the import's own, which is
     // exactly why it goes missing.
     name: 'an upload cannot push a deck past its card cap',
-    package: 'api',
     file: 'src/routes/files.ts',
     find:
       "    if (home.kind === 'deck' && deckRole === 'card') {\n" +
@@ -1129,7 +1043,6 @@ export const guards = [
     // is the natural reading of a restore, and it puts live artwork in a deck
     // that no list names -- which the deck editor then refuses to save.
     name: 'a restored card is given a place in its deck again',
-    package: 'api',
     file: 'src/routes/files.ts',
     find: "    if (home.kind === 'deck') await rejoinDeck(c, access.projectId, home.deckId, id);\n",
     replace: '',
@@ -1142,7 +1055,6 @@ export const guards = [
     // so a wrong offset is the single way to write an archive that looks
     // complete, unzips without complaint, and hands back the wrong bytes.
     name: 'the central directory points at the local header it names',
-    package: 'web',
     file: 'src/lib/scene/zip.ts',
     find: '    writer.u32(entry.localOffset);',
     replace: '    writer.u32(0);',
@@ -1158,7 +1070,6 @@ export const guards = [
     // leaves every deck that has ever been imported printing its own back on
     // the front of a sheet, and nothing in the run saying so.
     name: 'a page titled Back takes a card it already has to no copies',
-    package: 'api',
     file: 'src/services/deckImport.ts',
     find: '  } else if (isBack && existing.quantity !== 0) {',
     replace: '  } else if (false) {',
@@ -1171,7 +1082,6 @@ export const guards = [
     // goes on carrying a reverse that is one version out -- the one kind of
     // staleness no comparison of fronts can see.
     name: 'a new version of the back asks for the cards behind it again',
-    package: 'api',
     file: 'src/services/printRuns.ts',
     find: '  return group.back_file_id === backFileId && group.back_version_number === backVersion;',
     replace: '  return group.back_file_id === backFileId;',
@@ -1184,7 +1094,6 @@ export const guards = [
     // right there -- and it makes re-importing a card invisible to the one
     // screen that exists to notice it.
     name: 'copies printed at an older version do not count towards this one',
-    package: 'api',
     file: 'src/services/printRuns.ts',
     find: '  const atVersion = groups.filter((group) => group.version_number === version);',
     replace: '  const atVersion = groups;',
@@ -1197,7 +1106,6 @@ export const guards = [
     // -- so a card re-imported while the print screen sat open is written down
     // as printed at a version that never went through the printer.
     name: 'the sheets are drawn at the versions the run is recorded with',
-    package: 'web',
     file: 'src/routes/Print.svelte',
     find: '        { decks: runDecks, options, versions: $state.snapshot(versions) },',
     replace: '        { decks: runDecks, options },',
@@ -1212,7 +1120,6 @@ export const guards = [
     // three -- the one arrangement where what is on screen and what comes out
     // of the printer disagree, with nothing on the row to say which is right.
     name: 'a part-ticked deck reports itself as mixed',
-    package: 'web',
     file: 'src/routes/Print.svelte',
     find: '                    indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
     replace: '',
@@ -1225,7 +1132,6 @@ export const guards = [
     // of a deck are where somebody is checking whether they have seen every
     // card, and a viewer that silently starts again says they have not.
     name: 'the card viewer stops at the ends of the deck',
-    package: 'web',
     file: 'src/components/CardViewer.svelte',
     find: '    if (next < 0 || next >= cards.length) return;',
     replace:
@@ -1242,7 +1148,6 @@ export const guards = [
     // one leaves the focus on nothing at all, and a keyboard is back at the top
     // of a sixty-card list every time it looks at a card.
     name: 'closing the card viewer returns the focus to what opened it',
-    package: 'web',
     file: 'src/components/CardViewer.svelte',
     find: '      opener?.focus();\n',
     replace: '',
@@ -1255,7 +1160,6 @@ export const guards = [
     // screen exists not to get wrong: a card opened from a run in February has
     // to be the artwork that run left, not the artwork the file carries today.
     name: 'a card opened from a history screen is opened at that run\u2019s version',
-    package: 'web',
     file: 'src/routes/DeckAsOf.svelte',
     find: '              version: card.file_version_number,\n',
     replace: '',
@@ -1269,7 +1173,6 @@ export const guards = [
     // none of them read -- the sheets packed from the deck's own counts, the
     // ledger recording them, and the one thing on screen saying otherwise.
     name: 'a count somebody typed is the count that prints',
-    package: 'web',
     file: 'src/routes/Print.svelte',
     find: '    return copies[key(deckId, card.file_id)] ?? startingCopies(deckId, card);',
     replace: '    return startingCopies(deckId, card);',

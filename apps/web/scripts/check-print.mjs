@@ -15,7 +15,7 @@ import { deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'vite';
 import { createBrowser } from './lib/browser.mjs';
 import { solidPng } from './lib/fixtures.mjs';
-import { createProject, inspectApi, signUp } from './lib/session.mjs';
+import { createProject, inspectApi, probeRefusal, signUp } from './lib/session.mjs';
 
 const PORT = Number(process.env.PRINT_PROBE_PORT ?? 17331);
 const API = process.env.API_PROXY_TARGET ?? 'http://localhost:17310';
@@ -214,21 +214,8 @@ function pairFrontsToBacks(fronts, backs, pageWidth) {
 
 async function run() {
   const api = await inspectApi(API);
-  if (!api.ok) {
-    const message = `[check:print] ${api.reason}`;
-    if (!api.absent) {
-      console.error(message);
-      return 1;
-    }
-    // Same contract as the other probes: absent locally is a skip, absent under
-    // CI is a failure. A gate that silently measures nothing is worse than none.
-    if (process.env.CI) {
-      console.error(`${message}; refusing to skip under CI`);
-      return 1;
-    }
-    console.warn(`${message}; skipping. Start it with \`pnpm dev:api\`.`);
-    return 0;
-  }
+  const refusal = probeRefusal('check:print', api);
+  if (refusal !== null) return refusal;
 
   const server = await createServer({
     root: new URL('..', import.meta.url).pathname,

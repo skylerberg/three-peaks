@@ -30,7 +30,7 @@ import {
 } from '@three-peaks/shared';
 import { createBrowser } from './lib/browser.mjs';
 import { solidPng } from './lib/fixtures.mjs';
-import { createProject, inspectApi, signUp } from './lib/session.mjs';
+import { createProject, inspectApi, probeRefusal, signUp } from './lib/session.mjs';
 
 const PORT = Number(process.env.SCENE_PROBE_PORT ?? 17332);
 const API = process.env.API_PROXY_TARGET ?? 'http://localhost:17310';
@@ -252,20 +252,8 @@ function instancesPerAsset(document) {
 
 async function run() {
   const api = await inspectApi(API, SCENE_ROUTES);
-  if (!api.ok) {
-    const message = `[check:scene] ${api.reason}`;
-    if (!api.absent) {
-      console.error(message);
-      return 1;
-    }
-    // The other probes' contract, and check-upload.mjs holds the reasoning.
-    if (process.env.CI) {
-      console.error(`${message}; refusing to skip under CI`);
-      return 1;
-    }
-    console.warn(`${message}; skipping. Start it with \`pnpm dev:api\`.`);
-    return 0;
-  }
+  const refusal = probeRefusal('check:scene', api);
+  if (refusal !== null) return refusal;
 
   const server = await createServer({
     root: new URL('..', import.meta.url).pathname,
