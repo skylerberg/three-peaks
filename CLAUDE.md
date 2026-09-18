@@ -1091,14 +1091,20 @@ from under the first.
 
 `pnpm run check:all` is the whole gate. Three parts of it are worth knowing:
 
-- **`check:test-guards`** is mutation testing. Every entry in
-  `scripts/test-guards.mjs` names a bug and the edit that puts it back, and the
+- **`check:test-guards`** is mutation testing. Every entry under
+  `scripts/test-guards/` names a bug and the edit that puts it back, and the
   named tests must **fail** with it in place. Nothing is written to the source
   tree — the edit rides in `GUARD_MUTATION` and is applied by a Vite transform.
   Each `find` must match **exactly once**: a pattern matching nothing leaves the
   source correct and the tests green, which is indistinguishable from a guard
   that works. Guards sharing a database run serially, because the advisory run
   lock refuses two suites against one database — correctly.
+  **The entries are split one file per area, and that is about merging rather
+  than tidiness**: a single list is one line every branch appends to, so any two
+  branches that each add a guard conflict there and nowhere else. A new guard
+  goes in the file its subject belongs to; `scripts/test-guards.mjs` is the
+  loader, owns the rules for writing one, and refuses a name two files both
+  hold — which a copy into the wrong area is what produces.
 - **`check:bundle`** builds `apps/api/dist/index.mjs` and boots it. Everything
   else here reads the source tree or runs it through tsx, so the artefact the
   image actually starts was covered by nothing, and a bug that exists only once
