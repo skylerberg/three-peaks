@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { MAX_DECK_CARDS } from '@three-peaks/shared';
 import { AppError } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
@@ -136,12 +137,6 @@ export async function ensureDeckCard(
   fileId: string,
   copies = 1
 ): Promise<boolean> {
-  const top = await db
-    .selectFrom('deck_card')
-    .select((eb) => eb.fn.max('deck_card.position').as('position'))
-    .where('deck_card.deck_id', '=', deckId)
-    .executeTakeFirst();
-
   const inserted = await db
     .insertInto('deck_card')
     .values({
@@ -149,13 +144,67 @@ export async function ensureDeckCard(
       deck_id: deckId,
       file_id: fileId,
       quantity: copies,
-      position: (top?.position ?? -1) + 1,
+      position: await nextDeckPosition(db, deckId),
     })
     .onConflict((oc) => oc.columns(['deck_id', 'file_id']).doNothing())
     .returning(['deck_card.id as id'])
     .executeTakeFirst();
 
   return inserted !== undefined;
+}
+
+/**
+ * The number a card arriving now would take: one past the end of the list.
+ *
+ * Here rather than inline because two callers need it -- this file, for a
+ * single arrival, and the import, which adds its leftovers in one statement --
+ * and a second copy of the query is a second answer to where the end of a deck
+ * is, free to drift from this one.
+ */
+export async function nextDeckPosition(db: Connection, deckId: string): Promise<number> {
+  const top = await db
+    .selectFrom('deck_card')
+    .select((eb) => eb.fn.max('deck_card.position').as('position'))
+    .where('deck_card.deck_id', '=', deckId)
+    .executeTakeFirst();
+  return (top?.position ?? -1) + 1;
+}
+
+/**
+ * Writes a deck's arrangement: the rows named, in the order named, numbered
+ * from zero.
+ *
+ * This is the rule and not the policy. Which order a deck should be in is the
+ * caller's to decide -- an import takes it from the design it was given -- and
+ * what is fixed here is that the numbers come out dense and zero-based, and
+ * that the caller names *every* row the deck holds. A position is an index into
+ * one list, so renumbering part of it leaves two rows on one number and
+ * `readDeckCards`' tie-break choosing between them.
+ *
+ * Two properties worth keeping if this is ever rewritten. Only the rows that
+ * moved are written, so an arrangement that already agrees costs one statement
+ * and no rows. And `position` is the only column touched: inserting a
+ * `deck_card` row, or updating its `file_id`, takes a key share on the file it
+ * names, and a deck rewritten by hand takes those *after* having rewritten
+ * `deck_card` -- which is the deadlock the import's own file locks are ordered
+ * around. A position carries no foreign key, so this stays out of it.
+ */
+export async function renumberDeckCards(
+  db: Connection,
+  ordered: readonly { id: string; position: number }[]
+): Promise<void> {
+  const moved = ordered
+    .map((row, position) => ({ id: row.id, was: row.position, position }))
+    .filter((row) => row.was !== row.position);
+  if (moved.length === 0) return;
+
+  await sql`
+    update deck_card set position = place.position
+    from (values ${sql.join(
+      moved.map((row) => sql`(${row.id}::uuid, ${row.position}::int)`)
+    )}) as place(id, position)
+    where deck_card.id = place.id
+  `.execute(db);
 }
 
 /**

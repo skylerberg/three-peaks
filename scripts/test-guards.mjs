@@ -62,7 +62,8 @@ export const guards = [
     // reordering that reads as harmless and quietly hands each card to whatever
     // page happens to share its name.
     name: 'a page id outranks a title, never the other way round',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/planning.ts',
+
     find:
       '  for (const [index, page] of pages.entries()) {\n' +
       "    claim(index, byPageId.get(page.pageId), 'page_id');\n" +
@@ -87,7 +88,8 @@ export const guards = [
     // in whatever order the pages happened to arrive in and the deck happened
     // to already hold. Nothing else in the run says a word about it.
     name: 'a finished import leaves the deck in the design’s order',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/finish.ts',
+
     find: '  await orderDeckToExport(c, access);\n',
     replace: '',
     tests: ['tests/e2e/deckImport.test.ts'],
@@ -682,7 +684,8 @@ export const guards = [
     // Carrying the removal row forward reads as the card still standing, which
     // is the one thing an as-of view exists to get right.
     name: 'the deck as it stood stops carrying a card the import removed',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/history.ts',
+
     find: "where r.rn = 1 and r.outcome <> 'removed'",
     replace: 'where r.rn = 1',
     tests: ['tests/e2e/deckImport.test.ts'],
@@ -692,7 +695,8 @@ export const guards = [
     // An open run has not removed anything yet, so answering it at all hands
     // back a deck that never existed.
     name: 'an import still running is refused rather than half-answered',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/history.ts',
+
     find: "  if (row.status === 'open') {",
     replace: '  if (false) {',
     tests: ['tests/e2e/deckImport.test.ts'],
@@ -703,7 +707,8 @@ export const guards = [
     // history under this deck's name. One helper scopes both reads of a run,
     // so either of them catches this.
     name: 'a run from another deck is not readable through this deck',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/runs.ts',
+
     find:
       "    .where('import_run.import_id', '=', importId)\n" +
       '    .executeTakeFirst();\n' +
@@ -719,7 +724,8 @@ export const guards = [
     // is the whole of what keeps those rows out of the answer -- the honesty of
     // the view rests on it and nothing else asserts it.
     name: 'an abandoned run is left out of the deck as it stood',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/history.ts',
+
     find: "where r.status = 'finished' and (r.started_at, r.id) <= (a.started_at, a.id)",
     replace: 'where (r.started_at, r.id) <= (a.started_at, a.id)',
     tests: ['tests/e2e/deckImport.test.ts'],
@@ -1125,7 +1131,8 @@ export const guards = [
     // leaves every deck that has ever been imported printing its own back on
     // the front of a sheet, and nothing in the run saying so.
     name: 'a page titled Back takes a card it already has to no copies',
-    file: 'src/services/deckImport.ts',
+    file: 'src/services/deckImport/card.ts',
+
     find: '  } else if (isBack && existing.quantity !== 0) {',
     replace: '  } else if (false) {',
     tests: ['tests/e2e/deckImport.test.ts'],
