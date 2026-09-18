@@ -12,8 +12,35 @@ const CANVA_TOKEN_MAX_LENGTH = 4096;
 // we just showed somebody.
 const PAIRING_CODE_MAX_LENGTH = 32;
 
+// Nothing here parses either, so the bound is only so an unbounded string does
+// not land in a column exactly as it arrived.
+const BUILD_NAME_MAX_LENGTH = 200;
+
+// What a bundle says it is, reported as the app opens. Optional, because the
+// bundle the portal was serving when this shipped carries none -- and a release
+// nobody can recognise is worth recognising as that rather than refusing.
+export const canvaAppBuildReportSchema = type({
+  commit: stringWithLength(1, BUILD_NAME_MAX_LENGTH),
+  branch: stringWithLength(1, BUILD_NAME_MAX_LENGTH),
+  // Taken from the bundle rather than worked out here: only the build knows
+  // what its tree looked like.
+  dirty: 'boolean',
+  built_at: 'string.date.iso',
+});
+
+// The build the portal is serving: the newest one to have reported itself.
+export const canvaAppBuildSchema = type({
+  commit: 'string',
+  branch: 'string',
+  dirty: 'boolean',
+  built_at: 'string',
+  first_seen_at: 'string',
+  last_seen_at: 'string',
+});
+
 export const canvaAppSessionRequestSchema = type({
   token: stringWithLength(1, CANVA_TOKEN_MAX_LENGTH),
+  'build?': canvaAppBuildReportSchema,
   // Asks for a code even where this Canva user is already linked, which is the
   // only way somebody signed into the wrong account can say so from inside
   // Canva. It grants nothing on its own: a code still has to be spent by

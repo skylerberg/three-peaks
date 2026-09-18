@@ -21,5 +21,10 @@
   // The base carries the rest, and `allowImportingTsExtensions` is the one that
   // matters here: packages/shared is source-only and its imports name `.ts`
   // outright, which is what keeps the generation cycle a plain file write.
-  "include": ["./src/**/*", "./declarations/declarations.d.ts", "./styles/**/*"]
+  "include": [
+    "./src/**/*",
+    "./declarations/declarations.d.ts",
+    "./styles/**/*",
+    "./canva-app.config.ts"
+  ]
 }

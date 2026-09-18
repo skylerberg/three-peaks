@@ -248,3 +248,57 @@ export async function revokeLink(db: Connection, userId: string, linkId: string)
     throw new AppError(404, 'Link not found');
   }
 }
+
+export interface CanvaAppBuildReport {
+  commit: string;
+  branch: string;
+  dirty: boolean;
+  built_at: string;
+}
+
+export interface DeployedBuild extends Omit<CanvaAppBuildReport, 'built_at'> {
+  built_at: Date | string;
+  first_seen_at: Date | string;
+  last_seen_at: Date | string;
+}
+
+/**
+ * Records that a bundle of this build is running. Every app load reports, so
+ * the row is the build rather than the visit -- an upsert, with first_seen_at
+ * deliberately left alone, because when a build went live is a different
+ * question from when it was last used and only the insert can answer it.
+ */
+export async function recordAppBuild(db: Connection, report: CanvaAppBuildReport): Promise<void> {
+  const builtAt = new Date(report.built_at);
+  const seenAt = new Date();
+
+  await db
+    .insertInto('canva_app_build')
+    .values({
+      commit: report.commit,
+      branch: report.branch,
+      dirty: report.dirty,
+      built_at: builtAt,
+      first_seen_at: seenAt,
+      last_seen_at: seenAt,
+    })
+    .onConflict((conflict) =>
+      conflict.column('commit').doUpdateSet({
+        branch: report.branch,
+        dirty: report.dirty,
+        built_at: builtAt,
+        last_seen_at: seenAt,
+      })
+    )
+    .execute();
+}
+
+// The portal serves one bundle, so the build seen most recently is the one it
+// is serving. Older rows are the history of what has been.
+export async function readLatestBuild(db: Connection): Promise<DeployedBuild | undefined> {
+  return await db
+    .selectFrom('canva_app_build')
+    .select(['commit', 'branch', 'dirty', 'built_at', 'first_seen_at', 'last_seen_at'])
+    .orderBy('last_seen_at', 'desc')
+    .executeTakeFirst();
+}

@@ -1242,4 +1242,19 @@ export const guards = [
     testName: 'prints the count somebody typed rather than the deck’s',
     runner: 'web',
   },
+  {
+    // When a build went live and when it was last used are different questions,
+    // and only the insert can answer the first. Carrying first_seen_at into the
+    // update makes every row say it appeared the last time somebody opened the
+    // app -- so the record would show a bundle that has been up there for weeks
+    // as having arrived minutes ago, which is the one thing a person reads it
+    // to find out.
+    name: 'a build keeps the moment it was first seen',
+    file: 'src/services/canvaApp.ts',
+    find: "      conflict.column('commit').doUpdateSet({\n        branch: report.branch,",
+    replace:
+      "      conflict.column('commit').doUpdateSet({\n        first_seen_at: seenAt,\n        branch: report.branch,",
+    tests: ['tests/e2e/canvaApp.test.ts'],
+    testName: 'keeps when a build first appeared while moving when it was last seen',
+  },
 ];
