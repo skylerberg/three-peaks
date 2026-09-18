@@ -119,7 +119,13 @@ export const App = () => {
       const canvaToken = await auth.getCanvaUserToken();
       const result = assertOk(
         await api.POST('/api/canva-app/session', {
-          body: { token: canvaToken, ...(switchAccount ? { switch_account: true } : {}) },
+          // Every open reports the build, which is what makes the record one of
+          // what is running rather than of what somebody meant to upload.
+          body: {
+            token: canvaToken,
+            build: APP_BUILD,
+            ...(switchAccount ? { switch_account: true } : {}),
+          },
         })
       );
 

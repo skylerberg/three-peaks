@@ -986,6 +986,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/canva-app/build': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The bundle the Developer Portal is serving
+     * @description The newest build to have reported itself. The bundle is uploaded into the portal by hand and no Canva API reads it back, so what has run is the only evidence of what is up there. Answers 404 where nothing has reported, which means either that the bundle in the portal predates this or that nobody has opened the app since. Public for the reason /health names its own branch and commit: it identifies a release rather than saying anything about anybody, and `pnpm canva:release` reads it before it builds.
+     */
+    get: operations['getApiCanvaAppBuild'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/canva-app/pair': {
     parameters: {
       query?: never;
@@ -1059,6 +1079,14 @@ export interface components {
         id: string;
         name: string;
       };
+    };
+    CanvaAppBuild: {
+      branch: string;
+      built_at: string;
+      commit: string;
+      dirty: boolean;
+      first_seen_at: string;
+      last_seen_at: string;
     };
     CanvaAppLink: {
       canva_brand_id: string | null;
@@ -6454,6 +6482,12 @@ export interface operations {
       content: {
         'application/json': {
           token: string;
+          build?: {
+            branch: string;
+            built_at: string;
+            commit: string;
+            dirty: boolean;
+          };
           switch_account?: boolean;
         };
       };
@@ -6490,6 +6524,48 @@ export interface operations {
               message: string;
               path: string;
             }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiCanvaAppBuild: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The build */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CanvaAppBuild'];
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
             error: string;
           };
         };

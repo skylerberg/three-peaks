@@ -75,6 +75,7 @@ describe('the Canva app', () => {
   afterEach(async () => {
     await db.deleteFrom('canva_app_pairing').execute();
     await db.deleteFrom('canva_app_link').execute();
+    await db.deleteFrom('canva_app_build').execute();
     resetCanvaKeySets();
   });
 
@@ -264,6 +265,94 @@ describe('the Canva app', () => {
       const body = await (await session(await mintToken())).json();
       expect(body.linked).toBe(true);
       expect(body.user.id).toBe(owner.id);
+    });
+  });
+
+  // The bundle goes into the Developer Portal by hand and Canva exposes no API
+  // that reads it back, so what a running bundle says about itself is the only
+  // evidence of what is up there.
+  describe('the build the portal is serving', () => {
+    const build = {
+      commit: 'a01280bfb040',
+      branch: 'main',
+      dirty: false,
+      built_at: '2026-09-17T12:00:00.000Z',
+    };
+    const anHourAgo = () => new Date(Date.now() - 3_600_000);
+
+    async function reported(overrides: Partial<typeof build> = {}) {
+      const res = await anonymous.post('/api/canva-app/session', {
+        token: await mintToken(),
+        build: { ...build, ...overrides },
+      });
+      expect(res.status).toBe(200);
+      return res;
+    }
+
+    async function deployed() {
+      const res = await anonymous.get('/api/canva-app/build');
+      expect(res.status).toBe(200);
+      return await res.json();
+    }
+
+    it('answers 404 until a bundle has reported one', async () => {
+      expect((await anonymous.get('/api/canva-app/build')).status).toBe(404);
+    });
+
+    it('records what a running bundle said, and tells anyone who asks', async () => {
+      await reported();
+      const body = await deployed();
+      expect(body.commit).toBe(build.commit);
+      expect(body.branch).toBe('main');
+      expect(body.dirty).toBe(false);
+      expect(new Date(body.built_at).toISOString()).toBe(build.built_at);
+    });
+
+    // The bundle that was in the portal when this shipped carries nothing to
+    // report, and that is a state the record has to be able to be in.
+    it('records nothing for an exchange that carries no build', async () => {
+      const res = await anonymous.post('/api/canva-app/session', { token: await mintToken() });
+      expect(res.status).toBe(200);
+      expect((await anonymous.get('/api/canva-app/build')).status).toBe(404);
+    });
+
+    // The report is written before the answer branches: a bundle is running
+    // whether or not the person in front of it has been linked to an account.
+    it('records one from an app nobody has paired yet', async () => {
+      expect((await (await reported()).json()).linked).toBe(false);
+      expect((await deployed()).commit).toBe(build.commit);
+    });
+
+    it('keeps when a build first appeared while moving when it was last seen', async () => {
+      await reported();
+      const earlier = anHourAgo();
+      await db
+        .updateTable('canva_app_build')
+        .set({ first_seen_at: earlier, last_seen_at: earlier })
+        .execute();
+
+      await reported();
+      const body = await deployed();
+      expect(new Date(body.first_seen_at).getTime()).toBe(earlier.getTime());
+      expect(new Date(body.last_seen_at).getTime()).toBeGreaterThan(earlier.getTime());
+    });
+
+    it('answers with the build seen most recently, which is the one up there', async () => {
+      await reported({ commit: 'older00000000' });
+      // Backdated rather than raced. Two exchanges can land inside one
+      // millisecond, and what is under test is the ordering, not the clock.
+      await db.updateTable('canva_app_build').set({ last_seen_at: anHourAgo() }).execute();
+
+      await reported({ commit: 'newer11111111' });
+      expect((await deployed()).commit).toBe('newer11111111');
+    });
+
+    it('refuses a build whose timestamp is not a timestamp', async () => {
+      const res = await anonymous.post('/api/canva-app/session', {
+        token: await mintToken(),
+        build: { ...build, built_at: 'the other day' },
+      });
+      expect(res.status).toBe(422);
     });
   });
 });

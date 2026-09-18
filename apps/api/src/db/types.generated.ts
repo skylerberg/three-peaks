@@ -42,6 +42,15 @@ export interface AppUser {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CanvaAppBuild {
+  branch: string;
+  built_at: Timestamp;
+  commit: string;
+  dirty: boolean;
+  first_seen_at: Generated<Timestamp>;
+  last_seen_at: Generated<Timestamp>;
+}
+
 export interface CanvaAppLink {
   canva_brand_id: string | null;
   canva_user_id: string;
@@ -265,6 +274,7 @@ export interface Session {
 
 export interface DB {
   app_user: AppUser;
+  canva_app_build: CanvaAppBuild;
   canva_app_link: CanvaAppLink;
   canva_app_pairing: CanvaAppPairing;
   component: Component;

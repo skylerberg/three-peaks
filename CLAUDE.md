@@ -812,6 +812,24 @@ writes it and a fresh worktree can release without being told what it is. One
 predates the id still lacks it and `pnpm canva:release` says so with the line to
 add.
 
+**A bundle says which one it is, and the API records what it saw.** Canva
+exposes no API for the App source field, so until this nothing on our side could
+name what the portal was serving -- the answer was a built file's timestamp read
+against the log, which is a guess. `canva-app.config.ts` defines `APP_BUILD` the
+way the toolchain already defines `BACKEND_HOST`, the session exchange every app
+load makes carries it, and `canva_app_build` keeps a row per build with when it
+was first and last seen. The newest by `last_seen_at` is what is up there, and
+older rows are the history. `pnpm canva:release` reads
+`GET /api/canva-app/build` before it builds and says what is being served and
+how far behind `main` it is; that route is public for the reason `/health` names
+its own commit, since it identifies a release and says nothing about anybody.
+
+The limit is worth knowing: **the record moves when a bundle runs, not when one
+is uploaded.** An upload nobody has opened yet is invisible to it, which is why
+the release ends by telling you to open the app and run the command again — and
+why a 401 from that route means the release adding it has not gone out, rather
+than anything about a credential.
+
 **It authenticates by exchanging Canva's word for ours.** The app can prove
 which Canva user is running it and nothing else, so somebody signed in here
 spends a pairing code once and `canva_app_link` remembers. What comes back is an

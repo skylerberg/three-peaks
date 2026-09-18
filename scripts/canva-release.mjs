@@ -71,6 +71,91 @@ function appId() {
   );
 }
 
+// The commit the bundle will carry, computed the way canva-app.config.ts
+// computes it. A second copy, but a checked one: the build below fails unless
+// the bundle it produced actually contains this string, so the two cannot
+// disagree quietly.
+function builtCommit() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function gitOrNull(args) {
+  try {
+    return execFileSync('git', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function since(iso) {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(minutes)) return 'at an unknown time';
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+// How far the deployed commit is behind what this checkout could ship. Silent
+// where the commit is one this clone has never fetched, which is what a bundle
+// built on another machine arrives as.
+function behindMain(commit) {
+  if (gitOrNull(['rev-parse', '--verify', '--quiet', `${commit}^{commit}`]) === null) return null;
+  const base = gitOrNull(['rev-parse', '--verify', '--quiet', 'origin/main^{commit}']);
+  if (base === null) return null;
+  const count = gitOrNull(['rev-list', '--count', `${commit}..origin/main`]);
+  return count === null ? null : Number(count);
+}
+
+// What the portal is serving, according to the bundles that have run. Canva
+// exposes no API for the App source field, so the API's record of what reported
+// itself is the only evidence there is -- and being unable to reach it says
+// nothing about the release, so it never stops one.
+async function reportDeployed(host) {
+  let response;
+  try {
+    response = await fetch(`${host}/api/canva-app/build`, { signal: AbortSignal.timeout(10_000) });
+  } catch (error) {
+    console.log(`  --   could not ask ${host} what it is serving (${error.message})`);
+    return;
+  }
+
+  if (response.status === 404) {
+    console.log('  --   nothing has reported a build. Either the release that records');
+    console.log('       them is not deployed yet, the bundle up there predates it, or');
+    console.log('       nobody has opened the app since');
+    return;
+  }
+  // Auth is global there and this route opts out, so a 401 is the deployed API
+  // not having the route at all rather than anything about a credential.
+  if (response.status === 401) {
+    console.log(`  --   ${host} does not serve this route yet, so the release that`);
+    console.log('       records builds has not gone out');
+    return;
+  }
+  if (!response.ok) {
+    console.log(`  --   ${host} answered ${response.status} for the deployed build`);
+    return;
+  }
+
+  const build = await response.json();
+  const behind = behindMain(build.commit);
+  const distance =
+    behind === null ? '' : behind === 0 ? '  (current)' : `  (${behind} behind main)`;
+  console.log(
+    `  now  the portal is serving ${build.commit}${build.dirty ? ' (dirty)' : ''}${distance}`
+  );
+  console.log(`       on ${build.branch}, last seen ${since(build.last_seen_at)}`);
+}
+
 // Read off build:prod rather than kept as a second copy that is free to
 // disagree with the build this script just ran.
 function productionHost() {
@@ -108,7 +193,19 @@ const id = appId();
 const host = productionHost();
 const pushCommand = 'pnpm --filter @three-peaks/canva exec canva apps config push --strategy local';
 
-console.log(`Building apps/canva against ${host}\n`);
+const commit = builtCommit();
+if (commit === 'unknown') {
+  fail(
+    `git could not name a commit for this checkout, so the bundle would carry no\n` +
+      `build anybody could recognise -- and the portal keeps whatever is uploaded\n` +
+      `until it is replaced by hand. Release from a git checkout.`
+  );
+}
+
+console.log('Before this release:\n');
+await reportDeployed(host);
+
+console.log(`\nBuilding apps/canva against ${host}\n`);
 const startedAt = Date.now() - 1000;
 if (!run(['run', 'build:prod'])) {
   fail('the build failed. Nothing was pushed, and there is nothing to upload.');
@@ -140,8 +237,17 @@ if (!source.includes(host)) {
   );
 }
 
+if (!source.includes(commit)) {
+  fail(
+    `${relativeBundle} does not carry ${commit}, so it cannot report which build it\n` +
+      `is and the portal's copy will stay unidentifiable. Check that\n` +
+      `apps/canva/canva-app.config.ts still defines APP_BUILD.`
+  );
+}
+
 console.log(`\n  ok   ${relativeBundle} is ${(built.size / 1024 / 1024).toFixed(2)} MB`);
 console.log(`  ok   it names ${host}, and no localhost`);
+console.log(`  ok   it reports itself as ${commit}`);
 
 let configPushed = true;
 if (skipConfig) {
@@ -189,6 +295,8 @@ Canva has no API for the bundle, so the upload itself is yours to do:
      is loaded from the portal's copy, not from this checkout.
   4. Open it in a real design to check it before telling anyone:
        pnpm --filter @three-peaks/canva exec canva apps preview
+  5. Opening it is what makes it report, so run this again afterwards: it
+     should say the portal is serving ${commit}.
 `);
 
 if (!configPushed) process.exit(1);

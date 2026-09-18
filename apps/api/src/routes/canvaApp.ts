@@ -3,9 +3,12 @@ import { describeRoute, resolver } from 'hono-openapi';
 import { skipAuth } from '../middleware/auth.ts';
 import { jsonValidator } from '../middleware/validators.ts';
 import {
+  type CanvaAppBuildReport,
   claimPairing,
   findLink,
   listLinks,
+  readLatestBuild,
+  recordAppBuild,
   revokeLink,
   startPairing,
   verifyCanvaUserToken,
@@ -18,12 +21,14 @@ import {
   validationErrorResponse,
 } from '../schemas/errors.ts';
 import {
+  canvaAppBuildSchema,
   canvaAppLinkListSchema,
   canvaAppLinkSchema,
   canvaAppPairRequestSchema,
   canvaAppSessionRequestSchema,
   canvaAppSessionSchema,
 } from '../schemas/canvaApp.ts';
+import { AppError } from '../utils/errors.ts';
 import type { AppHono, PublicHono } from '../types/index.ts';
 
 // Two routers on one mount, the way the auth router splits. The exchange is the
@@ -56,9 +61,18 @@ publicCanvaAppRouter.post(
   skipAuth,
   jsonValidator(canvaAppSessionRequestSchema),
   async (c) => {
-    const body = c.req.valid('json') as { token: string; switch_account?: boolean };
+    const body = c.req.valid('json') as {
+      token: string;
+      switch_account?: boolean;
+      build?: CanvaAppBuildReport;
+    };
     const who = await verifyCanvaUserToken(body.token);
     const db = c.get('db');
+
+    // After the token is verified, so only a caller Canva vouches for writes a
+    // row, and before the answer branches, because a bundle is running whether
+    // or not the person in front of it has been linked yet.
+    if (body.build !== undefined) await recordAppBuild(db, body.build);
 
     const link = body.switch_account === true ? undefined : await findLink(db, who.canvaUserId);
     if (!link) {
@@ -89,6 +103,30 @@ publicCanvaAppRouter.post(
       expires_at: session.expiresAt.toISOString(),
       user,
     });
+  }
+);
+
+publicCanvaAppRouter.get(
+  '/build',
+  describeRoute({
+    tags: ['Canva app'],
+    summary: 'The bundle the Developer Portal is serving',
+    description:
+      'The newest build to have reported itself. The bundle is uploaded into the portal by hand and no Canva API reads it back, so what has run is the only evidence of what is up there. Answers 404 where nothing has reported, which means either that the bundle in the portal predates this or that nobody has opened the app since. Public for the reason /health names its own branch and commit: it identifies a release rather than saying anything about anybody, and `pnpm canva:release` reads it before it builds.',
+    responses: {
+      200: {
+        description: 'The build',
+        content: { 'application/json': { schema: resolver(canvaAppBuildSchema) } },
+      },
+      ...notFoundErrorResponse,
+      ...internalServerErrorResponse,
+    },
+  }),
+  skipAuth,
+  async (c) => {
+    const build = await readLatestBuild(c.get('db'));
+    if (build === undefined) throw new AppError(404, 'No Canva app build has reported yet');
+    return c.json(build);
   }
 );
 

@@ -31,3 +31,12 @@ declare module '*.svg?react' {
 }
 
 declare const BACKEND_HOST: string;
+
+// Substituted by canva-app.config.ts, so that the bundle in the Developer
+// Portal can say which one it is.
+declare const APP_BUILD: {
+  commit: string;
+  branch: string;
+  dirty: boolean;
+  built_at: string;
+};

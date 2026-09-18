@@ -25,6 +25,8 @@ const PUBLIC_ROUTES = new Set([
   // Carries a Canva credential rather than one of ours, and answers with one of
   // ours when it recognises the person behind it.
   'POST /api/canva-app/session',
+  // Names a build and nothing else, the way /health names the API's own.
+  'GET /api/canva-app/build',
 ]);
 
 const OPTIONAL_AUTH_ROUTES = new Set<string>([]);
