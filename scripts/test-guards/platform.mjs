@@ -35,10 +35,28 @@ export const guards = [
     // project's events to anyone.
     name: 'realtime delivery re-checks access for every event',
     file: 'src/services/realtime/transport.ts',
-    find: '          if (allowed) connection.socket.send(message);',
-    replace: '          void allowed; connection.socket.send(message);',
+    find: "          else if (verdict === 'allowed') connection.socket.send(message);",
+    replace: '          else connection.socket.send(message);',
     tests: ['tests/e2e/realtime.test.ts'],
     testName: 'delivers nothing to someone who subscribed to a project they cannot read',
+  },
+  {
+    // A socket authenticated once would otherwise outlive the session or token
+    // that authenticated it, streaming a project to a credential already gone.
+    name: 'realtime delivery re-checks the credential for every event',
+    file: 'src/services/realtime/transport.ts',
+    find: "  if (!row.live) return 'revoked';",
+    replace: "  if (false) return 'revoked';",
+    tests: ['tests/e2e/realtime.test.ts'],
+    testName: 'closes the socket at the next event instead of delivering it',
+  },
+  {
+    name: 'a ping from a revoked credential closes the socket',
+    file: 'src/services/realtime/transport.ts',
+    find: '        if (!(await credentialIsLive(current))) {',
+    replace: '        if (false) {',
+    tests: ['tests/e2e/realtime.test.ts'],
+    testName: 'closes the socket at the next ping when nothing else happens',
   },
   {
     name: 'nothing is published for a request that rolled back',

@@ -1,7 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import { PERSONAL_ACCESS_TOKEN_PREFIX } from '@three-peaks/shared';
 import { pool } from '../db/index.ts';
 
 export { PERSONAL_ACCESS_TOKEN_PREFIX };
+
+// The prefix is what lets authentication look in the right table first, and
+// what makes a leaked token recognisable to a secret scanner.
+export function generatePersonalAccessToken(): string {
+  return `${PERSONAL_ACCESS_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
+}
 
 const LAST_USED_WRITE_INTERVAL_MS = 60_000;
 const lastWrittenAt = new Map<string, number>();

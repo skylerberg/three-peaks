@@ -13,6 +13,7 @@
     type RenderEngine,
     type SceneBackground,
     type SurfaceChoice,
+    isLiveCard,
   } from '@three-peaks/shared';
   import type { components } from '@three-peaks/shared/api';
   import ComponentChoices from '../components/scene/ComponentChoices.svelte';
@@ -24,7 +25,7 @@
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
   import type { ProjectComponent } from '../lib/components.svelte.ts';
-  import { type Deck, type DeckCard, decks, isLiveCard } from '../lib/decks.svelte.ts';
+  import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import { newId } from '../lib/ids.ts';
   import { link } from '../lib/router.svelte.ts';

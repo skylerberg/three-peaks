@@ -23,3 +23,32 @@ export const MAX_DECK_CARDS = 500;
 export function deckCardSize(deck: { card_width_mm: number; card_height_mm: number }): CardSize {
   return { width_mm: deck.card_width_mm, height_mm: deck.card_height_mm };
 }
+
+// A card whose image is deleted keeps its row, its place and its copy count, so
+// a restore lands where it was; until then it prints nothing and is drawn by no
+// screen that is not asked for it.
+export function isLiveCard(card: { file: { deleted_at: string | null } }): boolean {
+  return card.file.deleted_at === null;
+}
+
+/**
+ * The whole list a save sends, from the rows a screen drew and the deck it
+ * drew them from. A save replaces the arrangement, so a row a screen is hiding
+ * still has to be named: one left out loses its place and its copy count, and
+ * a restore then brings it back at the end with one. Every hidden row keeps
+ * the slot it holds in `held`, and the drawn rows fill the rest in the order
+ * they were drawn -- anything drawn that `held` no longer has goes on the end.
+ */
+export function withHiddenCards<T extends { file_id: string }>(
+  held: readonly T[],
+  drawn: readonly T[]
+): T[] {
+  const shown = new Set(drawn.map((card) => card.file_id));
+  const merged: T[] = [];
+  let next = 0;
+  for (const card of held) {
+    if (!shown.has(card.file_id)) merged.push(card);
+    else if (next < drawn.length) merged.push(drawn[next++]);
+  }
+  return [...merged, ...drawn.slice(next)];
+}

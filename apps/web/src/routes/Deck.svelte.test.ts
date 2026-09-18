@@ -3,9 +3,10 @@ import { FakeWebSocket, fetchMock, jsonResponse } from '../api/testUtils.ts';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SOURCES, TRIGGERS } from 'svelte-dnd-action';
+import { isLiveCard } from '@three-peaks/shared';
 import Deck from './Deck.svelte';
 import { deckImports } from '../lib/deckImports.svelte.ts';
-import { decks, isLiveCard } from '../lib/decks.svelte.ts';
+import { decks } from '../lib/decks.svelte.ts';
 import { realtime } from '../lib/realtime.svelte.ts';
 
 const PROJECT = '2f1c9e5a-8b3d-4f1e-9c2a-7d6b5e4f3a21';

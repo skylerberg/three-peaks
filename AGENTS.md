@@ -8,6 +8,7 @@ SPA, and a small Cloud Run edge that serves per-PR previews.
 apps/api            Hono + Kysely + Postgres        -> GKE
 apps/web            Svelte 5 runes + Vite SPA       -> GCS bucket behind a GCLB
 apps/canva          React app inside Canva's editor -> a bundle uploaded to Canva
+apps/cli            `threepeaks`, a Commander CLI  -> linked from the main checkout
 apps/preview-edge   Cloud Run static edge           -> Cloud Run
 packages/shared     generated API + realtime clients, and the constants both
                     sides must agree on
@@ -171,7 +172,13 @@ Three rules keep it working, and all three were learned by getting it wrong:
 The bus is in-process until `REDIS_URL` is set. **Subscribing is not
 authorization**: a socket may name any project id, and delivery re-checks access
 for every event — which is what makes membership removal take effect without a
-reconnect. The wire frame is `{ type, ...payload }`, flattened at the socket
+reconnect. The same query re-checks the credential the socket authenticated
+with, and closes it 4401 once that session or token is gone: revocation reaches
+every replica at the next event with no message passed between them. A client
+may also send `{ type: 'ping' }` and get a `pong`, because the server's own
+heartbeat is a protocol ping that a WebSocket answers without telling its code;
+a ping is checked against the credential too, so a quiet socket is not a way to
+outlive one. The wire frame is `{ type, ...payload }`, flattened at the socket
 boundary from the bus's `{ type, payload }`; an e2e test holds the two together.
 
 ## Migrations
@@ -877,6 +884,54 @@ optional but `{ type: 'png' }` alone is refused at runtime.
 export blobs from a backend; measured against the real thing the iframe can
 fetch them, which is what keeps the API free of any outbound request and of the
 allowlist one would otherwise need.
+
+# The CLI
+
+`apps/cli` is `threepeaks`, the terminal client, modelled on critical-path's
+`cpath`. `apps/cli/README.md` is the reference for using it; this is for
+changing it. It is a client of the HTTP API and of nothing else, and eslint
+refuses an import of `apps/api` from its source.
+
+**It has no generated client of its own.** It imports the committed one from
+`@three-peaks/shared/api` and the realtime union from `/realtime`, and every
+bound it checks before sending — upload size, copy counts, token names, card
+sizes, settings defaults — comes from `packages/shared` rather than being typed
+again. A number the server enforces therefore cannot drift here the way it can
+in a client from another repository.
+
+**Its tests are collected by `apps/api`'s vitest**, through a `../cli/tests`
+include in `apps/api/vitest.config.ts`. The e2e half drives this app
+in-process through the harness in `apps/cli/tests/e2e/helpers.ts`, so it needs
+the test database like any API test, and a suite of its own would contend for
+the same advisory lock. Run one file as
+`pnpm --filter @three-peaks/api test cli/tests/e2e/deck`. `watch.test.ts` is
+the one that serves a real port, because a socket cannot ride an in-process
+fetch.
+
+How a command is put together:
+
+- `leaf()` gives a runnable command the global flags, `inProject()` adds
+  `--project`, and `withCtx()` builds the context — config, credential store,
+  API client, output — before the handler runs. Everything a command prints
+  goes through `ctx.out`, which is what `--json` switches.
+- `src/resolve.ts` is the only way a name becomes a row: one four-tier matcher
+  (id, exact name, id prefix, unique substring) that stops at an ambiguous tier
+  rather than falling through, and the Assets path walk, which matches whole
+  segments only.
+- `src/transfer.ts` owns every request whose body is a file — openapi-fetch
+  would serialise one — and the batch rule the upload commands share.
+- An argument's placeholder is what shell completion keys on: `<deck>`,
+  `<card>`, `<file>` (a remote reference), `<path>` (a local one). Reuse the
+  placeholder and completion comes for free.
+
+`apps/cli/skill` is the Claude Code skill that drives it, linked into
+`~/.claude/skills` by `pnpm --filter @three-peaks/cli run install:global`
+together with the command itself. `tests/unit/skillCommands.test.ts` fails when
+`skill/commands.md` and the program disagree about which commands exist.
+
+Personal access tokens (`tph_…`) are minted, listed and revoked under
+`/api/auth/tokens` for it, and authenticate exactly like a session. They have no
+expiry: revoking one is how it ends.
 
 # The Blender scene
 

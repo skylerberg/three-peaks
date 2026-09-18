@@ -30,6 +30,10 @@
         "@swc/core",
         "@swc/plugin-formatjs"
       ]
+    },
+    "apps/cli": {
+      "entry": ["bin/*.mjs", "scripts/*.mjs"],
+      "project": ["src/**/*.ts", "bin/*.mjs", "scripts/*.mjs", "tests/**/*.ts"]
     }
   }
 }

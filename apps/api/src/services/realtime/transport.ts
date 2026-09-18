@@ -1,6 +1,8 @@
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
+import type { ExpressionBuilder } from 'kysely';
+import type { DB } from '../../db/types.ts';
 import { db } from '../../db/index.ts';
 import { authenticateBearerToken } from '../credentials.ts';
 import { logger } from '../../utils/logger.ts';
@@ -75,6 +77,7 @@ export function attachRealtime(server: Server): () => void {
         connection = {
           socket,
           userId: credential.user.id,
+          credentialKind: credential.kind,
           credentialId: credential.id,
           projects: new Set(),
           alive: true,
@@ -86,6 +89,20 @@ export function attachRealtime(server: Server): () => void {
       }
 
       if (!connection) return;
+
+      // A protocol-level ping is answered by the client's WebSocket without
+      // telling the code above it, so a client that wants to know the socket
+      // is alive asks here. It is also where a quiet socket learns that its
+      // credential has gone, rather than at an event that may never come.
+      if (frame.type === 'ping') {
+        const current = connection;
+        if (!(await credentialIsLive(current))) {
+          revoke(current);
+          return;
+        }
+        socket.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
 
       if (frame.type === 'subscribe' && frame.project_id) {
         // An unvalidated project id is a room key whose length and number the
@@ -138,8 +155,9 @@ export function attachRealtime(server: Server): () => void {
     void (async () => {
       for (const connection of connectionsForProject(projectId)) {
         try {
-          const allowed = await canRead(connection.userId, projectId);
-          if (allowed) connection.socket.send(message);
+          const verdict = await deliverable(connection, projectId);
+          if (verdict === 'revoked') revoke(connection);
+          else if (verdict === 'allowed') connection.socket.send(message);
         } catch (error) {
           logger.error('realtime delivery failed', { error });
         }
@@ -169,16 +187,67 @@ export function attachRealtime(server: Server): () => void {
   };
 }
 
-async function canRead(userId: string, projectId: string): Promise<boolean> {
-  const row = await db
-    .selectFrom('project as p')
-    .leftJoin('project_member as m', (join) =>
-      join.onRef('m.project_id', '=', 'p.id').on('m.user_id', '=', userId)
-    )
-    .select(['p.created_by as created_by', 'm.user_id as member_id'])
-    .where('p.id', '=', projectId)
-    .executeTakeFirst();
+function revoke(connection: Connection): void {
+  unregister(connection);
+  connection.socket.close(CLOSE_CODES.UNAUTHORIZED, 'credential revoked');
+}
 
-  if (!row) return false;
-  return row.created_by === userId || row.member_id !== null;
+// The credential is re-checked alongside access, for the same reason access is:
+// a socket authenticated once must not outlive what authenticated it. Signing a
+// session out, or revoking a token, then stops delivery on every replica at the
+// next event, with no message between replicas to carry the news.
+function liveCredential(
+  eb: ExpressionBuilder<DB, never>,
+  connection: Connection
+): ReturnType<ExpressionBuilder<DB, never>['exists']> {
+  return connection.credentialKind === 'session'
+    ? eb.exists(
+        eb
+          .selectFrom('session')
+          .select('session.id')
+          .where('session.id', '=', connection.credentialId)
+          .where('session.expires_at', '>', new Date())
+      )
+    : eb.exists(
+        eb
+          .selectFrom('personal_access_token')
+          .select('personal_access_token.id')
+          .where('personal_access_token.id', '=', connection.credentialId)
+      );
+}
+
+async function credentialIsLive(connection: Connection): Promise<boolean> {
+  const row = await db
+    .selectNoFrom((eb) => liveCredential(eb, connection).as('live'))
+    .executeTakeFirstOrThrow();
+  return Boolean(row.live);
+}
+
+async function deliverable(
+  connection: Connection,
+  projectId: string
+): Promise<'allowed' | 'denied' | 'revoked'> {
+  const userId = connection.userId;
+  const row = await db
+    .selectNoFrom((eb) => [
+      liveCredential(eb, connection).as('live'),
+      eb
+        .exists(
+          eb
+            .selectFrom('project as p')
+            .leftJoin('project_member as m', (join) =>
+              join.onRef('m.project_id', '=', 'p.id').on('m.user_id', '=', userId)
+            )
+            .select('p.id')
+            .where('p.id', '=', projectId)
+            .where((inner) =>
+              inner.or([inner('p.created_by', '=', userId), inner('m.user_id', 'is not', null)])
+            )
+        )
+        .as('allowed'),
+    ])
+    .executeTakeFirstOrThrow();
+
+  if (!row.live) return 'revoked';
+  return row.allowed ? 'allowed' : 'denied';
 }

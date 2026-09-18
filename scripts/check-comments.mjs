@@ -19,6 +19,7 @@ const SCAN_DIRS = ['apps', 'packages', 'scripts', 'infra', 'tools'];
 const DOC_FILES = [
   'AGENTS.md',
   'README.md',
+  'apps/cli/README.md',
   'packages/shared/README.md',
   'infra/terraform/README.md',
   'tools/blender/README.md',

@@ -30,7 +30,16 @@ export default defineConfig({
     // gets its parallelism by sharding, each shard with its own Postgres.
     fileParallelism: false,
     env: { TEST_DB_BASE: base, DB_DATABASE: database, DB_POOL_MAX: process.env.DB_POOL_MAX },
-    include: ['tests/unit/**/*.test.ts', 'tests/e2e/**/*.test.ts', 'src/**/*.test.ts'],
+    // The CLI's tests run here rather than in a suite of its own: its e2e tests
+    // drive this app in-process against this database, and a second runner
+    // would contend for the same advisory lock. Vitest exits 0 on an include
+    // that matches nothing, so after touching this, count the collected files.
+    include: [
+      'tests/unit/**/*.test.ts',
+      'tests/e2e/**/*.test.ts',
+      'src/**/*.test.ts',
+      '../cli/tests/**/*.test.ts',
+    ],
     globalSetup: ['./tests/setup/globalSetup.ts'],
     setupFiles: ['./tests/setup/assertTestDatabase.ts', './tests/setup/resetProcessState.ts'],
   },

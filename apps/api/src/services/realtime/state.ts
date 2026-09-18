@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws';
 import { CLOSE_CODES } from './closeCodes.ts';
+import type { Credential } from '../../types/index.ts';
 
 // Per-process ceilings. The fleet-wide figure is these times the replica count:
 // they bound what one process can be made to hold, not what one person may have.
@@ -9,6 +10,7 @@ export const MAX_SUBSCRIPTIONS_PER_SOCKET = 1000;
 export interface Connection {
   socket: WebSocket;
   userId: string;
+  credentialKind: Credential['kind'];
   credentialId: string;
   projects: Set<string>;
   alive: boolean;

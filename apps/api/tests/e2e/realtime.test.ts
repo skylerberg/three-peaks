@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { app } from '../../src/index.ts';
 import { attachRealtime } from '../../src/services/realtime/index.ts';
 import { resetConnectionsForTests } from '../../src/services/realtime/state.ts';
-import { createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
+import { anonymous, createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
 
 // Drives a real socket against a real server, because the interesting parts --
 // the handshake deadline, the per-event access re-check, delivery to the right
@@ -410,6 +410,75 @@ describe('realtime over a websocket', () => {
     );
 
     socket.close();
+  });
+
+  // The server's own heartbeat is a protocol ping, which a client's WebSocket
+  // answers without its code ever seeing it. This is the one a client can see.
+  it('answers an application ping with a pong', async () => {
+    const { socket, events } = await connect(owner.token);
+    socket.send(JSON.stringify({ type: 'ping' }));
+    await settle();
+
+    expect(events).toEqual([{ type: 'pong' }]);
+    socket.close();
+  });
+
+  describe('a credential that goes away', () => {
+    async function secondSession(user: TestUser): Promise<{ token: string; id: string }> {
+      const signedIn = await (
+        await anonymous.post('/api/auth/login', {
+          email: user.email,
+          password: 'correct horse battery staple',
+        })
+      ).json();
+      const { sessions } = await (
+        await user.api.withToken(signedIn.token).get('/api/auth/sessions')
+      ).json();
+      const current = sessions.find((s: { current: boolean }) => s.current);
+      return { token: signedIn.token, id: current.id };
+    }
+
+    // Null when the socket is still open after a generous wait, so a server
+    // that keeps delivering fails the assertion rather than the test timeout.
+    function closeCode(socket: WebSocket): Promise<number | null> {
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 3000);
+        socket.on('close', (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+      });
+    }
+
+    // Access is re-checked per event, and so is what authenticated the socket:
+    // a session signed out elsewhere must not go on receiving the project.
+    it('closes the socket at the next event instead of delivering it', async () => {
+      const session = await secondSession(owner);
+      const { socket, events } = await connect(session.token);
+      const closed = closeCode(socket);
+
+      expect((await owner.api.delete(`/api/auth/sessions/${session.id}`)).status).toBe(204);
+      await owner.api.post('/api/files/folders', { project_id: projectId, name: 'Not For You' });
+
+      expect(await closed).toBe(4401);
+      expect(events).toEqual([]);
+      socket.close();
+    });
+
+    // A quiet project sends no event to notice the revocation at, and a ping is
+    // the next thing a live client says.
+    it('closes the socket at the next ping when nothing else happens', async () => {
+      const session = await secondSession(owner);
+      const { socket, events } = await connect(session.token);
+      const closed = closeCode(socket);
+
+      expect((await owner.api.delete(`/api/auth/sessions/${session.id}`)).status).toBe(204);
+      socket.send(JSON.stringify({ type: 'ping' }));
+
+      expect(await closed).toBe(4401);
+      expect(events).toEqual([]);
+      socket.close();
+    });
   });
 
   it('ignores a subscribe naming something that is not a uuid', async () => {
