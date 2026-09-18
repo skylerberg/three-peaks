@@ -23,9 +23,13 @@ COPY packages/shared/package.json ./packages/shared/
 
 # Before the install, not after: pnpm runs the root project's `prepare` during
 # `pnpm install` -- including under --frozen-lockfile and --prod -- and prepare
-# is `node scripts/setup-hooks.mjs`. Without scripts/ already here the install
-# dies on MODULE_NOT_FOUND rather than on anything to do with dependencies.
-COPY scripts ./scripts
+# is `node scripts/setup-hooks.mjs`. Without it already here the install dies on
+# MODULE_NOT_FOUND rather than on anything to do with dependencies.
+#
+# That one file, not the directory. Copying the whole of scripts/ put every dev
+# and CI script into the build context, and the deploy filter mirrors this COPY
+# -- so a branch touching test-guards.mjs rolled the API for web-only work.
+COPY scripts/setup-hooks.mjs ./scripts/
 
 # The trailing `...` means "and everything it depends on", so packages/shared is
 # installed and the web app's toolchain -- svelte, tailwind, playwright, vite --

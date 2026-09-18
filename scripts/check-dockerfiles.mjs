@@ -1,11 +1,18 @@
-// Verifies that every path a Dockerfile COPYs from the build context survives
-// .dockerignore.
+// Verifies two things about what a Dockerfile COPYs from the build context:
+// that it survives .dockerignore, and that the deploy workflow's path filter for
+// that image covers it.
 //
-// This exists because that mismatch is invisible locally: the API image copies
-// the other workspace packages' manifests -- pnpm reads the whole workspace to
-// validate the lockfile even for a filtered install -- and excluding those
-// directories made the build fail on a line that reads perfectly well. Nothing
-// short of an actual image build could see it, so CI was the first to know.
+// The first exists because that mismatch is invisible locally: the API image
+// copies the other workspace packages' manifests -- pnpm reads the whole
+// workspace to validate the lockfile even for a filtered install -- and
+// excluding those directories made the build fail on a line that reads
+// perfectly well. Nothing short of an actual image build could see it, so CI was
+// the first to know.
+//
+// The second is the quieter one. A filter narrower than its image skips a deploy
+// that mattered, and the push goes green: production keeps serving the previous
+// release and nothing anywhere reports a failure. Both lists are hand-written
+// and neither is derived from the other, so this reads one against the other.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +21,47 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const selftest = process.argv.includes('--selftest');
 
 const DOCKERFILES = ['apps/api/Dockerfile', 'apps/preview-edge/Dockerfile'];
+
+const WORKFLOW = '.github/workflows/deploy.yaml';
+
+// Which filter in that workflow is answerable for each image. The `web` filter
+// is absent because the SPA has no image: it is built from the checkout, so
+// there is no COPY set to read it against.
+const FILTER_FOR = {
+  'apps/api/Dockerfile': 'api',
+  'apps/preview-edge/Dockerfile': 'preview_edge',
+};
+
+// `filters:` is a block scalar, so its body is literal text rather than
+// structure the workflow parser resolves. Reading it by indentation keeps this
+// dependency-free; a YAML parser would be the larger change, not the smaller.
+function parseFilters() {
+  const lines = readFileSync(join(root, WORKFLOW), 'utf8').split('\n');
+  const filters = {};
+  let indent = null;
+  let current = null;
+
+  for (const line of lines) {
+    if (indent === null) {
+      const start = /^(\s*)filters:\s*\|/.exec(line);
+      if (start) indent = start[1].length;
+      continue;
+    }
+    if (line.trim().length === 0) continue;
+    // Dedenting to the `filters:` key or past it ends the block scalar.
+    if (line.search(/\S/) <= indent) break;
+
+    const name = /^\s+([A-Za-z_][\w-]*):\s*$/.exec(line);
+    if (name) {
+      current = name[1];
+      filters[current] = [];
+      continue;
+    }
+    const item = /^\s+-\s*'([^']+)'\s*$/.exec(line);
+    if (item && current) filters[current].push(item[1]);
+  }
+  return filters;
+}
 
 function parseIgnore() {
   const path = join(root, '.dockerignore');
@@ -67,6 +115,40 @@ function nestedExclusions(copiedDir, patterns) {
   );
 }
 
+// Deliberately not `matchesPattern`: that one appends an implicit "and anything
+// beneath", which is right for an exclusion and wrong here -- a pattern that
+// matched more than it says would report a gap as covered, which is the one
+// answer this check must never give.
+function globMatches(glob, path) {
+  const source = glob
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, 'DOUBLESTAR')
+    .replace(/\*/g, '[^/]*')
+    .replace(/DOUBLESTAR/g, '.*');
+  return new RegExp(`^${source}$`).test(path);
+}
+
+// A COPY of a directory is only covered by a glob that takes the whole of it.
+// One naming part of it -- `apps/api/src/**` against `COPY apps/api` -- leaves
+// the rest of the directory able to change without deploying, so it is a gap.
+function covers(glob, source) {
+  return globMatches(glob, source) || glob === `${source}/**`;
+}
+
+function filterGaps(dockerfile, globs, patterns) {
+  const gaps = [];
+  for (const source of copySources(dockerfile)) {
+    if (!existsSync(join(root, source))) continue;
+    if (isExcluded(source, patterns)) continue;
+    if (globs.some((glob) => covers(glob, source))) continue;
+    gaps.push(
+      `${WORKFLOW}: the ${FILTER_FOR[dockerfile]} filter does not cover ` +
+        `${dockerfile}'s COPY ${source} -- a change to it would deploy nothing`
+    );
+  }
+  return gaps;
+}
+
 function copySources(dockerfile) {
   const source = readFileSync(join(root, dockerfile), 'utf8');
   const sources = [];
@@ -85,7 +167,19 @@ function copySources(dockerfile) {
 }
 
 const patterns = parseIgnore();
+const filters = parseFilters();
 const problems = [];
+
+// A filters block this failed to read would leave every image reported as
+// covered, which is the vacuous pass this check exists to rule out.
+for (const [dockerfile, name] of Object.entries(FILTER_FOR)) {
+  const globs = filters[name];
+  if (!globs || globs.length === 0) {
+    problems.push(`${WORKFLOW}: no ${name} filter found, so ${dockerfile} is unchecked`);
+    continue;
+  }
+  problems.push(...filterGaps(dockerfile, globs, patterns));
+}
 
 for (const dockerfile of DOCKERFILES) {
   for (const source of copySources(dockerfile)) {
@@ -127,14 +221,42 @@ if (selftest) {
     console.error('[selftest] FAILED: a conventional nested exclusion was reported');
     process.exit(1);
   }
+
+  // The same pair for the filter half. Sensitivity first: with the glob that
+  // carries packages/shared taken out, the API's COPY of it has to be reported.
+  const gapped = filters.api.filter((glob) => glob !== 'packages/shared/**');
+  const seen = filterGaps('apps/api/Dockerfile', gapped, patterns);
+  if (!seen.some((gap) => gap.includes('packages/shared'))) {
+    console.error('[selftest] FAILED: a filter missing a COPYed path was reported as covering it');
+    process.exit(1);
+  }
+  // Specificity: the lists as written report nothing, or the arm above proves
+  // only that this check fails on everything.
+  for (const [dockerfile, name] of Object.entries(FILTER_FOR)) {
+    if (filterGaps(dockerfile, filters[name], patterns).length > 0) {
+      console.error(`[selftest] FAILED: the ${name} filter was reported as leaving a gap`);
+      process.exit(1);
+    }
+  }
+  if (covers('apps/api/src/**', 'apps/api')) {
+    console.error(
+      '[selftest] FAILED: a glob covering part of a directory was accepted for all of it'
+    );
+    process.exit(1);
+  }
+
   console.log('[selftest] the matcher separates excluded paths from included ones,');
-  console.log('[selftest] and an unexpected nested exclusion from a conventional one');
+  console.log('[selftest] an unexpected nested exclusion from a conventional one,');
+  console.log('[selftest] and a filter that covers its image from one that leaves a gap');
 }
 
 if (problems.length > 0) {
-  console.error(`\n${problems.length} Dockerfile/.dockerignore conflict(s):`);
+  console.error(`\n${problems.length} Dockerfile/.dockerignore/deploy-filter conflict(s):`);
   for (const problem of problems) console.error(`  ${problem}`);
   process.exit(1);
 }
 
-console.log(`check:dockerfiles passed (${DOCKERFILES.length} Dockerfiles)`);
+console.log(
+  `check:dockerfiles passed (${DOCKERFILES.length} Dockerfiles, ` +
+    `${Object.keys(FILTER_FOR).length} deploy filters)`
+);
