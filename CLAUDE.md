@@ -599,9 +599,10 @@ event -- no other screen draws any of it, so there would be nothing to place.
 ## Importing a design
 
 There is no import screen. The Canva app pushes the design it is open on, and
-what the web app keeps is the marker beside a deck — what it was last imported
-from, and a way to clear a run left open. Everything below is the API's half,
-which both ends of that arrangement rest on.
+all the web app keeps is a way to clear a run left open — the deck screen names
+Canva only while there is one, because a deck with no open run has nothing for
+anybody to do here. Everything below is the API's half, which both ends of that
+arrangement rest on.
 
 - **A page is matched on three tiers, strongest first**: the page's own id, then
   its title, then its number. `planPages` runs them as three passes rather than
@@ -671,13 +672,16 @@ which both ends of that arrangement rest on.
   column a live release still writes.
 - **The deck screen scopes the import row it draws.** `bindingDeckId` says which
   deck the row belongs to, because the route block is not keyed: walking from one
-  deck to another swaps props on the screen already mounted, and the row read for
-  the deck just left would otherwise be drawn — open run and all — under this
-  deck's name.
+  deck to another swaps props on the screen already mounted, and the open run on
+  the row read for the deck just left would otherwise be offered for discarding
+  under this deck's name.
 - **Discarding an open run is the web app's, and finishing it is not.** A run
   outlives the Canva tab that opened it and the deck refuses every later import
   behind it, so the deck screen offers to abandon one. Nothing already imported
-  is undone by that: the pages that landed keep the versions they wrote.
+  is undone by that: the pages that landed keep the versions they wrote. That
+  offer is the whole of the deck screen's import surface, which is why the row
+  is still read for a deck nobody is importing into — the answer is what says
+  whether to draw anything at all.
 - **`GET /api/decks/:deckId/import` answers 404 for a deck nothing has been
   imported into.** It means "no history yet" rather than "set something up
   first", and the timeline beside it answers 200 with an empty list for the same

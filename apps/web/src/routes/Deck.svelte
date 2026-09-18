@@ -55,15 +55,6 @@
   // row read for the deck just left would otherwise be drawn under this name.
   const binding = $derived(deckImports.bindingDeckId === deckId ? deckImports.binding : null);
   const openRunId = $derived(binding?.open_run_id ?? null);
-  const importStatus = $derived.by(() => {
-    // Nothing at all until the row has landed, rather than "never imported
-    // into" for the moment before the answer arrives.
-    if (deckImports.loadingBinding || deckImports.bindingDeckId !== deckId) return null;
-    if (binding?.source_label) return `Last imported from ${binding.source_label}.`;
-    // Nothing to set up: the artwork lands in this deck, so there is nowhere
-    // else it could go and nothing to choose first.
-    return 'Never imported into.';
-  });
 
   $effect(() => {
     const id = deckId;
@@ -484,32 +475,21 @@
       </div>
     </section>
 
-    {#if canEdit}
-      <section class="flex flex-col gap-3 rounded-md border border-edge bg-surface p-4">
-        <h2 class="text-lg font-semibold">Import from Canva</h2>
-        {#if importStatus}
-          <p class="text-sm text-muted">{importStatus}</p>
-        {/if}
-        <p class="text-sm text-muted">
-          Open the Three Peaks app in Canva and push the design you have open into this deck. It
-          asks for a code the first time; enter it on your
-          <a class="focus-ring rounded underline" href="/account">account page</a>.
+    <!-- Only while a run is open. An import is not something started from here,
+         so a deck with none has nothing to say about one. -->
+    {#if canEdit && openRunId}
+      <section class="flex flex-col gap-3 rounded-md border border-warning bg-surface p-4">
+        <h2 class="text-lg font-semibold">An import is open</h2>
+        <p role="status" class="text-sm">
+          The next import will be refused until this one is settled. Finishing it is the Canva app's
+          to do; discarding it here leaves every page that has already landed in the deck and
+          removes nothing.
         </p>
-
-        {#if openRunId}
-          <div class="flex flex-col gap-2 rounded-md border border-warning p-3">
-            <p role="status" class="text-sm">
-              An import is open, so the next one will be refused until this is settled. Finishing it
-              is the Canva app's to do; discarding it here leaves every page that has already landed
-              in the deck and removes nothing.
-            </p>
-            <div>
-              <Button variant="danger" disabled={discarding} onclick={discardImport}>
-                {discarding ? 'Discarding…' : 'Discard this import'}
-              </Button>
-            </div>
-          </div>
-        {/if}
+        <div>
+          <Button variant="danger" disabled={discarding} onclick={discardImport}>
+            {discarding ? 'Discarding…' : 'Discard this import'}
+          </Button>
+        </div>
       </section>
     {/if}
 

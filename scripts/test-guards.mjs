@@ -803,10 +803,23 @@ export const guards = [
     name: 'a superseded binding load does not overwrite a newer one',
     package: 'web',
     file: 'src/lib/deckImports.svelte.ts',
-    find: '      if (generation !== this.#bindingGeneration) return;',
-    replace: '      if (false) return;',
+    find: '    if (generation !== this.#bindingGeneration) return;',
+    replace: '    if (false) return;',
     tests: ['src/lib/deckImports.svelte.test.ts'],
     testName: 'discards a binding response that a newer request has already superseded',
+    runner: 'web',
+  },
+  {
+    // The row a first import creates is the one this store answered 404 for, so
+    // the event has nothing to patch and the run cannot be discarded until the
+    // screen is loaded again.
+    name: 'a first import\u2019s run reaches a deck with no row yet',
+    package: 'web',
+    file: 'src/lib/deckImports.svelte.ts',
+    find: '      if (runId !== null) void this.#refreshBinding();',
+    replace: '      void runId;',
+    tests: ['src/lib/deckImports.svelte.test.ts'],
+    testName: 'reads the row a first import has just created',
     runner: 'web',
   },
   {
