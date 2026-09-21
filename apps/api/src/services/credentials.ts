@@ -1,6 +1,6 @@
 import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '../db/types.ts';
-import { hashBearerToken } from './sessions.ts';
+import { hashBearerToken, renewSession, sessionRenewalIsDue } from './sessions.ts';
 import { PERSONAL_ACCESS_TOKEN_PREFIX, touchPersonalAccessToken } from './personalAccessTokens.ts';
 import type { Credential } from '../types/index.ts';
 
@@ -59,7 +59,9 @@ export async function authenticateBearerToken(
 
   if (!row) return null;
 
-  if (new Date(row.expires_at).getTime() <= Date.now()) {
+  const expiresAt = new Date(row.expires_at);
+
+  if (expiresAt.getTime() <= Date.now()) {
     // Best effort: an expired session that fails to delete is still refused.
     await db
       .deleteFrom('session')
@@ -68,6 +70,10 @@ export async function authenticateBearerToken(
       .catch(() => {});
     return null;
   }
+
+  // Expiry is idle-based, so using a session is what keeps it: see
+  // SESSION_TTL_DAYS.
+  if (sessionRenewalIsDue(expiresAt)) renewSession(row.session_id);
 
   return {
     kind: 'session',
