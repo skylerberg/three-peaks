@@ -1,4 +1,4 @@
-# three-peaks-hub
+# three-peaks
 
 Board game design tools for Three Peaks Games, at **tools.threepeaksgames.com**.
 A pnpm-workspace monorepo: a Hono + Kysely + Postgres API, a Svelte 5 + Vite

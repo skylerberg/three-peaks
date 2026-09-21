@@ -1,9 +1,9 @@
 resource "google_compute_global_address" "main" {
-  name = "${local.name}-ip"
+  name = "${local.tls_name}-ip"
 }
 
 resource "google_compute_managed_ssl_certificate" "main" {
-  name = "${local.name}-cert"
+  name = "${local.tls_name}-cert"
 
   managed {
     domains = [local.domain]
@@ -17,13 +17,13 @@ resource "google_compute_managed_ssl_certificate" "main" {
 # both it and its wildcard.
 
 resource "google_certificate_manager_dns_authorization" "preview" {
-  name     = "${local.name}-preview-dns-auth"
+  name     = "${local.tls_name}-preview-dns-auth"
   location = "global"
   domain   = local.domain
 }
 
 resource "google_certificate_manager_certificate" "wildcard" {
-  name     = "${local.name}-wildcard-cert"
+  name     = "${local.tls_name}-wildcard-cert"
   location = "global"
   scope    = "DEFAULT"
 
@@ -40,11 +40,11 @@ resource "google_certificate_manager_certificate" "wildcard" {
 resource "google_certificate_manager_certificate_map" "wildcard" {
   # Certificate maps are always global; the API pins the location, so there is
   # no argument for it here.
-  name = "${local.name}-wildcard-map"
+  name = "${local.tls_name}-wildcard-map"
 }
 
 resource "google_certificate_manager_certificate_map_entry" "wildcard" {
-  name         = "${local.name}-wildcard-entry"
+  name         = "${local.tls_name}-wildcard-entry"
   map          = google_certificate_manager_certificate_map.wildcard.name
   hostname     = "*.${local.domain}"
   certificates = [google_certificate_manager_certificate.wildcard.id]
@@ -53,7 +53,7 @@ resource "google_certificate_manager_certificate_map_entry" "wildcard" {
 # SNI matching no hostname entry lands here, so the apex still has something to
 # serve if the map does supersede ssl_certificates.
 resource "google_certificate_manager_certificate_map_entry" "primary" {
-  name         = "${local.name}-primary-entry"
+  name         = "${local.tls_name}-primary-entry"
   map          = google_certificate_manager_certificate_map.wildcard.name
   matcher      = "PRIMARY"
   certificates = [google_certificate_manager_certificate.wildcard.id]

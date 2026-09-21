@@ -2,12 +2,13 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   # A SHORT hash, not the full one. Kubernetes copies the Job's name into the
-  # pod template's `job-name` label, and a label value caps at 63 bytes --
-  # "three-peaks-hub-migrate-" plus a 40-character SHA is 64. Only a
-  # server-side dry-run reports it; a client-side one accepts it happily, which
-  # is why check:k8s asserts the lengths itself.
-  name: three-peaks-hub-migrate-{SHORTHASH}
-  namespace: three-peaks-hub
+  # pod template's `job-name` label, and a label value caps at 63 bytes. This
+  # prefix plus a full 40-character SHA is 60: it fits today, but it was 64
+  # under the old name and three bytes is not a margin to spend. Only a
+  # server-side dry-run reports the overflow; a client-side one accepts it
+  # happily, which is why check:k8s asserts the lengths itself.
+  name: three-peaks-migrate-{SHORTHASH}
+  namespace: three-peaks
 spec:
   # Lock contention is retried inside the run itself, where an attempt costs
   # milliseconds. A pod-level retry would also re-run a migration that is simply
@@ -23,7 +24,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: migrate
-          image: us-west1-docker.pkg.dev/realm-construction/three-peaks-hub/api:{COMMITHASH}
+          image: us-west1-docker.pkg.dev/realm-construction/three-peaks/api:{COMMITHASH}
           # Runs the TypeScript directly through tsx, which is why src/ ships in
           # the image alongside the bundle and why tsx is a dependency rather
           # than a devDependency.
@@ -42,7 +43,7 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: three-peaks-hub-secrets
+                  name: three-peaks-secrets
                   key: DB_PASSWORD
           resources:
             requests:

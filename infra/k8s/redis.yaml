@@ -4,17 +4,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: three-peaks-hub-redis
-  namespace: three-peaks-hub
+  name: three-peaks-redis
+  namespace: three-peaks
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: three-peaks-hub-redis
+      app: three-peaks-redis
   template:
     metadata:
       labels:
-        app: three-peaks-hub-redis
+        app: three-peaks-redis
     spec:
       containers:
         - name: redis
@@ -26,7 +26,7 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: three-peaks-hub-secrets
+                  name: three-peaks-secrets
                   key: REDIS_PASSWORD
           ports:
             - containerPort: 6379
@@ -40,12 +40,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: three-peaks-hub-redis
-  namespace: three-peaks-hub
+  name: three-peaks-redis
+  namespace: three-peaks
 spec:
   type: ClusterIP
   selector:
-    app: three-peaks-hub-redis
+    app: three-peaks-redis
   ports:
     - port: 6379
       targetPort: 6379

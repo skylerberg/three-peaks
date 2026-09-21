@@ -19,7 +19,7 @@ const REQUIRED_PATHS = [
   ['get', '/api/files/{id}/versions'],
 ];
 
-const APP_NAME = 'three-peaks-hub';
+const APP_NAME = 'three-peaks';
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 

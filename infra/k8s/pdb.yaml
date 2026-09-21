@@ -1,10 +1,10 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: three-peaks-hub-api
-  namespace: three-peaks-hub
+  name: three-peaks-api
+  namespace: three-peaks
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app: three-peaks-hub-api
+      app: three-peaks-api

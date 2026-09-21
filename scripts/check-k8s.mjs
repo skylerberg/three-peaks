@@ -19,6 +19,10 @@ const selftest = process.argv.includes('--selftest');
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 const SHORT = SHA.slice(0, 12);
 
+// The migrate Job's name is the one bound by the label cap, so both the check
+// and its selftest read the prefix from here rather than spelling it twice.
+const MIGRATE_PREFIX = 'three-peaks-migrate-';
+
 const MAX_LABEL_VALUE = 63;
 const MAX_NAME = 253;
 // Names that become a Service or are used as a DNS label are stricter still.
@@ -49,11 +53,7 @@ function inspect(doc, file, problems) {
     }
     // A Job copies its name into the pod template's job-name label, so its name
     // is bound by the label limit rather than the name limit.
-    if (
-      kind === 'Job' &&
-      name.startsWith('three-peaks-hub-migrate') &&
-      name.length > MAX_LABEL_VALUE
-    ) {
+    if (kind === 'Job' && name.startsWith(MIGRATE_PREFIX) && name.length > MAX_LABEL_VALUE) {
       problems.push(
         `${file}: ${kind} name is ${name.length} bytes; Kubernetes copies it into the ` +
           `job-name label, which caps at ${MAX_LABEL_VALUE}: ${name}`
@@ -84,14 +84,20 @@ for (const file of files) {
 }
 
 if (selftest) {
+  // One byte past the label cap, sized from the cap rather than from a hash
+  // length. The margin has already moved once: "three-peaks-hub-migrate-" plus
+  // a full SHA was 64, and shortening the app name took the same construction
+  // to 60, where it proves nothing. Deriving the planted name from the limit
+  // keeps this arm failing for the reason it claims to.
+  const overLong = `${MIGRATE_PREFIX}${'0'.repeat(MAX_LABEL_VALUE + 1 - MIGRATE_PREFIX.length)}`;
   const planted = [];
-  inspect(`kind: Job\nmetadata:\n  name: three-peaks-hub-migrate-${SHA}\n`, 'selftest', planted);
+  inspect(`kind: Job\nmetadata:\n  name: ${overLong}\n`, 'selftest', planted);
   if (planted.length === 0) {
-    console.error('[selftest] FAILED: a 64-byte Job name was not reported');
+    console.error(`[selftest] FAILED: a ${overLong.length}-byte Job name was not reported`);
     process.exit(1);
   }
   const fine = [];
-  inspect(`kind: Job\nmetadata:\n  name: three-peaks-hub-migrate-${SHORT}\n`, 'selftest', fine);
+  inspect(`kind: Job\nmetadata:\n  name: ${MIGRATE_PREFIX}${SHORT}\n`, 'selftest', fine);
   if (fine.length !== 0) {
     console.error('[selftest] FAILED: a short Job name was reported');
     process.exit(1);

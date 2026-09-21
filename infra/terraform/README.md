@@ -2,7 +2,7 @@
 
 Everything below lives in the existing `realm-construction` GCP project and the
 existing `cow-cluster` GKE cluster. State is in `gs://cow-terraform-state` under
-the `three-peaks-hub` prefix.
+the `three-peaks` prefix.
 
 ## Current state (2026-08-21)
 
@@ -22,7 +22,7 @@ here is waiting on anything.
 Secrets are readable back out of the cluster if they are needed again:
 
 ```sh
-kubectl -n three-peaks-hub get secret three-peaks-hub-secrets \
+kubectl -n three-peaks get secret three-peaks-secrets \
   -o jsonpath='{.data.DB_PASSWORD}' | base64 -d
 ```
 
@@ -45,7 +45,7 @@ environment that NEG does not exist until the first deploy has run, so a single
      github-actions-service@realm-construction.iam.gserviceaccount.com \
      --project=realm-construction \
      --role=roles/iam.workloadIdentityUser \
-     --member='principalSet://iam.googleapis.com/projects/1085332810847/locations/global/workloadIdentityPools/default-pool/attribute.repository/skylerberg/three-peaks-hub'
+     --member='principalSet://iam.googleapis.com/projects/1085332810847/locations/global/workloadIdentityPools/default-pool/attribute.repository/skylerberg/three-peaks'
    ```
 
    Confirm it landed beside the existing repositories:
@@ -92,17 +92,17 @@ environment that NEG does not exist until the first deploy has run, so a single
    because the pod reaches it through Workload Identity.
 
    ```sh
-   kubectl create namespace three-peaks-hub
-   kubectl -n three-peaks-hub create secret generic three-peaks-hub-secrets \
+   kubectl create namespace three-peaks
+   kubectl -n three-peaks create secret generic three-peaks-secrets \
      --from-literal=DB_PASSWORD='<the password from step 3>' \
      --from-literal=PASSWORD_RESET_SECRET="$(openssl rand -base64 32)" \
      --from-literal=REDIS_PASSWORD="$(openssl rand -base64 24)" \
-     --from-literal=REDIS_URL='redis://:<the redis password>@three-peaks-hub-redis:6379'
+     --from-literal=REDIS_URL='redis://:<the redis password>@three-peaks-redis:6379'
    ```
 
 5. **Push to `main`.** The deploy workflow builds the image, applies the base
    manifests, runs the migration Job and rolls out — and applying the Service is
-   what makes GKE create `three-peaks-hub-api-neg`.
+   what makes GKE create `three-peaks-api-neg`.
 
 6. **Apply the rest.** The NEG now resolves, so the backend service, URL map,
    proxies and forwarding rules can be created.

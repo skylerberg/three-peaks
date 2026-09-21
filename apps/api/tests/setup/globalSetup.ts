@@ -21,10 +21,7 @@ function maintenanceClient() {
 // A 64-bit key derived from the database name. Postgres advisory locks are
 // per-database-cluster, so the key has to carry the name itself.
 function runLockKey(database: string): bigint {
-  return createHash('sha256')
-    .update(`three-peaks-hub test run:${database}`)
-    .digest()
-    .readBigInt64BE(0);
+  return createHash('sha256').update(`three-peaks test run:${database}`).digest().readBigInt64BE(0);
 }
 
 let lockClient: pg.Client | null = null;
