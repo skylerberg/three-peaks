@@ -4,7 +4,7 @@ Source-only. No build step, no `dist/`, no `main` field — `exports` points
 straight at `.ts`, and every consumer (tsc under `moduleResolution: bundler`,
 Vite, vitest, esbuild, tsx) reads TypeScript natively.
 
-That is not a shortcut; the root `CLAUDE.md` explains the build-order cycle it
+That is not a shortcut; the root `AGENTS.md` explains the build-order cycle it
 avoids and the two eslint-enforced rules that keep it acyclic.
 
 What belongs here is anything the API and the web app must **agree** on or

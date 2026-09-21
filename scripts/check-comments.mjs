@@ -1,4 +1,4 @@
-// Reads the prose -- code comments, CLAUDE.md, README.md -- and fails on two
+// Reads the prose -- code comments, AGENTS.md, README.md -- and fails on two
 // things a reader takes on trust:
 //
 //   * the same sentence in two files, where whichever copy is not next to the
@@ -17,7 +17,7 @@ const selftest = process.argv.includes('--selftest');
 
 const SCAN_DIRS = ['apps', 'packages', 'scripts', 'infra', 'tools'];
 const DOC_FILES = [
-  'CLAUDE.md',
+  'AGENTS.md',
   'README.md',
   'packages/shared/README.md',
   'infra/terraform/README.md',

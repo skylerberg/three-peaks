@@ -41,7 +41,7 @@ export default ts.config(
 
   // --- Cross-package boundaries -------------------------------------------
   // Each of these is a build-order or correctness invariant that would
-  // otherwise be a paragraph in CLAUDE.md someone has to remember. Making them
+  // otherwise be a paragraph in AGENTS.md someone has to remember. Making them
   // lint errors puts the failure at the import site.
 
   {

@@ -53,7 +53,7 @@ pnpm run generate               # regenerate the committed clients
 pnpm run check:all              # the whole gate
 ```
 
-`CLAUDE.md` is the architecture document: the conventions, the reasons behind
+`AGENTS.md` is the architecture document: the conventions, the reasons behind
 them, and the traps that have already cost time. Read it before changing the
 auth boundary, the realtime tables, or anything about how the clients are
 generated.

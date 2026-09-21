@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-// apps/canva is here because CLAUDE.md sends every checkout and every worktree
+// apps/canva is here because AGENTS.md sends every checkout and every worktree
 // through this command, and `canva apps start` reads .env for its port and for
 // the API host. Without it the app serves on Canva's default 8080 and posts to
 // 3001 -- the port this repo's API container is pinned to in production, and
