@@ -92,7 +92,12 @@ tree.
    `assertPublicRoutes` failing the boot if the marked set drifts from the list
    in `apps/api/src/utils/assert-public-routes.ts`. A route that forgets auth
    cannot exist. Never `use('*', skipAuth)` on a sub-router — it matches every
-   sibling sharing that mount prefix.
+   sibling sharing that mount prefix. **Session expiry is idle-based**:
+   `SESSION_TTL_DAYS` is what a session gets from its last use rather than from
+   its creation, and authenticating one past the halfway mark of that window
+   slides its expiry forward — unawaited, on the pool, with the due check
+   repeated in the UPDATE, exactly as `touchPersonalAccessToken` does and for
+   the same reasons. Personal access tokens do not slide.
 3. **Two Hono context types.** Handlers on an `AppHono` get a `user`; handlers
    on a `PublicHono` get `AuthenticatedUser | undefined`. Reading the user on a
    public route is a compile error. A router hosting both exports a second

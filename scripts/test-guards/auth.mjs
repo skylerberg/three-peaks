@@ -84,6 +84,28 @@ export const guards = [
     testName: 'answers 401 identically for an unknown address',
   },
   {
+    // Sliding expiry is invisible while it works and invisible when it stops:
+    // a session that quietly went back to an absolute clock signs somebody out
+    // a year later, on a branch nobody has open.
+    name: 'using a session keeps it',
+    file: 'src/services/credentials.ts',
+    find: '  if (sessionRenewalIsDue(expiresAt)) renewSession(row.session_id);\n',
+    replace: '',
+    tests: ['tests/e2e/auth.test.ts'],
+    testName: 'carries a session past the halfway mark forward on its next request',
+  },
+  {
+    // The renewal has to restart the clock, not nudge it. Nudging still renews,
+    // still passes any test that only asks whether the expiry moved, and leaves
+    // a daily user being signed out on roughly the old schedule.
+    name: 'a renewed session gets a full term, not a nudge',
+    file: 'src/services/sessions.ts',
+    find: '      sessionExpiry(),\n',
+    replace: '      new Date(Date.now() + 24 * 60 * 60 * 1000),\n',
+    tests: ['tests/e2e/auth.test.ts'],
+    testName: 'carries a session past the halfway mark forward on its next request',
+  },
+  {
     name: 'a signed-out visitor is sent to login',
     file: 'src/lib/session.svelte.ts',
     find: "    if (this.status === 'anon' && !isPublic) {",

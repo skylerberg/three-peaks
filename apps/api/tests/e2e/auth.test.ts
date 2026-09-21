@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   anonymous,
   createUser,
@@ -7,6 +7,9 @@ import {
   type TestUser,
 } from '../setup/testContext.ts';
 import { sentEmails } from '../../src/services/email/index.ts';
+import { db } from '../../src/db/index.ts';
+import { hashBearerToken } from '../../src/services/sessions.ts';
+import { SESSION_TTL_DAYS } from '../../src/config/constants.ts';
 
 describe('auth', () => {
   let user: TestUser;
@@ -168,6 +171,84 @@ describe('auth', () => {
 
       expect((await other.api.get('/api/auth/me')).status).toBe(200);
       await deleteUser(other);
+    });
+  });
+
+  // Expiry is idle-based: the clock restarts on use, so the only sessions that
+  // lapse are the ones nobody came back to. Nothing else here would notice that
+  // going away — a renewal that quietly stopped happening reads as somebody
+  // being signed out a year later, by which time it is nobody's open branch.
+  describe('session renewal', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const TTL_MS = SESSION_TTL_DAYS * DAY_MS;
+
+    // A real login, then the row aged by hand: nothing else can produce a
+    // session far enough into its life to be worth renewing.
+    async function sessionExpiring(expiresAt: Date): Promise<{ id: string; token: string }> {
+      const res = await anonymous.post('/api/auth/login', {
+        email: user.email,
+        password: 'correct horse battery staple',
+      });
+      expect(res.status).toBe(200);
+      const token = (await res.json()).token as string;
+
+      const row = await db
+        .selectFrom('session')
+        .select('session.id')
+        .where('session.token_hash', '=', hashBearerToken(token))
+        .executeTakeFirstOrThrow();
+      await db
+        .updateTable('session')
+        .set({ expires_at: expiresAt })
+        .where('session.id', '=', row.id)
+        .execute();
+
+      return { id: row.id, token };
+    }
+
+    async function expiryOf(id: string): Promise<Date | null> {
+      const row = await db
+        .selectFrom('session')
+        .select('session.expires_at')
+        .where('session.id', '=', id)
+        .executeTakeFirst();
+      return row ? new Date(row.expires_at) : null;
+    }
+
+    it('carries a session past the halfway mark forward on its next request', async () => {
+      const { id, token } = await sessionExpiring(new Date(Date.now() + 10 * DAY_MS));
+
+      expect((await anonymous.withToken(token).get('/api/auth/me')).status).toBe(200);
+
+      // The write is unawaited by design, so the request answers before it
+      // lands. A full TTL measured from now, not ten days and a bit: the clock
+      // restarts rather than creeping forward by whatever was left.
+      await vi.waitFor(
+        async () => {
+          expect((await expiryOf(id))?.getTime()).toBeGreaterThan(Date.now() + TTL_MS - 60_000);
+        },
+        { timeout: 5_000, interval: 25 }
+      );
+    });
+
+    it('leaves a session still in the first half of its life alone', async () => {
+      const expiresAt = new Date(Date.now() + TTL_MS - DAY_MS);
+      const { id, token } = await sessionExpiring(expiresAt);
+
+      expect((await anonymous.withToken(token).get('/api/auth/me')).status).toBe(200);
+
+      // Not making the write is the behaviour, and a non-event cannot be waited
+      // for: settle long enough that one issued in error would have landed.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect((await expiryOf(id))?.getTime()).toBe(expiresAt.getTime());
+    });
+
+    it('does not renew a session that has already lapsed', async () => {
+      const { id, token } = await sessionExpiring(new Date(Date.now() - DAY_MS));
+
+      expect((await anonymous.withToken(token).get('/api/auth/me')).status).toBe(401);
+
+      expect(await expiryOf(id)).toBeNull();
     });
   });
 
