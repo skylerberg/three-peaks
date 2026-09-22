@@ -7,6 +7,7 @@
     PRINTER_MARGIN_LIMITS,
     type FlipEdge,
     deckCardSize,
+    isLiveCard,
     matchingCardPreset,
     pageSize,
     planGrid,
@@ -16,7 +17,7 @@
   import Button from '../components/ui/Button.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError } from '../api/client.ts';
-  import { type Deck, type DeckCard, decks, isLiveCard } from '../lib/decks.svelte.ts';
+  import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import {
     type OutstandingCard,

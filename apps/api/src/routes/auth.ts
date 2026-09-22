@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
+import { MAX_PERSONAL_ACCESS_TOKENS_PER_USER } from '@three-peaks/shared';
 import {
   PASSWORD_RESET_TTL_MS,
   decodeSignedToken,
   encodeSignedToken,
 } from '../services/signedToken.ts';
-import { createSession } from '../services/sessions.ts';
+import { createSession, hashBearerToken } from '../services/sessions.ts';
+import { generatePersonalAccessToken } from '../services/personalAccessTokens.ts';
 import { hashPassword, verifyDummyPassword, verifyPassword } from '../services/passwords.ts';
 import { sendEmail } from '../services/email/index.ts';
 import { passwordResetLink } from '../services/webLinks.ts';
@@ -17,8 +19,11 @@ import { APP_NAME } from '../config/constants.ts';
 import {
   authResponseSchema,
   changePasswordRequestSchema,
+  createPersonalAccessTokenRequestSchema,
+  createdPersonalAccessTokenSchema,
   forgotPasswordRequestSchema,
   loginRequestSchema,
+  personalAccessTokenListSchema,
   resetPasswordRequestSchema,
   sessionListSchema,
   signupRequestSchema,
@@ -410,6 +415,141 @@ authRouter.post(
       .where('app_user.id', '=', user.id)
       .execute();
 
+    return c.body(null, 204);
+  }
+);
+
+function toTokenResponse(row: {
+  id: string;
+  name: string;
+  created_at: Date | string;
+  last_used_at: Date | string | null;
+}) {
+  return {
+    id: row.id,
+    name: row.name,
+    created_at: new Date(row.created_at).toISOString(),
+    last_used_at: row.last_used_at === null ? null : new Date(row.last_used_at).toISOString(),
+  };
+}
+
+authRouter.get(
+  '/tokens',
+  describeRoute({
+    tags: ['Auth'],
+    summary: 'List personal access tokens',
+    description:
+      "The caller's personal access tokens, newest first. Secrets are never returned. `last_used_at` is null until a token first authenticates, and is accurate to about a minute after that.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'Personal access tokens',
+        content: { 'application/json': { schema: resolver(personalAccessTokenListSchema) } },
+      },
+      ...unauthorizedErrorResponse,
+      ...internalServerErrorResponse,
+    },
+  }),
+  async (c) => {
+    const rows = await c
+      .get('db')
+      .selectFrom('personal_access_token')
+      .select([
+        'personal_access_token.id as id',
+        'personal_access_token.name as name',
+        'personal_access_token.created_at as created_at',
+        'personal_access_token.last_used_at as last_used_at',
+      ])
+      .where('personal_access_token.user_id', '=', c.get('user').id)
+      .orderBy('personal_access_token.created_at', 'desc')
+      .orderBy('personal_access_token.id')
+      .execute();
+
+    return c.json({ personal_access_tokens: rows.map(toTokenResponse) });
+  }
+);
+
+authRouter.post(
+  '/tokens',
+  describeRoute({
+    tags: ['Auth'],
+    summary: 'Create a personal access token',
+    description:
+      'A named token for scripts and agents, carrying the same access as the account. The secret is in this response and nowhere else; only its hash is stored. Tokens do not expire and survive password changes -- revoking one is the only way it stops working.',
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: {
+        description: 'Created; the secret is in this response only',
+        content: { 'application/json': { schema: resolver(createdPersonalAccessTokenSchema) } },
+      },
+      ...conflictErrorResponse,
+      ...validationErrorResponse,
+      ...unauthorizedErrorResponse,
+      ...internalServerErrorResponse,
+    },
+  }),
+  jsonValidator(createPersonalAccessTokenRequestSchema),
+  async (c) => {
+    const body = c.req.valid('json') as { id?: string; name: string };
+    const db = c.get('db');
+    const user = c.get('user');
+
+    const { count } = await db
+      .selectFrom('personal_access_token')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('personal_access_token.user_id', '=', user.id)
+      .executeTakeFirstOrThrow();
+    if (Number(count) >= MAX_PERSONAL_ACCESS_TOKENS_PER_USER) {
+      throw new AppError(
+        422,
+        `You already have ${MAX_PERSONAL_ACCESS_TOKENS_PER_USER} personal access tokens; revoke one before creating another`
+      );
+    }
+
+    const token = generatePersonalAccessToken();
+    try {
+      const row = await db
+        .insertInto('personal_access_token')
+        .values({
+          id: body.id ?? newId(),
+          user_id: user.id,
+          name: body.name,
+          token_hash: hashBearerToken(token),
+        })
+        .returning(['id', 'name', 'created_at', 'last_used_at'])
+        .executeTakeFirstOrThrow();
+      return c.json({ token, personal_access_token: toTokenResponse(row) }, 201);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new AppError(409, 'A token with that id exists');
+      throw error;
+    }
+  }
+);
+
+authRouter.delete(
+  '/tokens/:id',
+  describeRoute({
+    tags: ['Auth'],
+    summary: 'Revoke a personal access token',
+    description:
+      "The token stops authenticating at once. Sessions and other tokens are untouched. Another account's token answers 404, the same as one that does not exist.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      204: { description: 'Revoked' },
+      ...notFoundErrorResponse,
+      ...unauthorizedErrorResponse,
+      ...internalServerErrorResponse,
+    },
+  }),
+  async (c) => {
+    const result = await c
+      .get('db')
+      .deleteFrom('personal_access_token')
+      .where('personal_access_token.id', '=', c.req.param('id'))
+      .where('personal_access_token.user_id', '=', c.get('user').id)
+      .executeTakeFirst();
+
+    if (Number(result.numDeletedRows) === 0) throw new AppError(404, 'Token not found');
     return c.body(null, 204);
   }
 );

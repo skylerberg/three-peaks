@@ -185,6 +185,50 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/tokens': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List personal access tokens
+     * @description The caller's personal access tokens, newest first. Secrets are never returned. `last_used_at` is null until a token first authenticates, and is accurate to about a minute after that.
+     */
+    get: operations['getApiAuthTokens'];
+    put?: never;
+    /**
+     * Create a personal access token
+     * @description A named token for scripts and agents, carrying the same access as the account. The secret is in this response and nowhere else; only its hash is stored. Tokens do not expire and survive password changes -- revoking one is the only way it stops working.
+     */
+    post: operations['postApiAuthTokens'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/tokens/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Revoke a personal access token
+     * @description The token stops authenticating at once. Sessions and other tokens are untouched. Another account's token answers 404, the same as one that does not exist.
+     */
+    delete: operations['deleteApiAuthTokensById'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/projects': {
     parameters: {
       query?: never;
@@ -1365,6 +1409,15 @@ export interface components {
       updated_at: string;
       updated_by: string;
     };
+    CreatedPersonalAccessToken: {
+      personal_access_token: {
+        created_at: string;
+        id: string;
+        last_used_at: string | null;
+        name: string;
+      };
+      token: string;
+    };
     Deck: {
       back_file_id: string | null;
       card_count: number;
@@ -1671,6 +1724,14 @@ export interface components {
       }[];
     };
     Password: string;
+    PersonalAccessTokenList: {
+      personal_access_tokens: {
+        created_at: string;
+        id: string;
+        last_used_at: string | null;
+        name: string;
+      }[];
+    };
     PrintOutstanding: {
       decks: {
         back_file_id: string | null;
@@ -2268,6 +2329,176 @@ export interface operations {
               message: string;
               path: string;
             }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiAuthTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Personal access tokens */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PersonalAccessTokenList'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  postApiAuthTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          name: string;
+          id?: components['schemas']['Uuid'];
+        };
+      };
+    };
+    responses: {
+      /** @description Created; the secret is in this response only */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CreatedPersonalAccessToken'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  deleteApiAuthTokensById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Revoked */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
             error: string;
           };
         };

@@ -1,0 +1,25 @@
+{
+  "name": "@three-peaks/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "threepeaks": "bin/threepeaks.mjs"
+  },
+  "scripts": {
+    "type-check": "tsc",
+    "install:global": "node scripts/install.mjs"
+  },
+  "dependencies": {
+    "@three-peaks/shared": "workspace:*",
+    "commander": "^15.0.0",
+    "openapi-fetch": "~0.17.0",
+    "tsx": "^4.23.12"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

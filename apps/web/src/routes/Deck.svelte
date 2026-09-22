@@ -9,7 +9,9 @@
     cardPreset,
     deckCardSize,
     effectiveDpi,
+    isLiveCard,
     matchingCardPreset,
+    withHiddenCards,
   } from '@three-peaks/shared';
   import type { components } from '@three-peaks/shared/api';
   import FilePicker from '../components/decks/FilePicker.svelte';
@@ -24,7 +26,7 @@
   import { ApiError, api, assertOk } from '../api/client.ts';
   import { deckImports } from '../lib/deckImports.svelte.ts';
   import { DROP_TARGET_STYLE, flipDuration, isDragPlaceholder } from '../lib/dnd.ts';
-  import { type DeckCard, decks, isLiveCard, withHiddenCards } from '../lib/decks.svelte.ts';
+  import { type DeckCard, decks } from '../lib/decks.svelte.ts';
   import { files } from '../lib/files.svelte.ts';
   import { realtime } from '../lib/realtime.svelte.ts';
   import { link } from '../lib/router.svelte.ts';

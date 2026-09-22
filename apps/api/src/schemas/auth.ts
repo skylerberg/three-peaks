@@ -1,4 +1,5 @@
 import { type } from 'arktype';
+import { PERSONAL_ACCESS_TOKEN_NAME_LIMITS } from '@three-peaks/shared';
 import { email, password, stringWithLength, uuid } from './common.ts';
 
 export const signupRequestSchema = type({
@@ -39,4 +40,27 @@ export const resetPasswordRequestSchema = type({ token: 'string', password });
 export const changePasswordRequestSchema = type({
   current_password: 'string',
   new_password: password,
+});
+
+// The secret is never part of this row: it is shown once, in the response that
+// created it, and only its hash is stored.
+export const personalAccessTokenSchema = type({
+  id: 'string',
+  name: 'string',
+  created_at: 'string',
+  last_used_at: 'string | null',
+});
+
+export const personalAccessTokenListSchema = type({
+  personal_access_tokens: personalAccessTokenSchema.array(),
+});
+
+export const createPersonalAccessTokenRequestSchema = type({
+  'id?': uuid,
+  name: stringWithLength(...PERSONAL_ACCESS_TOKEN_NAME_LIMITS),
+});
+
+export const createdPersonalAccessTokenSchema = type({
+  token: 'string',
+  personal_access_token: personalAccessTokenSchema,
 });
