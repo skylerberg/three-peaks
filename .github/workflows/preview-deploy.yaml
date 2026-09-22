@@ -27,7 +27,7 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
-      BUCKET: three-peaks-hub-web-prod
+      BUCKET: three-peaks-web-prod
       DOMAIN: tools.threepeaksgames.com
     steps:
       - uses: actions/checkout@v4

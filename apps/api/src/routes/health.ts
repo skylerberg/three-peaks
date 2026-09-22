@@ -18,7 +18,7 @@ import type { Connection, Variables } from '../types/index.ts';
 export async function healthCheck(c: Context<{ Variables: Variables }>) {
   const build = buildInfo();
   const body = {
-    name: 'three-peaks-hub',
+    name: 'three-peaks',
     environment: env.environment,
     branch: build.branch,
     commit: build.commit,

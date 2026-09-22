@@ -10,7 +10,7 @@ terraform {
 
   backend "gcs" {
     bucket = "cow-terraform-state"
-    prefix = "three-peaks-hub"
+    prefix = "three-peaks"
   }
 }
 

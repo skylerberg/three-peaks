@@ -3,8 +3,17 @@ locals {
   region  = "us-west1"
   zone    = "us-west1-a"
 
-  name   = "three-peaks-hub"
-  domain = "tools.threepeaksgames.com"
+  name = "three-peaks"
+
+  # The address and every certificate keep the old name, and deliberately.
+  # A GCP resource name is immutable, so renaming one of these is a destroy
+  # and a create: the address comes back as a different IP, and each
+  # certificate re-validates from scratch behind a map the proxy is already
+  # serving. Both cost a Route 53 edit this project cannot make from inside
+  # GCP, and a window where tools.threepeaksgames.com resolves to nothing --
+  # paid for names that no request, log line or dashboard ever reads.
+  tls_name = "three-peaks-hub"
+  domain   = "tools.threepeaksgames.com"
 
   # Previews are served at pr-<n>.tools.threepeaksgames.com, which is why the
   # wildcard certificate below exists.

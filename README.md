@@ -1,4 +1,4 @@
-# three-peaks-hub
+# three-peaks
 
 Board game design tools for Three Peaks Games, served at
 **tools.threepeaksgames.com**.

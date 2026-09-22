@@ -5,7 +5,7 @@ describe('health', () => {
   it.each(['/health', '/'])('%s answers without a credential', async (path) => {
     const res = await anonymous.get(path);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: 'ok', name: 'three-peaks-hub' });
+    expect(await res.json()).toMatchObject({ status: 'ok', name: 'three-peaks' });
   });
 
   // The reason the fields are there: a deployed pod has to be able to say which

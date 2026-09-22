@@ -10,7 +10,7 @@ import type { RealtimeEventType } from './eventCatalog.ts';
 
 type Subscriber = (entry: RealtimeEnvelope) => void;
 
-const CHANNEL = 'three-peaks-hub:realtime';
+const CHANNEL = 'three-peaks:realtime';
 
 const subscribers = new Set<Subscriber>();
 let publisher: ReturnType<typeof createClient> | null = null;

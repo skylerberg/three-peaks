@@ -14,7 +14,7 @@ export const checkoutRoot = resolve(
   '..'
 );
 
-export const CHECKOUT_COMMENT_PREFIX = 'three-peaks-hub test checkout: ';
+export const CHECKOUT_COMMENT_PREFIX = 'three-peaks test checkout: ';
 
 const MAX_IDENTIFIER_LENGTH = 63;
 

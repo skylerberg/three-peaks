@@ -8,7 +8,7 @@ on:
 
 env:
   PROJECT_ID: realm-construction
-  NAMESPACE: three-peaks-hub
+  NAMESPACE: three-peaks
   REGISTRY: us-west1-docker.pkg.dev
   WIF_PROVIDER: projects/1085332810847/locations/global/workloadIdentityPools/default-pool/providers/github-provider
   WIF_SERVICE_ACCOUNT: github-actions-service@realm-construction.iam.gserviceaccount.com
@@ -93,7 +93,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     env:
-      IMAGE: us-west1-docker.pkg.dev/realm-construction/three-peaks-hub/api
+      IMAGE: us-west1-docker.pkg.dev/realm-construction/three-peaks/api
     steps:
       - uses: actions/checkout@v4
 
@@ -147,7 +147,7 @@ jobs:
           # Short for the Job name (a label-value length limit applies to it),
           # full for the image tag.
           short="${GITHUB_SHA:0:12}"
-          job="three-peaks-hub-migrate-$short"
+          job="three-peaks-migrate-$short"
           kubectl -n "$NAMESPACE" delete job "$job" --ignore-not-found
           sed -e "s/{COMMITHASH}/$GITHUB_SHA/g" -e "s/{SHORTHASH}/$short/g" \
             infra/k8s/migrate-job.yaml | kubectl apply -f -
@@ -181,7 +181,7 @@ jobs:
           # sed's default delimiter.
           sed -e "s/{COMMITHASH}/$GITHUB_SHA/g" -e "s|{BRANCH}|$GITHUB_REF_NAME|g" \
             infra/k8s/deployment.yaml | kubectl apply -f -
-          kubectl -n "$NAMESPACE" rollout status deployment/three-peaks-hub-api --timeout=300s
+          kubectl -n "$NAMESPACE" rollout status deployment/three-peaks-api --timeout=300s
 
   web:
     # After the API, not beside it. On a change that touches both, the endpoint
@@ -200,7 +200,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     env:
-      BUCKET: three-peaks-hub-web-prod
+      BUCKET: three-peaks-web-prod
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -246,7 +246,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     env:
-      IMAGE: us-west1-docker.pkg.dev/realm-construction/three-peaks-hub/preview-edge
+      IMAGE: us-west1-docker.pkg.dev/realm-construction/three-peaks/preview-edge
     steps:
       - uses: actions/checkout@v4
       - id: auth
@@ -277,8 +277,8 @@ jobs:
       # first deploy runs before terraform has created the service.
       - name: 'Roll out'
         run: |
-          if gcloud run services describe three-peaks-hub-preview-edge --region us-west1 >/dev/null 2>&1; then
-            gcloud run services update three-peaks-hub-preview-edge \
+          if gcloud run services describe three-peaks-preview-edge --region us-west1 >/dev/null 2>&1; then
+            gcloud run services update three-peaks-preview-edge \
               --region us-west1 --image "${IMAGE}:${GITHUB_SHA}"
           else
             echo "Cloud Run service does not exist yet; terraform apply creates it."
