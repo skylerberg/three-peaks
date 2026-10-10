@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { API_HEALTH_NAME } from '@three-peaks/shared';
 import type { components } from '@three-peaks/shared/api';
 import { leaf, withCtx } from '../kit.ts';
 import { CliError, EXIT } from '../errors.ts';
@@ -28,7 +29,7 @@ async function readHealth(ctx: RuntimeContext): Promise<Health> {
     throw new CliError(`Cannot reach ${ctx.baseUrl}: ${(err as Error).message}`, EXIT.failure);
   }
   const body = (await response.json().catch(() => null)) as Partial<Health> | null;
-  if (body === null || body.name !== 'three-peaks-hub') {
+  if (body === null || body.name !== API_HEALTH_NAME) {
     throw new CliError(
       `${ctx.baseUrl} answered /health with ${String(response.status)} but is not a Three Peaks Hub API`,
       EXIT.failure

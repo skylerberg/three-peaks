@@ -2,6 +2,7 @@ export * from './auth.ts';
 export * from './cards.ts';
 export * from './components.ts';
 export * from './decks.ts';
+export * from './health.ts';
 export * from './imports.ts';
 export * from './models3d.ts';
 export * from './print.ts';
