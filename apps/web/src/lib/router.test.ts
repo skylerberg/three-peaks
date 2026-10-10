@@ -33,6 +33,19 @@ describe('matchRoute', () => {
     });
   });
 
+  it('reads what the print screen opens on from its query', () => {
+    expect(matchRoute(`/projects/${UUID}/print`)).toEqual({
+      name: 'print',
+      params: { projectId: UUID, deckId: null, boardId: null },
+    });
+    expect(matchRoute(`/projects/${UUID}/print`, 'deck=abc')).toMatchObject({
+      params: { deckId: 'abc', boardId: null },
+    });
+    expect(matchRoute(`/projects/${UUID}/print`, 'board=def')).toMatchObject({
+      params: { deckId: null, boardId: 'def' },
+    });
+  });
+
   it('reads the assets path and its folder query', () => {
     expect(matchRoute(`/projects/${UUID}/assets`, 'folder=abc')).toEqual({
       name: 'assets',

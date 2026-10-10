@@ -5,18 +5,26 @@
     DEFAULT_PRINTER_MARGIN_MM,
     PAGE_SIZES,
     PRINTER_MARGIN_LIMITS,
+    PRINT_DPI,
     type FlipEdge,
+    type TileGrid,
+    type TileSize,
     deckCardSize,
+    effectiveDpi,
     isLiveCard,
     matchingCardPreset,
     pageSize,
     planGrid,
     planRuns,
+    planTiles,
     summarizeRuns,
+    summarizeTiles,
+    tilesWantBlankBacks,
   } from '@three-peaks/shared';
+  import type { components as ApiComponents } from '@three-peaks/shared/api';
   import Button from '../components/ui/Button.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
-  import { ApiError } from '../api/client.ts';
+  import { ApiError, api, assertOk } from '../api/client.ts';
   import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import {
@@ -38,17 +46,33 @@
   interface Props {
     projectId: string;
     deckId: string | null;
+    boardId: string | null;
   }
-  let { projectId, deckId }: Props = $props();
+  let { projectId, deckId, boardId }: Props = $props();
 
   interface LoadedDeck {
     deck: Deck;
     cards: DeckCard[];
   }
 
+  // A board as this screen needs it: what it is cut to, and the artwork that is
+  // still there to print. Null where the artwork was never uploaded or has been
+  // deleted, which is a board with nothing to put on paper.
+  interface LoadedBoard {
+    id: string;
+    name: string;
+    size: TileSize;
+    artwork: ApiComponents['schemas']['File'] | null;
+  }
+
   let error = $state<string | null>(null);
   let loading = $state(true);
   let loaded = $state<LoadedDeck[]>([]);
+  let boards = $state<LoadedBoard[]>([]);
+  // Unticked unless the screen was opened for one. A board is several sheets of
+  // a different paper from the cards, and nothing records that one has been
+  // printed, so every run including every board is not a default anyone wants.
+  let chosenBoards = $state<Record<string, boolean>>({});
   let expanded = $state<Record<string, boolean>>({});
   // Which cards this run puts on paper, keyed deck:file, without changing what
   // the deck holds -- the deck's own counts are the persistent truth and this is
@@ -224,6 +248,48 @@
 
   const anyBacks = $derived(runDecks.some((entry) => entry.back_file_id !== null));
 
+  const boardGrids = $derived(
+    Object.fromEntries(
+      boards.map((board) => [board.id, planTiles(page, board.size, printerMargin)])
+    ) as Record<string, TileGrid>
+  );
+
+  const runBoards = $derived(
+    boards.flatMap((board) =>
+      chosenBoards[board.id] === true && board.artwork !== null
+        ? [{ name: board.name, file_id: board.artwork.id, ...board.size }]
+        : []
+    )
+  );
+
+  const boardSummary = $derived(
+    summarizeTiles(
+      runBoards,
+      page,
+      printerMargin,
+      tilesWantBlankBacks(includeBacks, summary.sheets)
+    )
+  );
+
+  const nothingToPrint = $derived(summary.cards === 0 && boardSummary.pages === 0);
+
+  function boardPages(grid: TileGrid): string {
+    if (grid.pages === 0) return 'no room on this paper';
+    if (grid.pages === 1) return grid.rotated ? '1 page, on its side' : '1 page';
+    return `${grid.pages} pages, ${grid.columns} across by ${grid.rows} down`;
+  }
+
+  // The coarser of the two axes when the artwork is cropped to cover the board,
+  // and the finer when it is shrunk to fit inside: whichever one decides the
+  // scale it is drawn at.
+  function boardDpi(board: LoadedBoard): number | null {
+    const art = board.artwork;
+    if (!art || art.image_width === null || art.image_height === null) return null;
+    const across = effectiveDpi(art.image_width, board.size.width_mm);
+    const down = effectiveDpi(art.image_height, board.size.height_mm);
+    return fit === 'fill' ? Math.min(across, down) : Math.max(across, down);
+  }
+
   // Every deck's box, counted off its own cards: checked when the whole deck is
   // ticked, mixed when part of it is, and nothing to tick at all when a deck
   // holds no card. `typed` is what puts the reset beside it, and is counted
@@ -249,6 +315,7 @@
   $effect(() => {
     const project = projectId;
     const preselect = deckId;
+    const board = boardId;
     loading = true;
     error = null;
 
@@ -256,21 +323,42 @@
       try {
         await decks.loadList(project);
         const list = decks.decks;
-        const [full, pending] = await Promise.all([
+        const [full, pending, listed] = await Promise.all([
           Promise.all(list.map((deck) => decks.readDeck(deck.id))),
           readOutstanding(project),
+          api.GET('/api/components', { params: { query: { project_id: project, kind: 'board' } } }),
         ]);
         // A card whose image is deleted has no bytes to place, so it is not a card
         // of the deck as far as a print run is concerned.
         loaded = full.map((entry) => ({ ...entry, cards: entry.cards.filter(isLiveCard) }));
+        boards = assertOk(listed).components.flatMap((component) => {
+          if (component.settings.kind !== 'board') return [];
+          const artwork = component.files.find((entry) => entry.role === 'artwork')?.file ?? null;
+          return [
+            {
+              id: component.id,
+              name: component.name,
+              size: {
+                width_mm: component.settings.width_mm,
+                height_mm: component.settings.height_mm,
+              },
+              artwork: artwork !== null && artwork.deleted_at === null ? artwork : null,
+            },
+          ];
+        });
         outstanding = pending;
         recorded = null;
         copies = {};
+        // Opened for one board is opened for that board alone: the cards are a
+        // different job on different paper.
         included = Object.fromEntries(
           loaded
-            .filter((entry) => preselect === null || preselect === entry.deck.id)
+            .filter(
+              (entry) => board === null && (preselect === null || preselect === entry.deck.id)
+            )
             .flatMap((entry) => entry.cards.map((card) => [key(entry.deck.id, card.file_id), true]))
         );
+        chosenBoards = board === null ? {} : { [board]: true };
       } catch (caught) {
         error =
           caught instanceof ApiError && caught.status === 404
@@ -307,7 +395,7 @@
       // chunk only this screen pays for.
       const { generatePrintPdf } = await import('../lib/print/index.ts');
       const blob = await generatePrintPdf(
-        { decks: runDecks, options, versions: $state.snapshot(versions) },
+        { decks: runDecks, boards: runBoards, options, versions: $state.snapshot(versions) },
         (update) => {
           progress = update;
         }
@@ -363,123 +451,165 @@
       <h1 class="text-2xl font-semibold">Print sheets</h1>
       <p class="text-sm text-muted">
         Cards packed onto {page.name} at their real size, with a mirrored backing page behind every sheet.
-        Print double-sided at 100% scale — never “fit to page”.
+        Print double-sided at 100% scale — never “fit to page”. A board prints on one side, split across
+        pages when it is larger than one.
       </p>
     </div>
 
     {#if loading}
       <Spinner label="Loading decks" />
-    {:else if loaded.length === 0}
+    {:else if loaded.length === 0 && boards.length === 0}
       <p class="text-sm text-muted">
-        This project has no decks yet.
-        <a class="focus-ring rounded underline" href="/projects/{projectId}/decks">Make one</a>.
+        This project has no decks or boards yet.
+        <a class="focus-ring rounded underline" href="/projects/{projectId}/decks">Make a deck</a>
+        or
+        <a class="focus-ring rounded underline" href="/projects/{projectId}/components/board">
+          a board</a
+        >.
       </p>
     {:else}
       <section class="flex flex-col gap-2">
         <h2 class="text-lg font-semibold">What to print</h2>
-        <ul class="flex flex-col gap-2">
-          {#each loaded as entry (entry.deck.id)}
-            {@const perSheet = cardsPerSheet(entry.deck)}
-            {@const printedAt = owedDecks[entry.deck.id]?.last_printed_at ?? null}
-            {@const choice = deckChoice[entry.deck.id]}
-            <li class="rounded-md border border-edge bg-surface p-3">
-              <div class="flex flex-wrap items-center gap-3">
+        {#if loaded.length > 0}
+          <ul class="flex flex-col gap-2" aria-label="Decks">
+            {#each loaded as entry (entry.deck.id)}
+              {@const perSheet = cardsPerSheet(entry.deck)}
+              {@const printedAt = owedDecks[entry.deck.id]?.last_printed_at ?? null}
+              {@const choice = deckChoice[entry.deck.id]}
+              <li class="rounded-md border border-edge bg-surface p-3">
+                <div class="flex flex-wrap items-center gap-3">
+                  <label class="flex min-h-11 min-w-0 flex-1 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      class="focus-ring size-4"
+                      checked={choice.total > 0 && choice.chosen === choice.total}
+                      indeterminate={choice.chosen > 0 && choice.chosen < choice.total}
+                      disabled={choice.total === 0}
+                      onchange={(event) => chooseWholeDeck(entry, event.currentTarget.checked)}
+                    />
+                    <span class="min-w-0 flex-1 truncate font-medium">{entry.deck.name}</span>
+                  </label>
+                  {#if choice.chosen > 0 && choice.chosen < choice.total}
+                    <span class="text-sm text-muted">{choice.chosen} of {choice.total} cards</span>
+                  {/if}
+                  <span class="text-sm text-muted">{sizeLabel(entry.deck)}</span>
+                  <span class="text-sm text-muted">
+                    {perSheet > 0 ? `${perSheet} per sheet` : 'too large for this paper'}
+                  </span>
+                  <span class="text-sm text-muted">
+                    {#if printedAt}
+                      last printed <time datetime={printedAt}>{when(printedAt)}</time>
+                    {:else}
+                      never printed
+                    {/if}
+                  </span>
+                  {#if entry.deck.back_file_id === null}
+                    <span class="text-sm text-warning">no back</span>
+                  {/if}
+                  {#if choice.typed}
+                    <Button
+                      variant="ghost"
+                      aria-label="Reset the counts for {entry.deck.name}"
+                      onclick={() => resetCopies(entry)}
+                    >
+                      Reset counts
+                    </Button>
+                  {/if}
+                  <Button
+                    variant="ghost"
+                    aria-expanded={expanded[entry.deck.id] === true}
+                    onclick={() => (expanded[entry.deck.id] = !expanded[entry.deck.id])}
+                  >
+                    {expanded[entry.deck.id] ? 'Hide cards' : 'Choose cards'}
+                  </Button>
+                </div>
+
+                {#if expanded[entry.deck.id]}
+                  <ul
+                    class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2"
+                  >
+                    {#each entry.cards as card (card.file_id)}
+                      {@const label = outstandingLabel(outstandingFor(entry.deck.id, card.file_id))}
+                      <li
+                        class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
+                      >
+                        <label class="flex min-w-0 flex-1 items-center gap-3">
+                          <input
+                            type="checkbox"
+                            class="focus-ring size-4"
+                            checked={included[key(entry.deck.id, card.file_id)] === true}
+                            onchange={(event) => {
+                              included[key(entry.deck.id, card.file_id)] =
+                                event.currentTarget.checked;
+                            }}
+                          />
+                          <span class="min-w-0 flex-1 truncate">{card.file.filename}</span>
+                        </label>
+                        {#if label}
+                          <span
+                            class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
+                          >
+                            {label}
+                          </span>
+                        {/if}
+                        <span class="text-muted" aria-hidden="true">×</span>
+                        <input
+                          type="number"
+                          aria-label="Copies of {card.file.filename}"
+                          class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
+                          value={printedCopies(entry.deck.id, card)}
+                          min={minCopies}
+                          max={maxCopies}
+                          step="1"
+                          disabled={included[key(entry.deck.id, card.file_id)] !== true}
+                          onfocus={selectAll}
+                          onchange={(event) => setCopies(entry.deck.id, card, event)}
+                        />
+                      </li>
+                    {:else}
+                      <li class="px-2 text-sm text-muted">This deck has no cards.</li>
+                    {/each}
+                  </ul>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        {#if boards.length > 0}
+          <h3 class="pt-2 text-sm font-medium">Boards</h3>
+          <ul class="flex flex-col gap-2" aria-label="Boards">
+            {#each boards as board (board.id)}
+              {@const grid = boardGrids[board.id]}
+              {@const dpi = boardDpi(board)}
+              <li
+                class="flex flex-wrap items-center gap-3 rounded-md border border-edge bg-surface p-3"
+              >
                 <label class="flex min-h-11 min-w-0 flex-1 items-center gap-3">
                   <input
                     type="checkbox"
                     class="focus-ring size-4"
-                    checked={choice.total > 0 && choice.chosen === choice.total}
-                    indeterminate={choice.chosen > 0 && choice.chosen < choice.total}
-                    disabled={choice.total === 0}
-                    onchange={(event) => chooseWholeDeck(entry, event.currentTarget.checked)}
+                    checked={chosenBoards[board.id] === true && board.artwork !== null}
+                    disabled={board.artwork === null}
+                    onchange={(event) => (chosenBoards[board.id] = event.currentTarget.checked)}
                   />
-                  <span class="min-w-0 flex-1 truncate font-medium">{entry.deck.name}</span>
+                  <span class="min-w-0 flex-1 truncate font-medium">{board.name}</span>
                 </label>
-                {#if choice.chosen > 0 && choice.chosen < choice.total}
-                  <span class="text-sm text-muted">{choice.chosen} of {choice.total} cards</span>
-                {/if}
-                <span class="text-sm text-muted">{sizeLabel(entry.deck)}</span>
                 <span class="text-sm text-muted">
-                  {perSheet > 0 ? `${perSheet} per sheet` : 'too large for this paper'}
+                  {board.size.width_mm} × {board.size.height_mm} mm
                 </span>
-                <span class="text-sm text-muted">
-                  {#if printedAt}
-                    last printed <time datetime={printedAt}>{when(printedAt)}</time>
-                  {:else}
-                    never printed
+                {#if board.artwork === null}
+                  <span class="text-sm text-warning">no artwork yet</span>
+                {:else}
+                  <span class="text-sm text-muted">{boardPages(grid)}</span>
+                  {#if dpi !== null && dpi < PRINT_DPI}
+                    <span class="text-sm text-warning">{Math.round(dpi)} DPI at this size</span>
                   {/if}
-                </span>
-                {#if entry.deck.back_file_id === null}
-                  <span class="text-sm text-warning">no back</span>
                 {/if}
-                {#if choice.typed}
-                  <Button
-                    variant="ghost"
-                    aria-label="Reset the counts for {entry.deck.name}"
-                    onclick={() => resetCopies(entry)}
-                  >
-                    Reset counts
-                  </Button>
-                {/if}
-                <Button
-                  variant="ghost"
-                  aria-expanded={expanded[entry.deck.id] === true}
-                  onclick={() => (expanded[entry.deck.id] = !expanded[entry.deck.id])}
-                >
-                  {expanded[entry.deck.id] ? 'Hide cards' : 'Choose cards'}
-                </Button>
-              </div>
-
-              {#if expanded[entry.deck.id]}
-                <ul
-                  class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2"
-                >
-                  {#each entry.cards as card (card.file_id)}
-                    {@const label = outstandingLabel(outstandingFor(entry.deck.id, card.file_id))}
-                    <li
-                      class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
-                    >
-                      <label class="flex min-w-0 flex-1 items-center gap-3">
-                        <input
-                          type="checkbox"
-                          class="focus-ring size-4"
-                          checked={included[key(entry.deck.id, card.file_id)] === true}
-                          onchange={(event) => {
-                            included[key(entry.deck.id, card.file_id)] =
-                              event.currentTarget.checked;
-                          }}
-                        />
-                        <span class="min-w-0 flex-1 truncate">{card.file.filename}</span>
-                      </label>
-                      {#if label}
-                        <span
-                          class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-                        >
-                          {label}
-                        </span>
-                      {/if}
-                      <span class="text-muted" aria-hidden="true">×</span>
-                      <input
-                        type="number"
-                        aria-label="Copies of {card.file.filename}"
-                        class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
-                        value={printedCopies(entry.deck.id, card)}
-                        min={minCopies}
-                        max={maxCopies}
-                        step="1"
-                        disabled={included[key(entry.deck.id, card.file_id)] !== true}
-                        onfocus={selectAll}
-                        onchange={(event) => setCopies(entry.deck.id, card, event)}
-                      />
-                    </li>
-                  {:else}
-                    <li class="px-2 text-sm text-muted">This deck has no cards.</li>
-                  {/each}
-                </ul>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </section>
 
       <section class="flex flex-col gap-4 rounded-md border border-edge bg-surface p-4">
@@ -498,7 +628,8 @@
           <p class="max-w-96 text-xs text-muted">
             Changed means a card nothing has printed yet, artwork that has been updated since it was
             last printed, a card back the deck has replaced, or a copy count that has gone up. It
-            fills in the count beside each card; one you set yourself stays as you set it.
+            fills in the count beside each card; one you set yourself stays as you set it. Boards
+            are not tracked: a ticked board prints every time.
           </p>
         </div>
 
@@ -563,18 +694,41 @@
       </section>
 
       <section class="flex flex-col gap-3 rounded-md border border-edge bg-surface p-4">
-        <p class="text-sm" role="status">
-          {summary.cards}
-          {summary.cards === 1 ? 'card' : 'cards'} on {summary.sheets}
-          {summary.sheets === 1 ? 'sheet' : 'sheets'} of {page.name}{summary.sizes > 1
-            ? `, across ${summary.sizes} card sizes`
-            : ''}.
-        </p>
+        {#if loaded.length > 0}
+          <p class="text-sm" role="status">
+            {summary.cards}
+            {summary.cards === 1 ? 'card' : 'cards'} on {summary.sheets}
+            {summary.sheets === 1 ? 'sheet' : 'sheets'} of {page.name}{summary.sizes > 1
+              ? `, across ${summary.sizes} card sizes`
+              : ''}.
+          </p>
+        {/if}
+        {#if boardSummary.pieces > 0 || loaded.length === 0}
+          <p class="text-sm" role="status">
+            {boardSummary.pieces}
+            {boardSummary.pieces === 1 ? 'board' : 'boards'} on {boardSummary.pages}
+            {boardSummary.pages === 1 ? 'page' : 'pages'} of {page.name}{boardSummary.blank_pages >
+            0
+              ? ', each followed by a blank page so a double-sided job leaves its back empty'
+              : ''}.
+          </p>
+        {/if}
+        {#if boardSummary.pages > 0}
+          <p class="text-sm text-muted">
+            Cut each piece out {cutMarks ? 'at its corner marks' : 'along the edge of its artwork'}
+            and tape the pieces edge to edge.
+          </p>
+        {/if}
 
         {#if summary.oversized}
           <p class="text-sm text-danger" role="alert">
             One of the selected decks has a card larger than the printable area. Lower the printer
             margin or choose a smaller size.
+          </p>
+        {/if}
+        {#if boardSummary.unplaceable}
+          <p class="text-sm text-danger" role="alert">
+            The printer margin leaves no room on this paper for a board. Lower it to print one.
           </p>
         {/if}
         {#if includeBacks && !anyBacks && summary.cards > 0}
@@ -603,12 +757,12 @@
 
         {#if generating}
           <p class="text-sm text-muted" role="status">
-            Building the sheets{progress ? ` — ${progress.drawn} of ${progress.total} cards` : ''}…
+            Building the sheets{progress ? ` — ${progress.drawn} of ${progress.total}` : ''}…
           </p>
         {/if}
 
         <div>
-          <Button disabled={generating || summary.cards === 0} onclick={generate}>
+          <Button disabled={generating || nothingToPrint} onclick={generate}>
             {generating ? 'Building…' : 'Generate PDF'}
           </Button>
         </div>

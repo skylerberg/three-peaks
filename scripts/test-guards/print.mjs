@@ -1,4 +1,5 @@
-// Packing cards onto sheets, building the PDF, and the ledger of what is on paper.
+// Packing cards onto sheets, splitting a board across them, building the PDF,
+// and the ledger of what is on paper.
 
 export const guards = [
   {
@@ -82,8 +83,8 @@ export const guards = [
     // as printed at a version that never went through the printer.
     name: 'the sheets are drawn at the versions the run is recorded with',
     file: 'src/routes/Print.svelte',
-    find: '        { decks: runDecks, options, versions: $state.snapshot(versions) },',
-    replace: '        { decks: runDecks, options },',
+    find: '        { decks: runDecks, boards: runBoards, options, versions: $state.snapshot(versions) },',
+    replace: '        { decks: runDecks, boards: runBoards, options },',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'draws every card at the version it records, backs included',
     runner: 'web',
@@ -96,7 +97,7 @@ export const guards = [
     // of the printer disagree, with nothing on the row to say which is right.
     name: 'a part-ticked deck reports itself as mixed',
     file: 'src/routes/Print.svelte',
-    find: '                    indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
+    find: '                      indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
     replace: '',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'reports the deck as mixed while only some of its cards are ticked',
@@ -125,6 +126,80 @@ export const guards = [
     replace: '        loaded = full;',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'is neither listed nor counted towards its deck',
+    runner: 'web',
+  },
+  {
+    // What the renderer did for a year. jsPDF strokes a rectangle it is given
+    // no style for, the stroke consumes the path, and the clip after it is a
+    // no-op: artwork drawn to bleed ran onto the cards either side of it, and
+    // every tile of a board would have been the whole board.
+    name: 'a clip is built as a path, so it clips',
+    file: 'src/lib/print/pdf.ts',
+    find: '  doc.rect(rect.x_mm, rect.y_mm, rect.width_mm, rect.height_mm, null);',
+    replace: '  doc.rect(rect.x_mm, rect.y_mm, rect.width_mm, rect.height_mm);',
+    tests: ['src/lib/print/pdf.test.ts'],
+    testName: 'cuts artwork wider than its card off at the card',
+    runner: 'web',
+  },
+  {
+    // A board wider than it is tall, on paper taller than it is wide. Upright
+    // it is cut down the middle for no reason, and nothing about the two pages
+    // that come out says there was a one-page answer.
+    name: 'a board is tried on its side as well as upright',
+    file: 'packages/shared/src/tiles.ts',
+    root: true,
+    find: '  const rotated = turned.columns * turned.rows < upright.columns * upright.rows;',
+    replace: '  const rotated = false;',
+    tests: ['src/tiles.test.ts'],
+    testName: 'turns a board that only fits on its side',
+    runner: 'shared',
+  },
+  {
+    // Bleed on every side reads as generosity and prints as a mistake: an outer
+    // edge has nothing beyond it, so the ink there is the neighbouring strip of
+    // a board that has no neighbour -- past the edge the cut is meant to be.
+    name: 'a tile bleeds only where another tile meets it',
+    file: 'packages/shared/src/tiles.ts',
+    root: true,
+    find: '    const before = { x: column > 0 ? bleedMm : 0, y: row > 0 ? bleedMm : 0 };',
+    replace: '    const before = { x: bleedMm, y: bleedMm };',
+    tests: ['src/tiles.test.ts'],
+    testName: 'inks past a cut only where another tile meets it',
+    runner: 'shared',
+  },
+  {
+    // Every sheet is handed the whole board and the clip is what makes each
+    // one a different piece of it. Placed at the tile's own cut instead, the
+    // board is shrunk onto every page: six pages that each look like a board.
+    name: 'a tile is its own part of the board at full size',
+    file: 'src/lib/print/pdf.ts',
+    find: '  const at = imageArgs(artworkRect(image, tile.whole, fit, turns), turns);',
+    replace: '  const at = imageArgs(artworkRect(image, tile.cut, fit, turns), turns);',
+    tests: ['src/lib/print/pdf.test.ts'],
+    testName: 'puts a different part of the board on each sheet it is spread over',
+    runner: 'web',
+  },
+  {
+    // The duplex rule the card sheets already keep, forgotten for the pages
+    // that follow them: the printer goes on turning the paper over, and the
+    // second tile of a board comes out on the back of the first.
+    name: 'a board in a double-sided document keeps its backs blank',
+    file: 'src/lib/print/pdf.ts',
+    find: '      if (blankBacks) page();\n',
+    replace: '',
+    tests: ['src/lib/print/pdf.test.ts'],
+    testName: 'leaves a blank page behind every tile when the document has backs',
+    runner: 'web',
+  },
+  {
+    // The boxes move, the count beside the button moves, and the file is the
+    // card sheets alone -- the document was never told about the board.
+    name: 'a ticked board reaches the document',
+    file: 'src/routes/Print.svelte',
+    find: '      chosenBoards[board.id] === true && board.artwork !== null',
+    replace: '      false && board.artwork !== null',
+    tests: ['src/routes/Print.svelte.test.ts'],
+    testName: 'hands a ticked board to the document at the size it is cut to',
     runner: 'web',
   },
 ];

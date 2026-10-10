@@ -2,23 +2,31 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PRINTER_MARGIN_MM,
   type PrintRun,
+  type Rect,
   type SlotBox,
+  TILE_BLEED_MM,
   backPlacement,
   cardPreset,
   pageSize,
   planGrid,
+  planTileSheets,
+  planTiles,
   slotBox,
+  tileCutMarks,
 } from '@three-peaks/shared';
 import type { jsPDF } from 'jspdf';
 import type { PrintImage } from './images.ts';
 import {
   type ImageArgs,
+  type PrintBoard,
   type PrintOptions,
-  type Rect,
   artworkRect,
   imageArgs,
+  pageTurner,
   placement,
+  renderBoards,
   renderRuns,
+  winAnsi,
 } from './pdf.ts';
 
 // A 63 x 88 mm slot, the poker cell.
@@ -209,25 +217,58 @@ interface Placed {
   page: number;
   alias: string;
   rect: Rect & { up: 'N' | 'E' | 'S' | 'W' };
+  // The clip in force when the image was drawn, which is the part of it that
+  // reaches the paper.
+  clip: Rect | null;
+}
+
+interface Recording {
+  doc: jsPDF;
+  placed: Placed[];
+  lines: { page: number; x1: number; y1: number; x2: number; y2: number }[];
+  text: { page: number; text: string; x: number; y: number }[];
+  pages: () => number;
 }
 
 // Records where every image lands and which way it points, through the same
 // model of the library as above.
-function recordingDoc(): { doc: jsPDF; placed: Placed[] } {
+function recordingDoc(): Recording {
   const placed: Placed[] = [];
+  const lines: Recording['lines'] = [];
+  const text: Recording['text'] = [];
   let page = 1;
+  let path: Rect | null = null;
+  let clip: Rect | null = null;
   const doc = {
     addPage: () => {
       page += 1;
     },
     saveGraphicsState: () => undefined,
-    restoreGraphicsState: () => undefined,
-    rect: () => undefined,
-    clip: () => undefined,
-    discardPath: () => undefined,
+    restoreGraphicsState: () => {
+      clip = null;
+    },
+    // As the library does it: a rectangle with no style is painted there and
+    // then, which leaves no path for a clip to take, and only `null` builds one.
+    rect: (x_mm: number, y_mm: number, width_mm: number, height_mm: number, style?: null) => {
+      path = style === null ? { x_mm, y_mm, width_mm, height_mm } : null;
+    },
+    clip: () => {
+      clip = path;
+    },
+    discardPath: () => {
+      path = null;
+    },
     setDrawColor: () => undefined,
     setLineWidth: () => undefined,
-    line: () => undefined,
+    setFont: () => undefined,
+    setFontSize: () => undefined,
+    setTextColor: () => undefined,
+    line: (x1: number, y1: number, x2: number, y2: number) => {
+      lines.push({ page, x1, y1, x2, y2 });
+    },
+    text: (value: string, x: number, y: number) => {
+      text.push({ page, text: value, x, y });
+    },
     addImage: (
       _data: unknown,
       _format: unknown,
@@ -243,10 +284,11 @@ function recordingDoc(): { doc: jsPDF; placed: Placed[] } {
         page,
         alias,
         rect: covered({ x_mm, y_mm, width_mm, height_mm, rotation }),
+        clip,
       });
     },
   };
-  return { doc: doc as unknown as jsPDF, placed };
+  return { doc: doc as unknown as jsPDF, placed, lines, text, pages: () => page };
 }
 
 const letter = pageSize('letter')!;
@@ -263,22 +305,26 @@ function options(overrides: Partial<PrintOptions> = {}): PrintOptions {
   };
 }
 
-// Artwork at each card's own aspect, so every placement is exactly its cell.
+// Artwork at each piece's own aspect, so every placement is exactly its cell.
+function sized(size: { width_mm: number; height_mm: number }): Promise<PrintImage> {
+  return Promise.resolve({
+    data: new Uint8Array(),
+    format: 'PNG',
+    width: size.width_mm * 6,
+    height: size.height_mm * 6,
+  });
+}
+
 const images = {
-  artwork: (_fileId: string, card: { width_mm: number; height_mm: number }): Promise<PrintImage> =>
-    Promise.resolve({
-      data: new Uint8Array(),
-      format: 'PNG',
-      width: card.width_mm * 6,
-      height: card.height_mm * 6,
-    }),
+  artwork: (_fileId: string, card: { width_mm: number; height_mm: number }) => sized(card),
+  board: (_fileId: string, size: { width_mm: number; height_mm: number }) => sized(size),
 };
 
 function run(preset: string, items: PrintRun['items']): PrintRun {
   return { card: cardPreset(preset)!, items };
 }
 
-function expectRect(actual: Rect, expected: SlotBox): void {
+function expectRect(actual: Rect, expected: Rect): void {
   expect(actual.x_mm).toBeCloseTo(expected.x_mm, 6);
   expect(actual.y_mm).toBeCloseTo(expected.y_mm, 6);
   expect(actual.width_mm).toBeCloseTo(expected.width_mm, 6);
@@ -350,6 +396,35 @@ describe('renderRuns', () => {
     for (const back of placed.filter((p) => p.page === 2)) expect(back.rect.up).toBe('S');
   });
 
+  // Artwork drawn to bleed is wider than its card, and its neighbour is drawn
+  // edge to edge with it: unclipped, the overflow is a strip of one card
+  // printed down the side of the next.
+  it('cuts artwork wider than its card off at the card', async () => {
+    const { doc, placed } = recordingDoc();
+    const bleeding = {
+      ...images,
+      artwork: () => sized({ width_mm: 69, height_mm: 88 }),
+    };
+    await renderRuns(
+      doc,
+      [run('poker', items)],
+      options({ include_backs: false }),
+      bleeding,
+      undefined
+    );
+
+    for (const [index, front] of placed.entries()) {
+      expect(front.rect.width_mm).toBeCloseTo(69, 6);
+      expectRect(front.clip!, slotBox(poker, index));
+    }
+  });
+
+  it('leaves artwork that already matches its card unclipped', async () => {
+    const { doc, placed } = recordingDoc();
+    await renderRuns(doc, [run('poker', items)], options({ include_backs: false }), images);
+    for (const front of placed) expect(front.clip).toBeNull();
+  });
+
   // One embedding per artwork, whichever way and on whichever side it is drawn.
   it('names the same artwork by one alias on every side and at every turn', async () => {
     const { doc, placed } = recordingDoc();
@@ -360,5 +435,153 @@ describe('renderRuns', () => {
       images
     );
     expect(new Set(placed.map((p) => p.alias)).size).toBe(1);
+  });
+});
+
+describe('renderBoards', () => {
+  const margin = DEFAULT_PRINTER_MARGIN_MM;
+
+  function board(name: string, width_mm: number, height_mm: number): PrintBoard {
+    return { name, file_id: name, width_mm, height_mm };
+  }
+
+  async function draw(
+    boards: PrintBoard[],
+    overrides: Partial<PrintOptions> = {},
+    blankBacks = false
+  ): Promise<Recording> {
+    const recording = recordingDoc();
+    await renderBoards(
+      recording.doc,
+      boards,
+      options({ cut_marks: true, ...overrides }),
+      images,
+      pageTurner(recording.doc),
+      blankBacks
+    );
+    return recording;
+  }
+
+  it('draws a board that fits the paper on one page, at its own size', async () => {
+    const mat = board('mat', 150, 200);
+    const { placed, pages } = await draw([mat]);
+
+    expect(pages()).toBe(1);
+    expect(placed).toHaveLength(1);
+    expectRect(placed[0].rect, {
+      x_mm: (letter.width_mm - 150) / 2,
+      y_mm: (letter.height_mm - 200) / 2,
+      width_mm: 150,
+      height_mm: 200,
+    });
+    expect(placed[0].rect.up).toBe('N');
+  });
+
+  // The whole board is handed over on every sheet and the clip is what makes
+  // each one a different piece of it. Drawn unclipped, every sheet is the same
+  // corner of the artwork running off the paper.
+  it('puts a different part of the board on each sheet it is spread over', async () => {
+    const main = board('main', 500, 400);
+    const grid = planTiles(letter, main, margin);
+    const tiles = planTileSheets(grid, letter);
+    const { placed, pages } = await draw([main]);
+
+    expect(pages()).toBe(6);
+    expect(placed.map((p) => p.page)).toEqual([1, 2, 3, 4, 5, 6]);
+    for (const [index, tile] of tiles.entries()) {
+      expectRect(placed[index].rect, tile.whole);
+      expectRect(placed[index].clip!, tile.inked);
+    }
+    expect(new Set(placed.map((p) => p.alias)).size).toBe(1);
+  });
+
+  it('draws a board the planner has turned through the turn', async () => {
+    const wide = board('wide', 420, 190);
+    const grid = planTiles(letter, wide, margin);
+    const { placed } = await draw([wide]);
+
+    expect(grid.rotated).toBe(true);
+    expect(placed).toHaveLength(2);
+    for (const [index, tile] of planTileSheets(grid, letter).entries()) {
+      expectRect(placed[index].rect, tile.whole);
+      expect(placed[index].rect.up).toBe('E');
+    }
+  });
+
+  it('marks the four cuts of every tile and says which piece it is', async () => {
+    const main = board('main', 500, 400);
+    const grid = planTiles(letter, main, margin);
+    const tiles = planTileSheets(grid, letter);
+    const { lines, text } = await draw([main]);
+
+    for (const [index, tile] of tiles.entries()) {
+      const drawn = lines.filter((line) => line.page === index + 1);
+      expect(drawn.map(({ x1, y1, x2, y2 }) => [x1, y1, x2, y2])).toEqual(
+        tileCutMarks(tile, letter).map((mark) => [mark.x1_mm, mark.y1_mm, mark.x2_mm, mark.y2_mm])
+      );
+    }
+    expect(text.map((entry) => entry.text)).toEqual([
+      'main · row 1 of 2, column 1 of 3 · 166.7 × 200 mm',
+      'main · row 1 of 2, column 2 of 3 · 166.7 × 200 mm',
+      'main · row 1 of 2, column 3 of 3 · 166.7 × 200 mm',
+      'main · row 2 of 2, column 1 of 3 · 166.7 × 200 mm',
+      'main · row 2 of 2, column 2 of 3 · 166.7 × 200 mm',
+      'main · row 2 of 2, column 3 of 3 · 166.7 × 200 mm',
+    ]);
+    // Above the tile and clear of its bleed, so it is never under the ink.
+    for (const [index, entry] of text.entries()) {
+      expect(entry.y).toBeLessThan(tiles[index].cut.y_mm - TILE_BLEED_MM);
+    }
+  });
+
+  // Without marks the edge of the ink is the only thing saying where to cut.
+  it('stops the ink at the cut when the marks are switched off', async () => {
+    const main = board('main', 500, 400);
+    const tiles = planTileSheets(planTiles(letter, main, margin), letter, 0);
+    const { placed, lines, text } = await draw([main], { cut_marks: false });
+
+    expect(lines).toEqual([]);
+    expect(text).toEqual([]);
+    for (const [index, tile] of tiles.entries()) expectRect(placed[index].clip!, tile.cut);
+  });
+
+  // The printer turns every sheet over for the cards ahead of the boards, so
+  // without a blank the second tile lands on the back of the first.
+  it('leaves a blank page behind every tile when the document has backs', async () => {
+    const main = board('main', 380, 250);
+    const { placed, pages } = await draw([main], {}, true);
+
+    expect(placed.map((p) => p.page)).toEqual([1, 3]);
+    expect(pages()).toBe(4);
+  });
+
+  it('follows the card sheets already in the document', async () => {
+    const recording = recordingDoc();
+    const turn = pageTurner(recording.doc);
+    const front = [{ front_file_id: 'a', back_file_id: 'z' }];
+    await renderRuns(recording.doc, [run('poker', front)], options(), images, undefined, turn);
+    await renderBoards(recording.doc, [board('mat', 150, 200)], options(), images, turn, true);
+
+    expect(recording.placed.map((p) => [p.alias, p.page])).toEqual([
+      ['art:a', 1],
+      ['art:z', 2],
+      ['art:mat', 3],
+    ]);
+    expect(recording.pages()).toBe(4);
+  });
+
+  it('draws nothing of a board the paper has no room for', async () => {
+    const { placed } = await draw([board('main', 500, 400)], { printer_margin_mm: 200 });
+    expect(placed).toEqual([]);
+  });
+});
+
+describe('winAnsi', () => {
+  it('keeps what the standard fonts can draw', () => {
+    expect(winAnsi('Café board · 166.7 × 250 mm')).toBe('Café board · 166.7 × 250 mm');
+  });
+
+  it('replaces what they cannot', () => {
+    expect(winAnsi('盤 — board')).toBe('? ? board');
   });
 });

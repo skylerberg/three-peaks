@@ -5,6 +5,7 @@ import {
   LoadingIndicator,
   ProgressBar,
   Rows,
+  SegmentedControl,
   Select,
   Text,
   Title,
@@ -12,6 +13,13 @@ import {
 import { auth } from '@canva/user';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiMessage, assertOk, setToken } from 'src/api';
+import {
+  BoardPlanError,
+  type BoardPlanRow,
+  describeBoardRow,
+  importBoards,
+  planBoards,
+} from 'src/boardImport';
 import { type Design, DesignError, exportPages, readDesign } from 'src/design';
 import {
   type PlanRow,
@@ -40,15 +48,26 @@ interface Project {
   name: string;
 }
 
+// What the open design is: the whole of one deck, or boards of the project.
+type Target = 'deck' | 'boards';
+
 type Stage =
   | { kind: 'checking' }
   | { kind: 'pairing'; code: string }
   | { kind: 'picking' }
   | { kind: 'working'; label: string }
   | { kind: 'planning'; design: Design; run: StartedRun }
-  | { kind: 'uploading'; done: number; total: number }
-  | { kind: 'done'; counts: RunCounts }
+  | { kind: 'planning-boards'; rows: BoardPlanRow[] }
+  | { kind: 'uploading'; done: number; total: number; noun: 'page' | 'board' }
+  | { kind: 'done'; summary: string }
   | { kind: 'error'; message: string };
+
+const WHOLE_DECK =
+  'An import is the whole deck: pages it leaves out are cards it deletes, so there ' +
+  'is no safe way to read a partial export as an update to part of a deck.';
+const EVERY_BOARD =
+  'Each page is a board, and an image that does not say which page it is cannot be ' +
+  'put on the right one.';
 
 // Every wait is a stage of its own, and every stage says what it is waiting
 // for. Canva's export dialog closes the moment the export starts, leaving this
@@ -94,6 +113,18 @@ function rowLabel(page: PlanRow): string {
   return page.title === null ? `Page ${page.page_number}` : `${page.page_number}. ${page.title}`;
 }
 
+function deckSummary(counts: RunCounts): string {
+  return (
+    `${counts.added} added, ${counts.updated} updated, ` +
+    `${counts.unchanged} unchanged, ${counts.removed} removed`
+  );
+}
+
+function boardPlanSummary(rows: BoardPlanRow[]): string {
+  const added = rows.filter((row) => row.board === null).length;
+  return `${added} new, ${rows.length - added} updated`;
+}
+
 export const App = () => {
   const [stage, setStage] = useState<Stage>({ kind: 'checking' });
   const [user, setUser] = useState<HubUser | null>(null);
@@ -104,6 +135,7 @@ export const App = () => {
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [projectId, setProjectId] = useState<string>('');
   const [deckId, setDeckId] = useState<string>('');
+  const [target, setTarget] = useState<Target>('deck');
   // The export URLs belong with the design they came from, and only the
   // confirm step uses them. A ref rather than state: nothing renders from them,
   // and re-rendering on an export would only re-run the effects below.
@@ -181,7 +213,7 @@ export const App = () => {
       const design = await readDesign();
 
       setStage({ kind: 'working', label: 'Exporting pages from Canva' });
-      const exported = await exportPages(design.pages.length);
+      const exported = await exportPages(design.pages.length, WHOLE_DECK);
       // Closing the dialog is not a failure, and the picking screen is where
       // that person was.
       if (exported === null) {
@@ -199,13 +231,58 @@ export const App = () => {
     }
   };
 
+  // The plan comes before the export here, where a deck's comes after it:
+  // everything a board's plan checks is in the design and the project, so a
+  // page nobody named is found without waiting on a render to say so.
+  const planBoardImport = async () => {
+    try {
+      setStage({ kind: 'working', label: 'Reading this design' });
+      const design = await readDesign();
+      // Every kind, not only boards: a name is unique across the project, and a
+      // page named after a box is a board the API would refuse.
+      const existing = assertOk(
+        await api.GET('/api/components', { params: { query: { project_id: projectId } } })
+      ).components;
+      const rows = planBoards(design, existing);
+
+      setStage({ kind: 'working', label: 'Exporting pages from Canva' });
+      const exported = await exportPages(design.pages.length, EVERY_BOARD);
+      if (exported === null) {
+        setStage({ kind: 'picking' });
+        return;
+      }
+
+      exportedUrls.current = exported.urls;
+      setStage({ kind: 'planning-boards', rows });
+    } catch (error) {
+      if (error instanceof DesignError || error instanceof BoardPlanError) {
+        setStage({ kind: 'error', message: error.message });
+      } else fail(error);
+    }
+  };
+
   const confirm = async (design: Design, run: StartedRun) => {
-    setStage({ kind: 'uploading', done: 0, total: design.pages.length });
+    setStage({ kind: 'uploading', done: 0, total: design.pages.length, noun: 'page' });
     try {
       const counts = await uploadPages(run.runId, design.pages, exportedUrls.current, (progress) =>
-        setStage({ kind: 'uploading', done: progress.done, total: progress.total })
+        setStage({ kind: 'uploading', done: progress.done, total: progress.total, noun: 'page' })
       );
-      setStage({ kind: 'done', counts });
+      setStage({ kind: 'done', summary: deckSummary(counts) });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const confirmBoards = async (rows: BoardPlanRow[]) => {
+    setStage({ kind: 'uploading', done: 0, total: rows.length, noun: 'board' });
+    try {
+      const counts = await importBoards(projectId, rows, exportedUrls.current, (progress) =>
+        setStage({ kind: 'uploading', done: progress.done, total: progress.total, noun: 'board' })
+      );
+      setStage({
+        kind: 'done',
+        summary: `${counts.added} added, ${counts.updated} updated, ${counts.unchanged} unchanged`,
+      });
     } catch (error) {
       fail(error);
     }
@@ -248,27 +325,48 @@ export const App = () => {
 
         {stage.kind === 'picking' && (
           <Rows spacing="1u">
-            <Text size="small">Import this design into a deck.</Text>
+            <Text size="small">Import this design as</Text>
+            <SegmentedControl
+              value={target}
+              options={[
+                { value: 'deck', label: 'A deck' },
+                { value: 'boards', label: 'Boards' },
+              ]}
+              onChange={setTarget}
+            />
             <Select
               stretch
               value={projectId}
               options={projects.map((project) => ({ value: project.id, label: project.name }))}
               onChange={setProjectId}
             />
-            <Select
-              stretch
-              value={deckId}
-              options={(decks ?? []).map((deck) => ({ value: deck.id, label: deck.name }))}
-              onChange={setDeckId}
-              disabled={decks === null || decks.length === 0}
-              placeholder={decks === null ? 'Loading decks' : 'No decks'}
-            />
-            {decks !== null && decks.length === 0 && (
+            {target === 'deck' && (
+              <Select
+                stretch
+                value={deckId}
+                options={(decks ?? []).map((deck) => ({ value: deck.id, label: deck.name }))}
+                onChange={setDeckId}
+                disabled={decks === null || decks.length === 0}
+                placeholder={decks === null ? 'Loading decks' : 'No decks'}
+              />
+            )}
+            {target === 'deck' && decks !== null && decks.length === 0 && (
               <Text size="small" tone="tertiary">
                 This project has no decks yet. Make one on the web first.
               </Text>
             )}
-            <Button variant="primary" onClick={() => void plan()} disabled={deckId === ''} stretch>
+            {target === 'boards' && (
+              <Text size="small" tone="tertiary">
+                Each page becomes a board, named after the page and cut to its size. A board that
+                already has that name is given the page as its new artwork.
+              </Text>
+            )}
+            <Button
+              variant="primary"
+              onClick={() => void (target === 'deck' ? plan() : planBoardImport())}
+              disabled={target === 'deck' ? deckId === '' : projectId === ''}
+              stretch
+            >
               Export and check
             </Button>
             {user !== null && (
@@ -317,6 +415,30 @@ export const App = () => {
           </Rows>
         )}
 
+        {stage.kind === 'planning-boards' && (
+          <Rows spacing="1u">
+            <Text size="small">{boardPlanSummary(stage.rows)}</Text>
+            {/* The size is on every row because it is read off the page rather
+                than typed by anybody, and this is where a wrong one is caught
+                before it is what the board prints at. */}
+            <Rows spacing="0.5u">
+              {stage.rows.map((row) => (
+                <Text key={row.pageNumber} size="small" tone="tertiary">
+                  {`${row.pageNumber}. ${row.name} — ${describeBoardRow(row)}`}
+                </Text>
+              ))}
+            </Rows>
+            <Button variant="primary" onClick={() => void confirmBoards(stage.rows)} stretch>
+              {`Import ${stage.rows.length} ${stage.rows.length === 1 ? 'board' : 'boards'}`}
+            </Button>
+            {/* Nothing to discard: no run was opened, so there is nothing on
+                the server that this plan left behind. */}
+            <Button variant="secondary" onClick={() => setStage({ kind: 'picking' })} stretch>
+              Cancel
+            </Button>
+          </Rows>
+        )}
+
         {stage.kind === 'uploading' && (
           <Rows spacing="1u">
             {/* The last page posted leaves the finish call still to run, and it
@@ -325,22 +447,19 @@ export const App = () => {
               label={
                 stage.done === stage.total
                   ? 'Finishing the import'
-                  : `Uploading page ${stage.done + 1} of ${stage.total}`
+                  : `Uploading ${stage.noun} ${stage.done + 1} of ${stage.total}`
               }
             />
             <ProgressBar
               value={stage.total === 0 ? 0 : Math.round((stage.done / stage.total) * 100)}
-              ariaLabel="Pages uploaded"
+              ariaLabel={stage.noun === 'page' ? 'Pages uploaded' : 'Boards uploaded'}
             />
           </Rows>
         )}
 
         {stage.kind === 'done' && (
           <Rows spacing="1u">
-            <Text size="small">
-              {`${stage.counts.added} added, ${stage.counts.updated} updated, ` +
-                `${stage.counts.unchanged} unchanged, ${stage.counts.removed} removed`}
-            </Text>
+            <Text size="small">{stage.summary}</Text>
             <Button variant="primary" onClick={() => setStage({ kind: 'picking' })} stretch>
               Done
             </Button>

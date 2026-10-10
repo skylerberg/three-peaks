@@ -45,13 +45,14 @@ api.use({
 // The page route takes the image itself as the body, with its metadata in the
 // query string, so it cannot go through the generated client -- which types a
 // raw body as `never`. The token is attached by hand here for the same reason:
-// the middleware above only runs for calls the client makes.
+// the middleware above only runs for calls the client makes. The response is
+// handed back unread, for the one caller that wants what it says.
 export async function postBytes(
   path: string,
   query: URLSearchParams,
   body: Blob,
   contentType: string
-): Promise<void> {
+): Promise<Response> {
   const response = await fetch(`${BACKEND_HOST}${path}?${query.toString()}`, {
     method: 'POST',
     headers: {
@@ -61,7 +62,7 @@ export async function postBytes(
     body,
   });
 
-  if (response.ok) return;
+  if (response.ok) return response;
   let message = `Request failed with ${response.status}`;
   try {
     const parsed = (await response.json()) as ErrorBody;

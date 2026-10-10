@@ -256,6 +256,14 @@
         {#if canEdit}
           <Button variant="secondary" onclick={rename} disabled={renaming}>Rename</Button>
         {/if}
+        {#if component.kind === 'board' && artworkFile?.deleted_at === null}
+          <a
+            class="focus-ring rounded px-3 py-2 text-sm underline"
+            href="/projects/{projectId}/print?board={component.id}"
+          >
+            Print
+          </a>
+        {/if}
         <a
           class="focus-ring rounded px-3 py-2 text-sm underline"
           href="/projects/{projectId}/components/{component.kind}"

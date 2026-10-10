@@ -1,4 +1,5 @@
-// Pushing a Canva design into a deck, and reading the history of one back.
+// Pushing a Canva design into a deck or onto boards, and reading the history
+// of a deck back.
 
 export const guards = [
   {
@@ -217,5 +218,28 @@ export const guards = [
     tests: ['src/routes/DeckAsOf.svelte.test.ts'],
     testName: 'opens a card at the version that import left, not at today\u2019s artwork',
     runner: 'web',
+  },
+  {
+    // A second upload looks like the obvious way to replace artwork. The
+    // component's one artwork slot refuses it with a 409, and the way round
+    // that -- a new component -- loses every setting somebody dialled in.
+    name: 'a board it already has is given the page as a new version',
+    runner: 'canva',
+    file: 'src/boardImport.ts',
+    find: '    `/api/files/${artwork.id}/versions`,',
+    replace: '    `/api/files/upload`,',
+    tests: ['src/boardImport.test.ts'],
+    testName: 'gives a board it already has the page as a new version',
+  },
+  {
+    // The plan is rows for the pages that became boards, and the export is one
+    // image per page of the design. The two line up only by page number.
+    name: 'each page of a board import lands on its own board',
+    runner: 'canva',
+    file: 'src/boardImport.ts',
+    find: '    const url = urls[row.pageNumber - 1];',
+    replace: '    const url = urls[0];',
+    tests: ['src/boardImport.test.ts'],
+    testName: 'puts each page’s own export on its board',
   },
 ];

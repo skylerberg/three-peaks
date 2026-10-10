@@ -240,6 +240,14 @@
                 Waiting for {component.missing_roles.join(' and ')}
               </p>
             {/if}
+            {#if kind === 'board' && artwork?.deleted_at === null && !inert}
+              <a
+                class="focus-ring self-start rounded py-2 text-sm underline"
+                href="/projects/{projectId}/print?board={component.id}"
+              >
+                Print
+              </a>
+            {/if}
             {#if canEdit && !inert}
               <div class="flex items-center justify-between gap-2">
                 <Button variant="secondary" onclick={() => remove(component.id, component.name)}>
