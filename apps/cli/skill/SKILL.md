@@ -13,7 +13,7 @@ agent-facing surface onto the same API, so anything you change is in front of a
 person the moment you change it.
 
 `threepeaks` is linked into the global bin directory from
-`~/Code/three-peaks-hub/apps/cli`, and talks to production by default.
+`~/Code/three-peaks/apps/cli`, and talks to production by default.
 
 ## Before anything else
 

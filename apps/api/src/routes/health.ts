@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import type { Context } from 'hono';
+import { HEALTH_NAME } from '@three-peaks/shared';
 import { buildInfo } from '../config/buildInfo.ts';
 import { env } from '../config/env.ts';
 import type { Connection, Variables } from '../types/index.ts';
@@ -18,7 +19,7 @@ import type { Connection, Variables } from '../types/index.ts';
 export async function healthCheck(c: Context<{ Variables: Variables }>) {
   const build = buildInfo();
   const body = {
-    name: 'three-peaks',
+    name: HEALTH_NAME,
     environment: env.environment,
     branch: build.branch,
     commit: build.commit,

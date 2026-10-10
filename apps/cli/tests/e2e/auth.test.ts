@@ -235,7 +235,7 @@ describe('status', () => {
       token_source: string;
     }>();
     expect(report.api_url).toBe(API_URL);
-    expect(report.health).toMatchObject({ status: 'ok', name: 'three-peaks-hub' });
+    expect(report.health).toMatchObject({ status: 'ok', name: 'three-peaks' });
     expect(report.user?.email).toBe(user.email);
     expect(report.token_source).toBe('stored');
   });
