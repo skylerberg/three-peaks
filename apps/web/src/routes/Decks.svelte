@@ -102,9 +102,8 @@
   }
 
   async function remove(deckId: string, name: string) {
-    // Blunter than the file dialog on purpose: there is no Deleted screen to
-    // take this back from.
-    if (!confirm(`Delete the deck "${name}"? This cannot be undone. The images stay.`)) return;
+    if (!confirm(`Delete the deck "${name}"? Its cards go with it, and Deleted can put it back.`))
+      return;
     try {
       await decks.remove(deckId);
     } catch (caught) {
