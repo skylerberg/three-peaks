@@ -518,7 +518,9 @@ A **deck** is an ordered list of card images with a copy count each, one card
 size, and one image on the back. The order is `deck_card.position`, dragged into
 place on the deck screen and replaced wholesale by every save. `/projects/:projectId/print` turns any selection
 of decks into a US Letter PDF: cards packed as tightly as the paper allows, with
-a backing page behind every sheet.
+a backing page behind every sheet. The same screen prints a board, which is the
+one thing on it that can be larger than the paper — see "A board on paper"
+below.
 
 **Card sizes are Panda Game Manufacturing's**, in
 `packages/shared/src/cards.ts`, and both features that size a card read that one
@@ -608,11 +610,65 @@ pays for and `apps/api` gains no PDF dependency.
 - **Only JPEG is passed through untouched.** jsPDF decodes and re-encodes every
   PNG anyway, and its decoder refuses files a browser renders happily, so PNGs go
   through the canvas that already decoded them.
+- **A clip is a rectangle built with a style of `null`.** Left out, jsPDF
+  strokes the rectangle, the stroke consumes the path, and the `clip()` after it
+  intersects with nothing — every viewer then draws the artwork whole. The
+  renderer wrote exactly that for as long as it has existed, and nothing saw it
+  because every fixture was drawn at its card's own aspect and so was never
+  clipped at all. `clipTo` in `apps/web/src/lib/print/pdf.ts` is the one place a
+  clip is made, and `check:print` reads clips back the way the format defines
+  them rather than matching `re … W` as a phrase, which is what a stroked one
+  also looks like.
 - jsPDF reaches for `html2canvas`, `canvg` and `dompurify` from methods this app
   never calls. They are refused by `ignoredOptionalDependencies` and aliased in
   `apps/web/vite.config.ts` to a stub that explains itself — a dynamic import is
   still a specifier Vite must resolve, so without the alias the build fails on a
   branch that cannot run.
+
+## A board on paper
+
+A board is a component, and the print screen lists the project's boards under
+its decks. One that fits the paper is a page; one that does not is split across
+as many as it needs, to be cut out and taped together.
+`packages/shared/src/tiles.ts` is the whole of that layout and is as pure as
+`print.ts` beside it.
+
+- **The pieces are equal**, rather than full sheets and a remainder. A 420 mm
+  board is three of 140 mm instead of two of 193 and a sliver that has to be
+  taped down both its long edges.
+- **A board is tried on its side too**, and for the reason a card is: every page
+  stays portrait, and the turn is drawn in the content stream by the same
+  `imageArgs`.
+- **Each sheet is handed the whole board and clipped to its own piece of it.**
+  That is what makes one embedding serve every sheet, and it is why a clip that
+  does nothing is not a cosmetic bug here: every sheet would be the same
+  artwork running off the paper.
+- **A piece bleeds 2 mm past each cut another piece meets**, so a blade a hair
+  outside the line lands on ink instead of leaving a white seam down the taped
+  board. An outer edge has nothing beyond it and gets none. The corner marks
+  start where the bleed stops, and the room for both is taken out of the paper
+  before the board is divided — which is why a tile is never as large as the
+  printable area.
+- **The bleed goes with the marks.** With "Cut marks" off, the edge of the ink
+  is the only thing saying where to cut, so it stops at the cut.
+- **The label is in the margin and is cut away.** It is for the stack of sheets
+  before the knife comes out: which piece this is, and how big it should
+  measure — a print dialog left on "fit to page" shrinks every piece, and a
+  ruler against that number is the only warning there is.
+- **A board is single-sided, and a document with card backs is not.** Behind
+  card sheets with backing pages every tile gets a blank page after it, or the
+  printer puts the second tile on the back of the first. `tilesWantBlankBacks`
+  is the rule and both the screen's count and the renderer read it. A document
+  of boards alone has no backs and gets none.
+- **A board's artwork is re-encoded as JPEG**, where a card's is kept as PNG.
+  jsPDF holds a PNG decoded while it rewrites it, and a board's worth of pixels
+  is a tab's worth of memory; a JPEG is embedded as the stream it already is.
+
+Boards open unticked, and are no part of the ledger below: nothing records that
+one was printed, so "only what has changed" does not reach them and a ticked
+board prints every time. `?board=` on the print path is the link from a board's
+own screen, and it opens on that board with every deck cleared — a board and a
+deck are different jobs on different paper.
 
 ## Printing only what has changed
 
@@ -816,8 +872,8 @@ history screens a finished run to draw.
 # The Canva app
 
 `apps/canva` runs inside Canva's own editor and pushes the open design into a
-deck, which is the only way anything is imported: nothing is downloaded and
-nothing is uploaded by hand. It is React and
+deck or onto boards, which is the only way anything is imported: nothing is
+downloaded and nothing is uploaded by hand. It is React and
 Canva's toolchain — the only package here that is neither Svelte nor Vite — and
 it ships by **uploading a bundle to the Developer Portal**, touching no image,
 no manifest and no Terraform. `pnpm canva:release` is the whole of a release:
@@ -879,6 +935,35 @@ wrong artwork on those, the rest tombstoned, every step looking normal.
 Two SDK traps, both written beside the call that hits them: `zipped` belongs on
 the file type and is silently ignored on the request, and it is declared
 optional but `{ type: 'png' }` alone is refused at runtime.
+
+**A design can be boards instead of a deck**, and that half is
+`apps/canva/src/boardImport.ts`. Every page becomes a board named after it and
+cut to the page's own size, which is the whole reason it exists: a card's size
+is one of a list and a board's is whatever somebody drew. Four things about it
+are deliberate, and each is the opposite of what a deck does:
+
+- **A page is matched on its name and never on its id.** The id is the deck
+  importer's strongest tier and would be the wrong one here: a page id survives
+  a duplicate of the whole design, and duplicating a design is how a second
+  board is started from the first. Scoped to one deck that is harmless. Across
+  a project it would put the copy's artwork on the original.
+- **Nothing is removed.** A deck is the whole of its design; a project's boards
+  are not the whole of any one, so a board this design does not name is left
+  alone.
+- **There is no run.** It drives the routes boards already have — create, upload
+  into the artwork slot, append a version — so each board is complete as its own
+  upload lands, and importing again is how a failed one is resumed. A board
+  that already has artwork gets the page as its next version, never a second
+  file: the slot is unique per component, tombstones included, which is also why
+  deleted artwork is restored before it is versioned.
+- **The plan comes before the export.** Everything it checks is in the design
+  and the project, so an untitled page or a name a box already has is refused
+  without waiting on a render.
+
+The size is the page's pixels at 96 to the inch, which is how Canva's own
+resize dialog converts and was **not** measured through the SDK the way the page
+ids were. The plan prints every board's millimetres before anything is uploaded
+for that reason, and a re-import resizes a board to its page and says so.
 
 **The bytes never touch `apps/api`.** Canva's documentation says to download
 export blobs from a backend; measured against the real thing the iframe can

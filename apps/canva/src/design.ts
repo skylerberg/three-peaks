@@ -4,6 +4,9 @@ export interface DesignPage {
   pageNumber: number;
   pageId: string;
   title: string | null;
+  // In Canva's own pixels, and null for a page that has none -- a whiteboard
+  // or a doc. A deck never reads it; a board is sized from it.
+  size: { width: number; height: number } | null;
 }
 
 export interface Design {
@@ -15,7 +18,7 @@ export class DesignError extends Error {}
 
 /**
  * Every page of the open design, in order, with the id and title the importer
- * matches on.
+ * matches on and the size a board is cut to.
  *
  * Two APIs, because neither answers on its own. `openDesign` gives the order,
  * but a `PageRef` is a reference and carries no id at all -- the id is on the
@@ -31,12 +34,19 @@ export async function readDesign(): Promise<Design> {
   const meta = await getDesignMetadata();
 
   const titleById = new Map<string, string | null>();
+  const sizeById = new Map<string, DesignPage['size']>();
   for (const page of meta.pageMetadata) {
     if (page.type !== 'absolute' || page.id === undefined) continue;
     // Canva returns an empty title for a page nobody named, and an empty title
     // is not a title -- the importer keys those by page number instead.
     const title = page.title ?? '';
     titleById.set(page.id, title.trim().length === 0 ? null : title);
+    // Per page rather than the design's default: one design can hold pages of
+    // different sizes, and a player mat beside the main board is exactly that.
+    sizeById.set(
+      page.id,
+      page.dimensions ? { width: page.dimensions.width, height: page.dimensions.height } : null
+    );
   }
 
   const ids: string[] = [];
@@ -61,6 +71,7 @@ export async function readDesign(): Promise<Design> {
       pageNumber: index + 1,
       pageId,
       title: titleById.get(pageId) ?? null,
+      size: sizeById.get(pageId) ?? null,
     })),
   };
 }
@@ -80,8 +91,13 @@ export interface ExportedPages {
  * is the only way to ask for the default. Neither is guessable from the docs.
  *
  * Returns null where the person closed the dialog, which is not a failure.
+ * `whyEveryPage` is the caller's own reason a part of the design will not do,
+ * said after the refusal: a deck's and a set of boards' are different.
  */
-export async function exportPages(pageCount: number): Promise<ExportedPages | null> {
+export async function exportPages(
+  pageCount: number,
+  whyEveryPage: string
+): Promise<ExportedPages | null> {
   const result = await requestExport({
     acceptedFileTypes: [{ type: 'png', zipped: 'never' }],
   });
@@ -95,9 +111,7 @@ export async function exportPages(pageCount: number): Promise<ExportedPages | nu
   if (result.exportBlobs.length !== pageCount) {
     throw new DesignError(
       `That export has ${result.exportBlobs.length} of this design's ${pageCount} pages, ` +
-        'and Canva does not say which ones. Choose every page in the export dialog.\n\n' +
-        'An import is the whole deck: pages it leaves out are cards it deletes, so there ' +
-        'is no safe way to read a partial export as an update to part of a deck.'
+        `and Canva does not say which ones. Choose every page in the export dialog.\n\n${whyEveryPage}`
     );
   }
 

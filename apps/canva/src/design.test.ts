@@ -19,6 +19,7 @@ const { DesignError, exportPages, readDesign } = await import('./design.ts');
 interface StubPage {
   id: string;
   title?: string;
+  dimensions?: { width: number; height: number };
 }
 
 function stubDesign(pages: StubPage[], designTitle = 'Colori Cards'): void {
@@ -27,9 +28,12 @@ function stubDesign(pages: StubPage[], designTitle = 'Colori Cards'): void {
     // Deliberately reversed. The documentation says this order is not
     // guaranteed, so a reader that trusts it would pass here and shuffle a real
     // deck the day Canva changes its mind.
-    pageMetadata: [...pages]
-      .reverse()
-      .map((page) => ({ type: 'absolute', id: page.id, title: page.title ?? '' })),
+    pageMetadata: [...pages].reverse().map((page) => ({
+      type: 'absolute',
+      id: page.id,
+      title: page.title ?? '',
+      dimensions: page.dimensions,
+    })),
   });
 
   openDesign.mockImplementation(
@@ -53,6 +57,8 @@ function stubDesign(pages: StubPage[], designTitle = 'Colori Cards'): void {
 
 let openPageCalls = 0;
 
+const WHY = 'An import is the whole deck.';
+
 beforeEach(() => {
   openPageCalls = 0;
   vi.clearAllMocks();
@@ -70,9 +76,26 @@ describe('reading the design', () => {
 
     expect(design.title).toBe('Colori Cards');
     expect(design.pages).toEqual([
-      { pageNumber: 1, pageId: 'PBX5gb6VMv0YSZfR', title: null },
-      { pageNumber: 2, pageId: 'PBMBBSMWY0qb2McD', title: 'Template' },
-      { pageNumber: 3, pageId: 'PB8Svy3dV0HR4mdB', title: 'Back' },
+      { pageNumber: 1, pageId: 'PBX5gb6VMv0YSZfR', title: null, size: null },
+      { pageNumber: 2, pageId: 'PBMBBSMWY0qb2McD', title: 'Template', size: null },
+      { pageNumber: 3, pageId: 'PB8Svy3dV0HR4mdB', title: 'Back', size: null },
+    ]);
+  });
+
+  // Joined by id like the titles, and for the same reason: the metadata's order
+  // is the one thing the documentation will not promise.
+  it('reads each page’s own size, joined by id', async () => {
+    stubDesign([
+      { id: 'PBmain', title: 'Main board', dimensions: { width: 1890, height: 1890 } },
+      { id: 'PBmat', title: 'Player mat', dimensions: { width: 1134, height: 756 } },
+      { id: 'PBboard', title: 'Whiteboard' },
+    ]);
+
+    const design = await readDesign();
+    expect(design.pages.map((page) => page.size)).toEqual([
+      { width: 1890, height: 1890 },
+      { width: 1134, height: 756 },
+      null,
     ]);
   });
 
@@ -102,7 +125,7 @@ describe('exporting the pages', () => {
       exportBlobs: [{ url: 'a' }, { url: 'b' }],
     });
 
-    await exportPages(2);
+    await exportPages(2, WHY);
 
     // `zipped` belongs on the file type. Passed on the request it is silently
     // ignored, and a multi-page design comes back as one ZIP under the default.
@@ -121,17 +144,18 @@ describe('exporting the pages', () => {
     // bare `{ url }` with nothing saying which page it holds. Lining two blobs
     // up against 47 pages by position would put the wrong artwork on the first
     // two cards and tombstone the other 45, and it would look entirely normal.
-    await expect(exportPages(47)).rejects.toThrow(DesignError);
+    await expect(exportPages(47, WHY)).rejects.toThrow(DesignError);
     // The message says why, not just what. Canva offers no way to ask for
     // specific pages and no way to learn which ones came back, so "export
     // everything" is a constraint the person has to understand rather than a
     // rule they have tripped over.
-    await expect(exportPages(47)).rejects.toThrow(/2 of this design's 47 pages/u);
-    await expect(exportPages(47)).rejects.toThrow(/does not say which ones/u);
+    await expect(exportPages(47, WHY)).rejects.toThrow(/2 of this design's 47 pages/u);
+    await expect(exportPages(47, WHY)).rejects.toThrow(/does not say which ones/u);
+    await expect(exportPages(47, WHY)).rejects.toThrow(WHY);
   });
 
   it('answers null when the dialog is closed, which is not a failure', async () => {
     requestExport.mockResolvedValue({ status: 'aborted' });
-    expect(await exportPages(3)).toBeNull();
+    expect(await exportPages(3, WHY)).toBeNull();
   });
 });

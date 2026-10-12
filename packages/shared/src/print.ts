@@ -106,13 +106,17 @@ export function planGrid(page: PageSize, card: CardSize, marginMm: number): Grid
   };
 }
 
-export interface SlotBox {
-  row: number;
-  column: number;
+// A rectangle on the page, measured from its top-left corner.
+export interface Rect {
   x_mm: number;
   y_mm: number;
   width_mm: number;
   height_mm: number;
+}
+
+export interface SlotBox extends Rect {
+  row: number;
+  column: number;
 }
 
 // Slots run left to right, top to bottom, which is also the order a person
@@ -259,23 +263,30 @@ export interface Segment {
 }
 
 /**
- * Trim guides for every cut, drawn in the paper outside the block of cards.
+ * Trim guides for a block of cuts, drawn in the paper outside it.
  *
- * They are marks in the margin rather than lines across the sheet, because a
- * line across the sheet is a line printed on the cards. Each is clipped to the
- * room actually available, and one with no room is dropped rather than drawn
- * where the printer will not reach.
+ * `xs` and `ys` are where the vertical and the horizontal cuts fall, outermost
+ * first and last. They are marks in the margin rather than lines across the
+ * sheet, because a line across the sheet is a line printed on the artwork. Each
+ * starts `offsetMm` clear of the block and is clipped to the room actually
+ * available, measured against the paper on each side rather than assumed
+ * symmetric; one with no room is dropped rather than drawn where the printer
+ * will not reach.
  */
-export function cutMarks(grid: Grid, page: PageSize, lengthMm = 3): Segment[] {
-  if (grid.per_sheet === 0) return [];
+export function marksAround(
+  xs: readonly number[],
+  ys: readonly number[],
+  page: PageSize,
+  lengthMm: number,
+  offsetMm = 0
+): Segment[] {
+  if (xs.length === 0 || ys.length === 0) return [];
 
-  const left = grid.origin_x_mm;
-  const top = grid.origin_y_mm;
-  const right = left + grid.columns * grid.cell_width_mm;
-  const bottom = top + grid.rows * grid.cell_height_mm;
+  const left = xs[0] - offsetMm;
+  const right = xs[xs.length - 1] + offsetMm;
+  const top = ys[0] - offsetMm;
+  const bottom = ys[ys.length - 1] + offsetMm;
 
-  // Measured against the paper on each side rather than assumed symmetric, so a
-  // mark is clipped by the room it actually has.
   const above = Math.min(lengthMm, top);
   const below = Math.min(lengthMm, page.height_mm - bottom);
   const toLeft = Math.min(lengthMm, left);
@@ -283,19 +294,32 @@ export function cutMarks(grid: Grid, page: PageSize, lengthMm = 3): Segment[] {
 
   const segments: Segment[] = [];
 
-  for (let column = 0; column <= grid.columns; column += 1) {
-    const x = left + column * grid.cell_width_mm;
+  for (const x of xs) {
     if (above > 0) segments.push({ x1_mm: x, y1_mm: top - above, x2_mm: x, y2_mm: top });
     if (below > 0) segments.push({ x1_mm: x, y1_mm: bottom, x2_mm: x, y2_mm: bottom + below });
   }
 
-  for (let row = 0; row <= grid.rows; row += 1) {
-    const y = top + row * grid.cell_height_mm;
+  for (const y of ys) {
     if (toLeft > 0) segments.push({ x1_mm: left - toLeft, y1_mm: y, x2_mm: left, y2_mm: y });
     if (toRight > 0) segments.push({ x1_mm: right, y1_mm: y, x2_mm: right + toRight, y2_mm: y });
   }
 
   return segments;
+}
+
+// Every cut of a sheet of cards: one mark at each end of each grid line.
+export function cutMarks(grid: Grid, page: PageSize, lengthMm = 3): Segment[] {
+  if (grid.per_sheet === 0) return [];
+
+  const xs = Array.from(
+    { length: grid.columns + 1 },
+    (_unused, column) => grid.origin_x_mm + column * grid.cell_width_mm
+  );
+  const ys = Array.from(
+    { length: grid.rows + 1 },
+    (_unused, row) => grid.origin_y_mm + row * grid.cell_height_mm
+  );
+  return marksAround(xs, ys, page, lengthMm);
 }
 
 // What a piece of artwork actually resolves to once it is printed at this size.

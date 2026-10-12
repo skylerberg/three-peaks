@@ -9,4 +9,5 @@ export * from './print.ts';
 export * from './printRuns.ts';
 export * from './roles.ts';
 export * from './scenes.ts';
+export * from './tiles.ts';
 export * from './uploads.ts';

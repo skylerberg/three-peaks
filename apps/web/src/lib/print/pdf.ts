@@ -4,11 +4,18 @@ import {
   type Grid,
   type PageSize,
   type PrintRun,
-  type SlotBox,
+  type Rect,
+  TILE_BLEED_MM,
+  type Tile,
+  type TileSize,
   backPlacement,
   cutMarks,
   planSheets,
+  planTileSheets,
+  planTiles,
   slotBox,
+  tileCutMarks,
+  tileLabel,
 } from '@three-peaks/shared';
 import type { jsPDF } from 'jspdf';
 import type { PrintImage } from './images.ts';
@@ -29,24 +36,23 @@ export interface PrintOptions {
 // decoded once.
 export interface ImageSource {
   artwork(fileId: string, card: CardSize): Promise<PrintImage>;
+  board(fileId: string, size: TileSize): Promise<PrintImage>;
 }
 
 // Clockwise quarter turns a piece of artwork is drawn through on the page. One
 // is the grid laying the card on its side; two more put a back upside down.
 export type QuarterTurns = 0 | 1 | 2 | 3;
 
-export interface Rect {
-  x_mm: number;
-  y_mm: number;
-  width_mm: number;
-  height_mm: number;
-}
-
 const CUT_MARK_LENGTH_MM = 3;
 const CUT_MARK_WIDTH_MM = 0.15;
 // Mid grey. Black trim guides are legible but also the first thing a hurried cut
 // leaves a fragment of on the card.
 const CUT_MARK_GREY = 150;
+
+const TILE_LABEL_PT = 6;
+// Clear of the corner mark it starts beside, and of the bleed it sits above.
+const TILE_LABEL_INSET_MM = 1.5;
+const TILE_LABEL_LIFT_MM = 0.8;
 
 // Where a piece of artwork actually lands inside its slot.
 //
@@ -56,7 +62,7 @@ const CUT_MARK_GREY = 150;
 // overflow be clipped away, which is what artwork drawn to bleed expects.
 export function placement(
   image: { width: number; height: number },
-  box: SlotBox,
+  box: Rect,
   fit: ArtworkFit
 ): Rect {
   const aspect = image.width / image.height;
@@ -84,7 +90,7 @@ export function placement(
  */
 export function artworkRect(
   image: { width: number; height: number },
-  box: SlotBox,
+  box: Rect,
   fit: ArtworkFit,
   turns: QuarterTurns
 ): Rect {
@@ -142,10 +148,20 @@ function upsideDown(turns: QuarterTurns): QuarterTurns {
   return ((turns + 2) % 4) as QuarterTurns;
 }
 
+// Inside a saved graphics state, which is what ends it. The `null` is the whole
+// of this: a rectangle given no style is stroked, the stroke consumes the path,
+// and the clip that follows then has nothing to intersect with -- so the
+// artwork is drawn whole, with a hairline box where its edge was meant to be.
+function clipTo(doc: jsPDF, rect: Rect): void {
+  doc.rect(rect.x_mm, rect.y_mm, rect.width_mm, rect.height_mm, null);
+  doc.clip();
+  doc.discardPath();
+}
+
 function drawArtwork(
   doc: jsPDF,
   image: PrintImage,
-  box: SlotBox,
+  box: Rect,
   fit: ArtworkFit,
   alias: string,
   turns: QuarterTurns
@@ -158,9 +174,7 @@ function drawArtwork(
   // avoid. The clip costs four numbers in the content stream.
   if (overflows) {
     doc.saveGraphicsState();
-    doc.rect(box.x_mm, box.y_mm, box.width_mm, box.height_mm);
-    doc.clip();
-    doc.discardPath();
+    clipTo(doc, box);
   }
 
   // The alias is what stops the same artwork being embedded once per copy. With
@@ -196,6 +210,17 @@ export interface RenderProgress {
   total: number;
 }
 
+// jsPDF opens a document with one page already in it, so the first sheet of
+// whatever is drawn first takes that one and every later sheet adds its own.
+// One of these is shared by every pass over a document for that reason.
+export function pageTurner(doc: jsPDF): () => void {
+  let started = false;
+  return () => {
+    if (started) doc.addPage();
+    started = true;
+  };
+}
+
 /**
  * Draws every run into one document and returns the bytes.
  *
@@ -213,7 +238,8 @@ export async function renderRuns(
   runs: readonly PrintRun[],
   options: PrintOptions,
   images: ImageSource,
-  onProgress?: (progress: RenderProgress) => void
+  onProgress?: (progress: RenderProgress) => void,
+  page: () => void = pageTurner(doc)
 ): Promise<void> {
   const plans = runs.map((run) => ({
     run,
@@ -225,12 +251,6 @@ export async function renderRuns(
     0
   );
   let drawn = 0;
-  let started = false;
-
-  const page = () => {
-    if (started) doc.addPage();
-    started = true;
-  };
 
   for (const { run, plan } of plans) {
     if (plan.grid.per_sheet === 0) continue;
@@ -266,6 +286,116 @@ export async function renderRuns(
         );
       }
       if (options.cut_marks) drawCutMarks(doc, options, plan.grid);
+    }
+  }
+}
+
+// One board: its artwork, and the size it is cut to.
+export interface PrintBoard extends TileSize {
+  name: string;
+  file_id: string;
+}
+
+// The standard fonts are WinAnsi and nothing else, and jsPDF writes a character
+// outside it as two bytes of UTF-16 that the font then draws as two unrelated
+// glyphs. A name is somebody's to choose, so what cannot be drawn is replaced
+// rather than left to come out as noise in the margin of every sheet.
+export function winAnsi(text: string): string {
+  return text.replace(/[^\x20-\x7e\xa0-\xff]/g, '?');
+}
+
+function drawTile(
+  doc: jsPDF,
+  image: PrintImage,
+  tile: Tile,
+  fit: ArtworkFit,
+  alias: string,
+  turns: QuarterTurns
+): void {
+  // Always clipped: what is handed to addImage is the whole board, placed so
+  // that this tile's part of it falls on the sheet. That is what lets one
+  // embedding serve every sheet the board is spread over.
+  doc.saveGraphicsState();
+  clipTo(doc, tile.inked);
+
+  const at = imageArgs(artworkRect(image, tile.whole, fit, turns), turns);
+  doc.addImage(
+    image.data,
+    image.format,
+    at.x_mm,
+    at.y_mm,
+    at.width_mm,
+    at.height_mm,
+    alias,
+    'FAST',
+    at.rotation
+  );
+
+  doc.restoreGraphicsState();
+}
+
+function drawTileGuides(
+  doc: jsPDF,
+  options: PrintOptions,
+  tile: Tile,
+  label: string,
+  bleedMm: number
+): void {
+  doc.setDrawColor(CUT_MARK_GREY);
+  doc.setLineWidth(CUT_MARK_WIDTH_MM);
+  for (const mark of tileCutMarks(tile, options.page, bleedMm)) {
+    doc.line(mark.x1_mm, mark.y1_mm, mark.x2_mm, mark.y2_mm);
+  }
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(TILE_LABEL_PT);
+  doc.setTextColor(CUT_MARK_GREY);
+  doc.text(
+    winAnsi(label),
+    tile.cut.x_mm + TILE_LABEL_INSET_MM,
+    tile.cut.y_mm - bleedMm - TILE_LABEL_LIFT_MM
+  );
+}
+
+/**
+ * Draws every board, one tile to a sheet, after whatever is already in the
+ * document.
+ *
+ * A board is single-sided. `blankBacks` puts an empty page behind each tile,
+ * which is what keeps them that way in a document a printer is turning over for
+ * the card sheets ahead of them -- see `tilesWantBlankBacks`.
+ *
+ * The bleed goes with the marks. Without marks the edge of the ink is the only
+ * thing saying where to cut, so ink that ran past the line would move it.
+ */
+export async function renderBoards(
+  doc: jsPDF,
+  boards: readonly PrintBoard[],
+  options: PrintOptions,
+  images: ImageSource,
+  page: () => void,
+  blankBacks: boolean,
+  onProgress?: (drawn: number) => void
+): Promise<void> {
+  const bleed = options.cut_marks ? TILE_BLEED_MM : 0;
+  let drawn = 0;
+
+  for (const board of boards) {
+    const grid = planTiles(options.page, board, options.printer_margin_mm);
+    if (grid.pages === 0) continue;
+    const turn: QuarterTurns = grid.rotated ? 1 : 0;
+    const image = await images.board(board.file_id, board);
+
+    for (const tile of planTileSheets(grid, options.page, bleed)) {
+      page();
+      drawTile(doc, image, tile, options.fit, `art:${board.file_id}`, turn);
+      if (options.cut_marks) {
+        drawTileGuides(doc, options, tile, tileLabel(board.name, grid, tile), bleed);
+      }
+      drawn += 1;
+      onProgress?.(drawn);
+
+      if (blankBacks) page();
     }
   }
 }

@@ -136,7 +136,11 @@
         runId={route.params.runId}
       />
     {:else if route.name === 'print'}
-      <Print projectId={route.params.projectId} deckId={route.params.deckId} />
+      <Print
+        projectId={route.params.projectId}
+        deckId={route.params.deckId}
+        boardId={route.params.boardId}
+      />
     {:else if route.name === 'scene'}
       <SceneExport projectId={route.params.projectId} />
     {:else if route.name === 'model'}

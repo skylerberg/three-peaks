@@ -24,9 +24,10 @@ export interface PrintImage {
 // cannot fail that way.
 const PASSED_THROUGH = 'image/jpeg';
 
-// Guards against a source whose own dimensions are enormous. 6000 px is a
-// 508 mm card at print resolution -- past anything this prints, and past the
-// point where a browser will reliably give up a canvas of it.
+// Guards against a source whose own dimensions are enormous. 6000 px is 508 mm
+// at print resolution, and past the point where a browser will reliably give up
+// a canvas of it -- so a board longer than that is printed coarser rather than
+// not at all.
 const MAX_RASTER_PIXELS = 6000;
 
 function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -35,12 +36,26 @@ function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx;
 }
 
-async function canvasToPng(canvas: HTMLCanvasElement): Promise<PrintImage> {
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+// What a raster that has been through the canvas is written back out as.
+//
+// PNG is the default and is lossless. JPEG is for a board: jsPDF holds a PNG
+// decoded while it re-encodes it, which measured at 300 MB for a 6000 px
+// square, where a JPEG is handed over as the stream it already is. The loss is
+// at a quality nobody can see on a taped-together proof.
+export type RasterFormat = PrintImage['format'];
+
+const JPEG_QUALITY = 0.92;
+
+async function encoded(canvas: HTMLCanvasElement, format: RasterFormat): Promise<PrintImage> {
+  const blob = await new Promise<Blob | null>((resolve) =>
+    format === 'JPEG'
+      ? canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+      : canvas.toBlob(resolve, 'image/png')
+  );
   if (!blob) throw new Error('This browser could not encode the artwork');
   return {
     data: new Uint8Array(await blob.arrayBuffer()),
-    format: 'PNG',
+    format,
     width: canvas.width,
     height: canvas.height,
   };
@@ -50,20 +65,29 @@ function drawn(
   source: CanvasImageSource,
   width: number,
   height: number,
-  transform?: (ctx: CanvasRenderingContext2D) => void
+  format: RasterFormat
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width));
   canvas.height = Math.max(1, Math.round(height));
   const ctx = context(canvas);
-  transform?.(ctx);
+  // A JPEG has no alpha, and a canvas encodes what was transparent as black.
+  // Paper is what shows through a transparent pixel, and paper is white.
+  if (format === 'JPEG') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
 // An SVG has no resolution of its own, so it is rasterised straight at the size
 // it will be printed rather than at whatever the document happens to declare.
-async function rasterizeSvg(text: string, targetPixels: number): Promise<PrintImage> {
+async function rasterizeSvg(
+  text: string,
+  targetPixels: number,
+  format: RasterFormat
+): Promise<PrintImage> {
   const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
   try {
     const image = new Image();
@@ -73,7 +97,7 @@ async function rasterizeSvg(text: string, targetPixels: number): Promise<PrintIm
     const naturalWidth = image.naturalWidth || targetPixels;
     const naturalHeight = image.naturalHeight || targetPixels;
     const scale = targetPixels / Math.max(naturalWidth, naturalHeight);
-    return await canvasToPng(drawn(image, naturalWidth * scale, naturalHeight * scale));
+    return await encoded(drawn(image, naturalWidth * scale, naturalHeight * scale, format), format);
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -98,7 +122,8 @@ async function rasterizeSvg(text: string, targetPixels: number): Promise<PrintIm
 export async function loadPrintImage(
   fileId: string,
   targetMm: number,
-  version?: number
+  version?: number,
+  format: RasterFormat = 'PNG'
 ): Promise<PrintImage> {
   const query = version === undefined ? '' : `?version=${version}`;
   const response = await fetch(`/api/files/${fileId}/download${query}`, { headers: authHeader() });
@@ -108,7 +133,7 @@ export async function loadPrintImage(
   const targetPixels = Math.min(MAX_RASTER_PIXELS, pixelsForPrint(targetMm));
 
   if (contentType === 'image/svg+xml') {
-    return await rasterizeSvg(await response.text(), targetPixels);
+    return await rasterizeSvg(await response.text(), targetPixels, format);
   }
 
   const blob = await response.blob();
@@ -124,7 +149,10 @@ export async function loadPrintImage(
     }
 
     const scale = Math.min(1, targetPixels / Math.max(bitmap.width, bitmap.height));
-    return await canvasToPng(drawn(bitmap, bitmap.width * scale, bitmap.height * scale));
+    return await encoded(
+      drawn(bitmap, bitmap.width * scale, bitmap.height * scale, format),
+      format
+    );
   } finally {
     bitmap.close();
   }

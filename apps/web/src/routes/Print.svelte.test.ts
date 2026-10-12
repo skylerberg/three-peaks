@@ -7,6 +7,7 @@ import { decks } from '../lib/decks.svelte.ts';
 
 interface Job {
   decks: { cards: { file_id: string; copies: number }[] }[];
+  boards: { name: string; file_id: string; width_mm: number; height_mm: number }[];
   versions: Record<string, number>;
 }
 
@@ -116,8 +117,58 @@ function outstanding() {
   };
 }
 
+const BOARD = '4e3d2c1b-0a9f-4e8d-9c7b-6a5f4e3d2c1b';
+const BOARD_ART = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+
+// A board as the components listing answers with it. 500 mm square is six
+// sheets of Letter, three across by two down.
+function board(overrides: { name?: string; artwork?: Record<string, unknown> | null } = {}) {
+  const artwork =
+    overrides.artwork === null
+      ? []
+      : [
+          {
+            role: 'artwork',
+            file: {
+              ...file(BOARD_ART, 'main.png'),
+              deck_id: null,
+              component_id: BOARD,
+              component_role: 'artwork',
+              image_width: 5906,
+              image_height: 5906,
+              ...overrides.artwork,
+            },
+          },
+        ];
+  return {
+    id: BOARD,
+    project_id: PROJECT,
+    kind: 'board',
+    name: overrides.name ?? 'Main board',
+    position: 0,
+    settings: {
+      kind: 'board',
+      width_mm: 500,
+      height_mm: 500,
+      thickness_mm: 2,
+      fold: 'bifold',
+      fold_gap_mm: 3,
+      edge_color: '#1f2933',
+      seed: 1,
+    },
+    created_by: 'someone',
+    created_at: '2026-02-01T09:00:00.000Z',
+    updated_at: '2026-02-01T09:00:00.000Z',
+    deleted_at: null,
+    files: artwork,
+    missing_roles: [],
+  };
+}
+
 let recorded: unknown[] = [];
 let deleted: string[] = [];
+let listedBoards: ReturnType<typeof board>[] = [];
+let listedDecks = [deck];
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -126,6 +177,8 @@ beforeEach(() => {
   decks.reset();
   recorded = [];
   deleted = [];
+  listedBoards = [];
+  listedDecks = [deck];
 
   fetchMock.mockImplementation(async (input, init) => {
     const request = typeof input === 'string' ? null : (input as Request);
@@ -148,14 +201,15 @@ beforeEach(() => {
         copies: 2,
       });
     }
+    if (url.includes('/api/components')) return jsonResponse(200, { components: listedBoards });
     if (url.includes(`/api/decks/${DECK}`)) return jsonResponse(200, { deck, cards });
-    if (url.includes('/api/decks')) return jsonResponse(200, { decks: [deck] });
+    if (url.includes('/api/decks')) return jsonResponse(200, { decks: listedDecks });
     return jsonResponse(404, { error: `nothing stubbed for ${url}` });
   });
 });
 
-function open() {
-  return render(Print, { projectId: PROJECT, deckId: DECK });
+function open(boardId: string | null = null) {
+  return render(Print, { projectId: PROJECT, deckId: boardId === null ? DECK : null, boardId });
 }
 
 async function chooseChanged() {
@@ -487,5 +541,131 @@ describe('printing only what has changed', () => {
     await waitFor(() => expect(recorded).toHaveLength(1));
     const body = recorded[0] as { cards: Record<string, unknown>[] };
     expect(body.cards.every((card) => card.back_file_id === undefined)).toBe(true);
+  });
+});
+
+// A board is one piece of artwork at a size of its own, and the only thing on
+// this screen that can be larger than the paper.
+describe('printing a board', () => {
+  function boardBox(name = 'Main board'): HTMLInputElement {
+    return screen.getByRole('checkbox', { name });
+  }
+
+  async function generate(): Promise<Job> {
+    const button = screen.getByRole('button', { name: 'Generate PDF' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await fireEvent.click(button);
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    return job();
+  }
+
+  it('says how big a board is and how many pages it is split across', async () => {
+    listedBoards = [board()];
+    open();
+
+    const row = (await screen.findByRole('checkbox', { name: 'Main board' })).closest('li')!;
+    expect(row).toHaveTextContent('500 × 500 mm');
+    expect(row).toHaveTextContent('6 pages, 3 across by 2 down');
+  });
+
+  // Every deck is ticked when the screen opens and no board is: a board is a
+  // different job on different paper, and nothing records that one was printed.
+  it('leaves a board out of the run until it is ticked', async () => {
+    listedBoards = [board()];
+    open();
+
+    await screen.findByRole('checkbox', { name: 'Main board' });
+    expect(boardBox().checked).toBe(false);
+    expect((await generate()).boards).toEqual([]);
+  });
+
+  it('hands a ticked board to the document at the size it is cut to', async () => {
+    listedBoards = [board()];
+    open();
+
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Main board' }));
+    await waitFor(() => expect(boardBox().checked).toBe(true));
+    expect(screen.getByText(/1\s+board on 6\s+pages/)).toBeInTheDocument();
+
+    expect((await generate()).boards).toEqual([
+      { name: 'Main board', file_id: BOARD_ART, width_mm: 500, height_mm: 500 },
+    ]);
+  });
+
+  // The bleed goes with the marks, so without them the ink stops at the cut
+  // and the edge of the artwork is the line.
+  it('says where to cut, which without marks is the edge of the artwork', async () => {
+    listedBoards = [board()];
+    open(BOARD);
+
+    await waitFor(() => expect(screen.getByText(/at its corner marks/)).toBeVisible());
+    await fireEvent.click(screen.getByLabelText('Cut marks'));
+    await waitFor(() => expect(screen.getByText(/along the edge of its artwork/)).toBeVisible());
+  });
+
+  it('opens on one board alone when the link names it', async () => {
+    listedBoards = [board()];
+    open(BOARD);
+
+    await waitFor(() => expect(boardBox().checked).toBe(true));
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Base game' }).checked).toBe(
+      false
+    );
+
+    const sent = await generate();
+    expect(sent.decks).toEqual([]);
+    expect(sent.boards).toHaveLength(1);
+    // Nothing is written down for a board: the ledger is cards.
+    expect(recorded).toEqual([]);
+  });
+
+  // The printer turns every sheet over for the cards, so a board in the same
+  // document needs an empty page behind each of its own.
+  it('counts a blank page behind each board page only beside card backs', async () => {
+    listedBoards = [board()];
+    open();
+
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Main board' }));
+    await waitFor(() => expect(screen.getByText(/each followed by a blank page/)).toBeVisible());
+
+    await fireEvent.click(screen.getByLabelText('Include backing pages'));
+    await waitFor(() => expect(screen.queryByText(/each followed by a blank page/)).toBeNull());
+  });
+
+  it('offers nothing to tick on a board whose artwork is deleted', async () => {
+    listedBoards = [board({ artwork: { deleted_at: '2026-02-04T09:00:00.000Z' } })];
+    open();
+
+    const box = await screen.findByRole<HTMLInputElement>('checkbox', { name: 'Main board' });
+    expect(box.disabled).toBe(true);
+    expect(box.closest('li')).toHaveTextContent('no artwork yet');
+  });
+
+  it('offers nothing to tick on a board still waiting for its artwork', async () => {
+    listedBoards = [board({ artwork: null })];
+    open();
+
+    await screen.findByRole('checkbox', { name: 'Main board' });
+    expect(boardBox().disabled).toBe(true);
+  });
+
+  // 1890 px across 500 mm is what Canva exports a board as unless it is asked
+  // for more, and it is the number that says to ask.
+  it('says when the artwork is coarser than a printer wants', async () => {
+    listedBoards = [board({ artwork: { image_width: 1890, image_height: 1890 } })];
+    open();
+
+    const row = (await screen.findByRole('checkbox', { name: 'Main board' })).closest('li')!;
+    expect(row).toHaveTextContent('96 DPI at this size');
+  });
+
+  it('lists the boards of a project that has no decks', async () => {
+    listedBoards = [board()];
+    listedDecks = [];
+    open(BOARD);
+
+    await waitFor(() => expect(boardBox().checked).toBe(true));
+    expect(screen.getByText(/1\s+board on 6\s+pages/)).toBeInTheDocument();
+    expect(screen.queryByText(/sheets of US Letter/)).toBeNull();
   });
 });

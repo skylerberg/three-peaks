@@ -9,6 +9,11 @@
 // file. Minis are in the run because the planner lays them on their side, and
 // a sideways card is drawn through a rotation the upright ones never exercise.
 //
+// A board is the other thing only the file can settle. One too large for the
+// paper is the whole artwork handed to every sheet and clipped to a different
+// part of it, so "six pages came out" says nothing about whether they are six
+// pieces of one board or the same corner six times.
+//
 // It needs an API. Point API_PROXY_TARGET at one (default localhost:17310) and
 // it will sign up its own throwaway account.
 import { spawnSync } from 'node:child_process';
@@ -40,6 +45,13 @@ const POKER_PER_SHEET = 9;
 const POKER_COLUMNS = 3;
 const MINI_PER_SHEET = 18;
 
+// A 500 x 400 mm board on Letter: three across by two down, each piece a third
+// of its width and half its height, inked 2 mm past every cut another piece
+// meets. Kept here for the reason the card counts are.
+const BOARD = { width: 500, height: 400, columns: 3, rows: 2 };
+const TILE_BLEED_MM = 2;
+const PRINTER_MARGIN_MM = 6.35;
+
 const failures = [];
 function check(name, condition, detail = '') {
   if (condition) {
@@ -52,6 +64,10 @@ function check(name, condition, detail = '') {
 }
 
 const IDENTITY = [1, 0, 0, 1, 0, 0];
+
+// The operators that end a path, painting it or not. Each leaves no current
+// path behind, which is what decides whether a clip took.
+const PATH_PAINTING = new Set(['S', 's', 'f', 'F', 'f*', 'B', 'B*', 'b', 'b*', 'n']);
 
 // PDF matrices, `[a b c d e f]` mapping (x, y) to (ax + cy + e, bx + dy + f).
 // A `cm` operator applies its matrix before whatever is already in force, so the
@@ -73,11 +89,28 @@ function apply([a, b, c, d, e, f], x, y) {
   return [a * x + c * y + e, b * x + d * y + f];
 }
 
-// The box an image XObject paints, given the matrix in force when it is drawn:
-// the unit square, transformed. `up` is the compass point the artwork's own top
-// edge points at on the page, which is what tells a card on its side from one
-// drawn upright and clipped, and a back turned the wrong way from its front.
-function describeImage(ctm, image) {
+function intersect(a, b) {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x),
+    height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y),
+  };
+}
+
+// What an image XObject puts on the paper, given the matrix and the clip in
+// force when it is drawn. `up` is the compass point the artwork's own top edge
+// points at on the page, which is what tells a card on its side from one drawn
+// upright and clipped, and a back turned the wrong way from its front.
+//
+// The box is what reaches the paper: the unit square transformed, cut down to
+// the clip. That is the measurement a card is held to -- artwork drawn to bleed
+// is wider than its card and is still a 63 mm card once it is printed. `drawn`
+// is the image before the clip, which is what a tile of a board is read from:
+// there the image is the whole board and the clip is the piece.
+function describeImage(ctm, image, clip) {
   const corners = [
     [0, 0],
     [1, 0],
@@ -88,15 +121,35 @@ function describeImage(ctm, image) {
   const ys = corners.map(([, y]) => y);
   const [upX, upY] = [ctm[2], ctm[3]];
 
-  return {
-    image,
+  const drawn = {
     x: Math.min(...xs),
     // Flipped to a top-left origin, which is what the layout code works in and
     // therefore what the assertions below can be written against.
     y: LETTER_HEIGHT_PT - Math.max(...ys),
     width: Math.max(...xs) - Math.min(...xs),
     height: Math.max(...ys) - Math.min(...ys),
+  };
+
+  return {
+    image,
+    ...(clip ? intersect(drawn, clip) : drawn),
     up: Math.abs(upX) > Math.abs(upY) ? (upX > 0 ? 'E' : 'W') : upY > 0 ? 'N' : 'S',
+    drawn,
+    clip,
+  };
+}
+
+// A rectangle as `re` is handed it, under the matrix in force, in the same
+// top-left origin as a placement. jsPDF writes one with a negative height.
+function describeRect(ctm, [x, y, width, height]) {
+  const corners = [apply(ctm, x, y), apply(ctm, x + width, y + height)];
+  const xs = corners.map(([cx]) => cx);
+  const ys = corners.map(([, cy]) => cy);
+  return {
+    x: Math.min(...xs),
+    y: LETTER_HEIGHT_PT - Math.max(...ys),
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
   };
 }
 
@@ -110,11 +163,22 @@ function describeImage(ctm, image) {
  * what is in force. Reading that back is the only way to assert where a card
  * actually landed and which way it faces; a screenshot cannot tell a correctly
  * mirrored back page from an incorrect one.
+ *
+ * A clip is `<x> <y> <w> <h> re W n`, and belongs to the graphics state like
+ * the matrix. The three operators are modelled as the format defines them
+ * rather than matched as a phrase: `re` builds a path, `W` marks whatever path
+ * there is to become the clip, and the painting operator that ends the path is
+ * what puts it in force. A rectangle that is stroked first -- `re S W n` -- has
+ * no path left by the time `W` is reached and clips nothing, which is what
+ * every viewer does with it and exactly the stream this renderer once wrote.
  */
 function readStream(text) {
   const placements = [];
   const saved = [];
   let ctm = IDENTITY;
+  let clip = null;
+  let path = null;
+  let pending = null;
   let operands = [];
   let name = null;
 
@@ -129,18 +193,24 @@ function readStream(text) {
       continue;
     }
 
-    if (token === 'q') saved.push(ctm);
-    else if (token === 'Q') ctm = saved.pop() ?? IDENTITY;
+    if (token === 'q') saved.push({ ctm, clip });
+    else if (token === 'Q') ({ ctm, clip } = saved.pop() ?? { ctm: IDENTITY, clip: null });
     else if (token === 'cm' && operands.length >= 6) ctm = compose(ctm, operands.slice(-6));
-    else if (token === 'Do' && name !== null) placements.push(describeImage(ctm, name));
+    else if (token === 're' && operands.length >= 4) path = describeRect(ctm, operands.slice(-4));
+    else if (token === 'W') pending = path;
+    else if (PATH_PAINTING.has(token)) {
+      if (pending) clip = clip ? intersect(clip, pending) : pending;
+      path = null;
+      pending = null;
+    } else if (token === 'Do' && name !== null) placements.push(describeImage(ctm, name, clip));
     operands = [];
   }
 
   return placements;
 }
 
-// Every image placement in the document, page by page.
-function readPlacements(bytes) {
+// The content stream of every page that draws an image, inflated.
+function readPageStreams(bytes) {
   const latin = Buffer.from(bytes).toString('latin1');
   const pages = [];
 
@@ -161,10 +231,95 @@ function readPlacements(bytes) {
     }
     if (!/\bDo\b/.test(text)) continue;
 
-    pages.push(readStream(text));
+    pages.push(text);
   }
 
   return pages;
+}
+
+// Every image placement in the document, page by page.
+function readPlacements(bytes) {
+  return readPageStreams(bytes).map(readStream);
+}
+
+/**
+ * What is wrong with a board spread over several sheets, one sheet to a tile.
+ *
+ * Three things have to hold of every sheet, and all three are facts about the
+ * finished file. The board is drawn at its real size, or the pieces do not add
+ * up to it. The piece that reaches the paper is this sheet's own part of the
+ * board -- measured as where the clip sits on the artwork, because six sheets
+ * each showing the top-left corner are six correct-looking pages. And the piece
+ * is inside what the printer can reach, or the outer strip of every tile is
+ * missing from the assembled board.
+ */
+function boardProblems(pages, board) {
+  const mm = (points) => points * MM_PER_PT;
+  const near = (a, b) => Math.abs(a - b) < 0.3;
+  const tileWidth = board.width / board.columns;
+  const tileHeight = board.height / board.rows;
+  const problems = [];
+
+  if (pages.length !== board.columns * board.rows) {
+    return [`${pages.length} sheets for ${board.columns * board.rows} tiles`];
+  }
+
+  for (const [index, placements] of pages.entries()) {
+    const row = Math.floor(index / board.columns);
+    const column = index % board.columns;
+    const where = `row ${row + 1}, column ${column + 1}`;
+    const [placed] = placements;
+
+    if (placements.length !== 1 || !placed.clip) {
+      problems.push(`${where}: ${placements.length} images, clipped: ${Boolean(placed?.clip)}`);
+      continue;
+    }
+    const whole = placed.drawn;
+    if (!near(mm(whole.width), board.width) || !near(mm(whole.height), board.height)) {
+      problems.push(
+        `${where}: the board is drawn ${mm(whole.width).toFixed(1)} x ${mm(whole.height).toFixed(1)} mm`
+      );
+    }
+
+    // Where the piece starts on the board, and how much of it is inked: the
+    // tile's own place, grown by the bleed on each side another tile meets.
+    const before = { x: column > 0 ? TILE_BLEED_MM : 0, y: row > 0 ? TILE_BLEED_MM : 0 };
+    const after = {
+      x: column < board.columns - 1 ? TILE_BLEED_MM : 0,
+      y: row < board.rows - 1 ? TILE_BLEED_MM : 0,
+    };
+    const offset = { x: mm(placed.clip.x - whole.x), y: mm(placed.clip.y - whole.y) };
+    if (
+      !near(offset.x, column * tileWidth - before.x) ||
+      !near(offset.y, row * tileHeight - before.y)
+    ) {
+      problems.push(
+        `${where}: the piece starts ${offset.x.toFixed(1)}, ${offset.y.toFixed(1)} mm into the board`
+      );
+    }
+    if (
+      !near(mm(placed.clip.width), tileWidth + before.x + after.x) ||
+      !near(mm(placed.clip.height), tileHeight + before.y + after.y)
+    ) {
+      problems.push(
+        `${where}: the piece is ${mm(placed.clip.width).toFixed(1)} x ${mm(placed.clip.height).toFixed(1)} mm`
+      );
+    }
+
+    const edges = [
+      mm(placed.clip.x),
+      mm(placed.clip.y),
+      mm(LETTER_WIDTH_PT - placed.clip.x - placed.clip.width),
+      mm(LETTER_HEIGHT_PT - placed.clip.y - placed.clip.height),
+    ];
+    if (edges.some((edge) => edge < PRINTER_MARGIN_MM - 0.1)) {
+      problems.push(
+        `${where}: the piece runs ${Math.min(...edges).toFixed(1)} mm from the paper's edge`
+      );
+    }
+  }
+
+  return problems;
 }
 
 // Slot order: left to right, top to bottom, the order a person reads a sheet in.
@@ -279,15 +434,25 @@ async function run() {
     // card of its own -- which is what the reprint half of this probe is about.
     const redrawn = [...solidPng({ width: 372, height: 520, rgb: [240, 200, 40] })];
 
+    // Gamma is drawn to bleed: 4 mm wider than its card on each side once it is
+    // scaled to the card's height. Every assertion that measures a card is made
+    // with it on the sheet, so a renderer that let the overflow through fails
+    // them all -- and the pairing first, because a card that wide has no back
+    // at its mirror.
+    const BLED = 'gamma';
     const files = Object.fromEntries([
       ...Object.entries(artwork).map(([name, rgb]) => [
         name,
-        [...solidPng({ width: 372, height: 520, rgb })],
+        [...solidPng({ width: name === BLED ? 420 : 372, height: 520, rgb })],
       ]),
       ...Object.entries(minis).map(([name, rgb]) => [
         name,
         [...solidPng({ width: 264, height: 402, rgb })],
       ]),
+      // Each at its board's own aspect, so the artwork covers the board exactly
+      // and what is measured is the tiling rather than a crop.
+      ['main-board', [...solidPng({ width: 1000, height: 800, rgb: [20, 110, 120] })]],
+      ['player-mat', [...solidPng({ width: 600, height: 800, rgb: [150, 90, 30] })]],
     ]);
 
     const setup = await browser.page.evaluate(async (uploads) => {
@@ -367,7 +532,47 @@ async function run() {
         [44, 67]
       );
 
-      return { projectId, alpha, beta };
+      // Boards are in the project from the start and ticked by nothing, so
+      // every count above the board section is measured with them there.
+      const makeBoard = async (name, image, [width, height]) => {
+        const board = await fetch('/api/components', {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: projectId,
+            kind: 'board',
+            name,
+            settings: {
+              kind: 'board',
+              width_mm: width,
+              height_mm: height,
+              thickness_mm: 2,
+              fold: 'none',
+              fold_gap_mm: 0,
+              edge_color: '#1f2933',
+              seed: 1,
+            },
+          }),
+        }).then((r) => r.json());
+
+        const query = new URLSearchParams({
+          project_id: projectId,
+          filename: `${image}.png`,
+          component_id: board.id,
+          role: 'artwork',
+        });
+        await fetch(`/api/files/upload?${query}`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'image/png' },
+          body: new Uint8Array(uploads[image]),
+        });
+        return board.id;
+      };
+
+      const mainBoard = await makeBoard('Main board', 'main-board', [500, 400]);
+      await makeBoard('Player mat', 'player-mat', [150, 200]);
+
+      return { projectId, alpha, beta, mainBoard };
     }, files);
 
     // Read back rather than assumed. A quantity of zero the API had refused
@@ -475,6 +680,26 @@ async function run() {
       'a card measures 63 x 88 mm on the page',
       Math.abs(cardWidthMm - 63) < 0.2 && Math.abs(cardHeightMm - 88) < 0.2,
       `${cardWidthMm.toFixed(2)} x ${cardHeightMm.toFixed(2)} mm`
+    );
+
+    // Slot 8 of the first sheet and both slots of the second. What is drawn is
+    // wider than the card; what reaches the paper has to be the card.
+    const bled = [frontOne[8], ...frontTwo];
+    check(
+      'artwork drawn to bleed is cut off at its own card',
+      bled.every(
+        (placed) =>
+          Boolean(placed?.clip) &&
+          placed.drawn.width * MM_PER_PT > 70 &&
+          Math.abs(placed.width * MM_PER_PT - 63) < 0.2 &&
+          Math.abs(placed.height * MM_PER_PT - 88) < 0.2
+      ),
+      bled
+        .map(
+          (placed) =>
+            `${(placed.drawn.width * MM_PER_PT).toFixed(1)} drawn, ${(placed.width * MM_PER_PT).toFixed(1)} printed`
+        )
+        .join('; ')
     );
 
     // Cards butt against each other, so a column boundary is one cut.
@@ -890,6 +1115,144 @@ async function run() {
       chosenSheet.problems.join('; ') || `${new Set(chosenSheet.pairs.values()).size} backs`
     );
 
+    // --- a board larger than the paper -----------------------------------
+    //
+    // Opened from the board's own link, which is the one way a board arrives
+    // ticked: the decks are a different job on different paper.
+    await browser.goto(`${base}/projects/${setup.projectId}/print?board=${setup.mainBoard}`, {
+      wait: 0,
+    });
+    await browser.page.waitForSelector('button:has-text("Generate PDF")', { timeout: 30_000 });
+
+    const boardRow = await browser.page
+      .getByRole('listitem')
+      .filter({ hasText: 'Main board' })
+      .textContent();
+    check(
+      'the screen says how the board is split before printing',
+      /500 × 400 mm/.test(boardRow ?? '') && /6 pages, 3 across by 2 down/.test(boardRow ?? ''),
+      boardRow ?? ''
+    );
+
+    const alone = await Promise.all(
+      ['Alpha deck', 'Beta deck', 'Mini deck', 'Main board', 'Player mat'].map((name) =>
+        boxState(deckBox(name))
+      )
+    );
+    check(
+      'a board’s own link opens on that board and nothing else',
+      alone.map((box) => box.checked).join() === 'false,false,false,true,false',
+      JSON.stringify(alone.map((box) => box.checked))
+    );
+
+    const boardSaid = await browser.page.textContent('p:has-text("pages of US Letter")');
+    check(
+      'the screen counts the board’s pages, with no blank ones behind them',
+      /1\s+board on 6\s+pages/.test(boardSaid ?? '') && !/blank page/.test(boardSaid ?? ''),
+      boardSaid ?? ''
+    );
+
+    await browser.page.evaluate(() => {
+      const original = URL.createObjectURL.bind(URL);
+      window.__printed = null;
+      URL.createObjectURL = (blob) => {
+        window.__printed = blob;
+        return original(blob);
+      };
+    });
+    await browser.click('button:has-text("Generate PDF")');
+    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+
+    const boardBytes = Uint8Array.from(
+      await browser.page.evaluate(async () => [
+        ...new Uint8Array(await window.__printed.arrayBuffer()),
+      ])
+    );
+    const boardLatin = Buffer.from(boardBytes).toString('latin1');
+    const boardStreams = readPageStreams(boardBytes);
+    const boardPages = boardStreams.map(readStream);
+
+    check(
+      'the board comes to six pages',
+      (boardLatin.match(/\/Type \/Page[^s]/g) ?? []).length === 6,
+      String((boardLatin.match(/\/Type \/Page[^s]/g) ?? []).length)
+    );
+    // Six sheets naming one image. Embedded per sheet, a board at print
+    // resolution is the same megabytes six times over.
+    check(
+      'the board’s artwork is embedded once for all six',
+      (boardLatin.match(/\/Subtype \/Image/g) ?? []).length === 1,
+      `${(boardLatin.match(/\/Subtype \/Image/g) ?? []).length} image XObjects`
+    );
+
+    const tiling = boardProblems(boardPages, BOARD);
+    check(
+      'every sheet holds its own part of the board, at full size, inside the printable area',
+      tiling.length === 0,
+      tiling.join('; ')
+    );
+    check(
+      'every sheet says which piece it is',
+      boardStreams.length === 6 &&
+        boardStreams.every((text, index) =>
+          text.includes(
+            `row ${Math.floor(index / BOARD.columns) + 1} of ${BOARD.rows}, column ${(index % BOARD.columns) + 1} of ${BOARD.columns}`
+          )
+        ),
+      `${boardStreams.length} sheets`
+    );
+
+    // A board beside cards. The printer turns every sheet over for the deck's
+    // backs, so the one-page board behind them needs a blank page of its own:
+    // front, back, board, blank.
+    await deckBox('Main board').click();
+    await deckBox('Beta deck').click();
+    await deckBox('Player mat').click();
+    const besideCards = await browser.page
+      .waitForFunction(
+        () => /1\s+board on 1\s+page of.{0,60}blank page/.test(document.body.textContent ?? ''),
+        null,
+        { timeout: 10_000 }
+      )
+      .then(() => true)
+      .catch(() => false);
+    check('a board beside card backs is counted with a blank page behind it', besideCards);
+
+    await browser.page.evaluate(() => {
+      const original = URL.createObjectURL.bind(URL);
+      window.__printed = null;
+      URL.createObjectURL = (blob) => {
+        window.__printed = blob;
+        return original(blob);
+      };
+    });
+    await browser.click('button:has-text("Generate PDF")');
+    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+
+    const mixedBytes = Uint8Array.from(
+      await browser.page.evaluate(async () => [
+        ...new Uint8Array(await window.__printed.arrayBuffer()),
+      ])
+    );
+    const mixedLatin = Buffer.from(mixedBytes).toString('latin1');
+    const mixedPages = readPlacements(mixedBytes);
+    check(
+      'the document is the card sheet, its back, the board and a blank',
+      (mixedLatin.match(/\/Type \/Page[^s]/g) ?? []).length === 4 && mixedPages.length === 3,
+      `${(mixedLatin.match(/\/Type \/Page[^s]/g) ?? []).length} pages, ${mixedPages.length} drawn on`
+    );
+
+    // One page, so the board is the piece: 150 x 200 mm, whole.
+    const [mat] = mixedPages[2] ?? [];
+    check(
+      'a board that fits the paper is one piece at its own size',
+      Boolean(mat) &&
+        Math.abs(mat.drawn.width * MM_PER_PT - 150) < 0.3 &&
+        Math.abs(mat.drawn.height * MM_PER_PT - 200) < 0.3 &&
+        Math.abs(mat.width - mat.drawn.width) < 0.5,
+      mat ? `${(mat.width * MM_PER_PT).toFixed(1)} x ${(mat.height * MM_PER_PT).toFixed(1)} mm` : ''
+    );
+
     if (pageErrors.length > 0) {
       check('the page threw nothing while building the sheets', false, pageErrors.join(' | '));
     }
@@ -997,6 +1360,73 @@ async function run() {
       }
       console.log('  ok   an upright placement is read back at its box, facing north');
 
+      // The clip, written the way jsPDF writes one: a rectangle with a negative
+      // height, put in force by `W` and taken off again by `Q`. A reader that
+      // lost it would report every tile of a board as the whole board.
+      const [clipped, unclipped] = readStream(
+        'q 100 692 200 -300 re W n 400 0 0 600 50 92 cm /I1 Do Q q 10 0 0 10 0 0 cm /I2 Do Q'
+      );
+      const readsClip =
+        clipped?.clip &&
+        Math.abs(clipped.clip.x - 100) < 1e-6 &&
+        Math.abs(clipped.clip.y - 100) < 1e-6 &&
+        Math.abs(clipped.clip.width - 200) < 1e-6 &&
+        Math.abs(clipped.clip.height - 300) < 1e-6 &&
+        unclipped?.clip === null;
+      if (!readsClip) {
+        console.error(
+          `[selftest] FAILED: a clip read back as ${JSON.stringify(clipped?.clip)} then ${JSON.stringify(unclipped?.clip)}`
+        );
+        return 1;
+      }
+      console.log('  ok   a clip is read back at its box, and not past the Q that ends it');
+
+      // The stream the renderer used to write: the rectangle is stroked before
+      // the clip is asked for, so there is no path left to clip to. A reader
+      // matching `re ... W` as a phrase calls that clipped and passes a board
+      // whose every sheet is the whole artwork.
+      const [stroked] = readStream('q 100 692 200 -300 re S W n 400 0 0 600 50 92 cm /I1 Do Q');
+      if (stroked?.clip !== null || Math.abs(stroked.width - 400) > 1e-6) {
+        console.error(
+          `[selftest] FAILED: a stroked rectangle was read as a clip (${JSON.stringify(stroked?.clip)})`
+        );
+        return 1;
+      }
+      console.log('  ok   a rectangle stroked before its clip is read as clipping nothing');
+
+      // The tiling assertion against the three ways a board comes out wrong
+      // with every sheet still present: the same piece on every sheet, the
+      // board shrunk to fit each one, and a piece pushed off the printable
+      // area.
+      console.log('\n[selftest] the tiling assertions against boards laid out wrong:');
+      const repeated = boardPages.map(() => boardPages[0]);
+      const shrunk = boardPages.map(([placed]) => [{ ...placed, drawn: placed.clip }]);
+      const drawnWhole = boardPages.map(([placed]) => [{ ...placed, clip: null }]);
+      const offPaper = boardPages.map(([placed], index) =>
+        index === 0
+          ? [
+              {
+                ...placed,
+                drawn: { ...placed.drawn, x: placed.drawn.x - 90 },
+                clip: { ...placed.clip, x: placed.clip.x - 90 },
+              },
+            ]
+          : [placed]
+      );
+      for (const [label, pages] of [
+        ['the same piece on every sheet', repeated],
+        ['a board shrunk onto each sheet', shrunk],
+        ['a board drawn whole on every sheet', drawnWhole],
+        ['a piece outside the printable area', offPaper],
+      ]) {
+        const found = boardProblems(pages, BOARD);
+        if (found.length === 0) {
+          console.error(`[selftest] FAILED: ${label} was accepted`);
+          return 1;
+        }
+        console.log(`  ok   ${label} is rejected (${found[0]})`);
+      }
+
       // The arms above prove the reader reads a document correctly. This one
       // proves the boxes reach the document at all, which no amount of reading
       // can say -- so it re-runs the whole probe against a screen carrying the
@@ -1012,9 +1442,9 @@ async function run() {
             GUARD_CACHE_DIR: join(mkdtempSync(join(tmpdir(), 'print-probe-')), 'vite'),
             GUARD_MUTATION: JSON.stringify({
               file: 'src/routes/Print.svelte',
-              find: '{ decks: runDecks, options, versions: $state.snapshot(versions) }',
+              find: '{ decks: runDecks, boards: runBoards, options, versions: $state.snapshot(versions) }',
               replace:
-                '{ decks: loaded.map((entry) => ({ name: entry.deck.name, card: deckCardSize(entry.deck), back_file_id: entry.deck.back_file_id, cards: entry.cards.filter((card) => card.quantity > 0).map((card) => ({ file_id: card.file_id, copies: card.quantity })) })), options, versions: $state.snapshot(versions) }',
+                '{ decks: loaded.map((entry) => ({ name: entry.deck.name, card: deckCardSize(entry.deck), back_file_id: entry.deck.back_file_id, cards: entry.cards.filter((card) => card.quantity > 0).map((card) => ({ file_id: card.file_id, copies: card.quantity })) })), boards: runBoards, options, versions: $state.snapshot(versions) }',
             }),
           },
           encoding: 'utf8',
