@@ -83,7 +83,7 @@ export async function generatePrintPdf(
     throw new Error('There is nothing selected to print.');
   }
 
-  const { page, printer_margin_mm: margin, include_backs: backs } = job.options;
+  const { page, printer_margin_mm: margin, include_backs: backs, cut_marks: marks } = job.options;
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({
     unit: 'mm',
@@ -94,7 +94,7 @@ export async function generatePrintPdf(
 
   const images = cachedImages(job.versions ?? {});
   const turn = pageTurner(doc);
-  const tiles = boards.reduce((sum, board) => sum + planTiles(page, board, margin).pages, 0);
+  const tiles = boards.reduce((sum, board) => sum + planTiles(page, board, margin, marks).pages, 0);
   let cards = 0;
 
   await renderRuns(

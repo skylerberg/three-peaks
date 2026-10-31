@@ -161,10 +161,49 @@ export const guards = [
     name: 'a tile bleeds only where another tile meets it',
     file: 'packages/shared/src/tiles.ts',
     root: true,
-    find: '    const before = { x: column > 0 ? bleedMm : 0, y: row > 0 ? bleedMm : 0 };',
-    replace: '    const before = { x: bleedMm, y: bleedMm };',
+    find: '    const before = { x: column > 0 ? bleed : 0, y: row > 0 ? bleed : 0 };',
+    replace: '    const before = { x: bleed, y: bleed };',
     tests: ['src/tiles.test.ts'],
     testName: 'inks past a cut only where another tile meets it',
+    runner: 'shared',
+  },
+  {
+    // What the planner first shipped with: room for the marks taken out of the
+    // paper as well as the margin. A 10.5 in board is exactly Letter's
+    // printable height, so it went on four sheets with a seam it never needed.
+    name: 'a tile’s marks are not given room inside the printer margin',
+    file: 'packages/shared/src/tiles.ts',
+    root: true,
+    find: '  const margin = Math.max(0, marginMm);',
+    replace: '  const margin = Math.max(0, marginMm) + TILE_MARK_LENGTH_MM;',
+    tests: ['src/tiles.test.ts'],
+    testName: 'gives a board the whole printable area, leaving its marks to the margin',
+    runner: 'shared',
+  },
+  {
+    // An end tile bleeds on one side only, so centring its cut leaves the ink
+    // a millimetre off-centre -- and a millimetre into the margin on a tile
+    // the planner sized to fill the printable area.
+    name: 'a tile’s ink is centred on the sheet rather than its cut',
+    file: 'packages/shared/src/tiles.ts',
+    root: true,
+    find: '    const inkedX = (page.width_mm - inkedWidth) / 2;',
+    replace: '    const inkedX = (page.width_mm - grid.tile_width_mm) / 2 - before.x;',
+    tests: ['src/tiles.test.ts'],
+    testName: 'never inks a tile past the printer margin',
+    runner: 'shared',
+  },
+  {
+    // Marks measured from the cut start on the bleed, under the ink, and the
+    // first two millimetres of each one is printed over by the artwork.
+    name: 'a tile’s marks start where its ink stops',
+    file: 'packages/shared/src/tiles.ts',
+    root: true,
+    find: '  return marksAround([x, x + width], [y, y + height], page, TILE_MARK_LENGTH_MM, tile.inked);',
+    replace:
+      '  return marksAround([x, x + width], [y, y + height], page, TILE_MARK_LENGTH_MM, tile.cut);',
+    tests: ['src/tiles.test.ts'],
+    testName: 'starts every mark where the ink stops',
     runner: 'shared',
   },
   {
