@@ -5,7 +5,6 @@ import {
   type PageSize,
   type PrintRun,
   type Rect,
-  TILE_BLEED_MM,
   type Tile,
   type TileSize,
   backPlacement,
@@ -334,16 +333,10 @@ function drawTile(
   doc.restoreGraphicsState();
 }
 
-function drawTileGuides(
-  doc: jsPDF,
-  options: PrintOptions,
-  tile: Tile,
-  label: string,
-  bleedMm: number
-): void {
+function drawTileGuides(doc: jsPDF, options: PrintOptions, tile: Tile, label: string): void {
   doc.setDrawColor(CUT_MARK_GREY);
   doc.setLineWidth(CUT_MARK_WIDTH_MM);
-  for (const mark of tileCutMarks(tile, options.page, bleedMm)) {
+  for (const mark of tileCutMarks(tile, options.page)) {
     doc.line(mark.x1_mm, mark.y1_mm, mark.x2_mm, mark.y2_mm);
   }
 
@@ -353,7 +346,7 @@ function drawTileGuides(
   doc.text(
     winAnsi(label),
     tile.cut.x_mm + TILE_LABEL_INSET_MM,
-    tile.cut.y_mm - bleedMm - TILE_LABEL_LIFT_MM
+    tile.inked.y_mm - TILE_LABEL_LIFT_MM
   );
 }
 
@@ -364,9 +357,6 @@ function drawTileGuides(
  * A board is single-sided. `blankBacks` puts an empty page behind each tile,
  * which is what keeps them that way in a document a printer is turning over for
  * the card sheets ahead of them -- see `tilesWantBlankBacks`.
- *
- * The bleed goes with the marks. Without marks the edge of the ink is the only
- * thing saying where to cut, so ink that ran past the line would move it.
  */
 export async function renderBoards(
   doc: jsPDF,
@@ -377,20 +367,19 @@ export async function renderBoards(
   blankBacks: boolean,
   onProgress?: (drawn: number) => void
 ): Promise<void> {
-  const bleed = options.cut_marks ? TILE_BLEED_MM : 0;
   let drawn = 0;
 
   for (const board of boards) {
-    const grid = planTiles(options.page, board, options.printer_margin_mm);
+    const grid = planTiles(options.page, board, options.printer_margin_mm, options.cut_marks);
     if (grid.pages === 0) continue;
     const turn: QuarterTurns = grid.rotated ? 1 : 0;
     const image = await images.board(board.file_id, board);
 
-    for (const tile of planTileSheets(grid, options.page, bleed)) {
+    for (const tile of planTileSheets(grid, options.page)) {
       page();
       drawTile(doc, image, tile, options.fit, `art:${board.file_id}`, turn);
       if (options.cut_marks) {
-        drawTileGuides(doc, options, tile, tileLabel(board.name, grid, tile), bleed);
+        drawTileGuides(doc, options, tile, tileLabel(board.name, grid, tile));
       }
       drawn += 1;
       onProgress?.(drawn);

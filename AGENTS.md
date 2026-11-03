@@ -645,12 +645,16 @@ as many as it needs, to be cut out and taped together.
   artwork running off the paper.
 - **A piece bleeds 2 mm past each cut another piece meets**, so a blade a hair
   outside the line lands on ink instead of leaving a white seam down the taped
-  board. An outer edge has nothing beyond it and gets none. The corner marks
-  start where the bleed stops, and the room for both is taken out of the paper
-  before the board is divided — which is why a tile is never as large as the
-  printable area.
+  board. An outer edge has nothing beyond it and gets none, and the corner
+  marks start where the ink stops.
+- **Only the ink has to stay inside the printer margin.** The marks and the
+  label may run out into it, as a card sheet's marks always have; `planTiles`
+  says why — a board as tall as the printable area otherwise doubles its
+  sheets. The trade is that a printer which truly cannot reach that close to
+  the edge drops the marks at the ends of that board's seam.
 - **The bleed goes with the marks.** With "Cut marks" off, the edge of the ink
-  is the only thing saying where to cut, so it stops at the cut.
+  is the only thing saying where to cut, so it stops at the cut — and the
+  planner leaves no room for a bleed either.
 - **The label is in the margin and is cut away.** It is for the stack of sheets
   before the knife comes out: which piece this is, and how big it should
   measure — a print dialog left on "fit to page" shrinks every piece, and a

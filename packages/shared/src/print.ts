@@ -268,24 +268,24 @@ export interface Segment {
  * `xs` and `ys` are where the vertical and the horizontal cuts fall, outermost
  * first and last. They are marks in the margin rather than lines across the
  * sheet, because a line across the sheet is a line printed on the artwork. Each
- * starts `offsetMm` clear of the block and is clipped to the room actually
- * available, measured against the paper on each side rather than assumed
- * symmetric; one with no room is dropped rather than drawn where the printer
- * will not reach.
+ * starts where `ink` stops -- the outermost cuts, unless the block bleeds past
+ * them -- and is clipped to the room actually available, measured against the
+ * paper on each side rather than assumed symmetric; one with no room is dropped
+ * rather than drawn off the paper.
  */
 export function marksAround(
   xs: readonly number[],
   ys: readonly number[],
   page: PageSize,
   lengthMm: number,
-  offsetMm = 0
+  ink?: Rect
 ): Segment[] {
   if (xs.length === 0 || ys.length === 0) return [];
 
-  const left = xs[0] - offsetMm;
-  const right = xs[xs.length - 1] + offsetMm;
-  const top = ys[0] - offsetMm;
-  const bottom = ys[ys.length - 1] + offsetMm;
+  const left = ink ? ink.x_mm : xs[0];
+  const right = ink ? ink.x_mm + ink.width_mm : xs[xs.length - 1];
+  const top = ink ? ink.y_mm : ys[0];
+  const bottom = ink ? ink.y_mm + ink.height_mm : ys[ys.length - 1];
 
   const above = Math.min(lengthMm, top);
   const below = Math.min(lengthMm, page.height_mm - bottom);

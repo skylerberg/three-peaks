@@ -11,9 +11,6 @@ import { type PageSize, type Rect, type Segment, marksAround } from './print.ts'
 // the white hairline down the middle of a taped board.
 export const TILE_BLEED_MM = 2;
 export const TILE_MARK_LENGTH_MM = 3;
-// The paper kept clear around a tile for both: the marks start where the bleed
-// stops, so neither is ever drawn over the other.
-const TILE_GUTTER_MM = TILE_BLEED_MM + TILE_MARK_LENGTH_MM;
 
 export interface TileSize {
   width_mm: number;
@@ -27,6 +24,8 @@ export interface TileGrid {
   // Whether the piece lies a quarter turn round on the paper. The tile below
   // is its footprint after that turn, as `Grid.rotated` is for a card.
   rotated: boolean;
+  // How far each tile is inked past a cut another tile meets.
+  bleed_mm: number;
   tile_width_mm: number;
   tile_height_mm: number;
 }
@@ -42,26 +41,58 @@ export interface TileGrid {
  * gives -- turning the paper instead yields the same pair of answers, so every
  * page stays portrait. Ties go to upright.
  *
+ * Only the ink has to fit inside the printer margin. The marks and the label
+ * run out into it, as a card sheet's marks do: a 10.5 in board is exactly
+ * Letter's printable height at the default margin, and reserving room for its
+ * marks as well split it across four sheets rather than two.
+ *
+ * The bleed goes with the marks. Without marks the edge of the ink is the only
+ * thing saying where to cut, so ink that ran past the line would move it.
+ *
  * A piece that fits is one tile, which is why there is no separate path for a
  * board smaller than the paper. A sheet with no room inside its margins yields
  * `pages: 0`; callers check it before offering to print.
  */
-export function planTiles(page: PageSize, size: TileSize, marginMm: number): TileGrid {
-  const inset = Math.max(0, marginMm) + TILE_GUTTER_MM;
-  const roomWidth = page.width_mm - inset * 2;
-  const roomHeight = page.height_mm - inset * 2;
+export function planTiles(
+  page: PageSize,
+  size: TileSize,
+  marginMm: number,
+  cutMarks: boolean
+): TileGrid {
+  const bleed = cutMarks ? TILE_BLEED_MM : 0;
+  const margin = Math.max(0, marginMm);
+  const roomWidth = page.width_mm - margin * 2;
+  const roomHeight = page.height_mm - margin * 2;
 
-  // The epsilon is for a piece that is an exact multiple of the room: 386.4 mm
-  // across 193.2 must be two tiles, and a quotient of 2.0000000000000004 is not
-  // a reason for a third.
-  const across = (length: number, room: number) => Math.max(1, Math.ceil(length / room - 1e-9));
+  // A tile's ink is its share of the piece and a bleed at every cut another
+  // tile meets: none in one piece, one each in two, and two on every middle
+  // tile after that. The epsilon is for a piece that fills the room exactly,
+  // where a rounding error is not a reason for another sheet.
+  const across = (length: number, room: number) => {
+    if (length <= room + 1e-9) return 1;
+    if (length / 2 + bleed <= room + 1e-9) return 2;
+    return Math.ceil(length / (room - bleed * 2) - 1e-9);
+  };
   const split = (width: number, height: number) => ({
     columns: across(width, roomWidth),
     rows: across(height, roomHeight),
   });
 
-  if (roomWidth <= 0 || roomHeight <= 0 || size.width_mm <= 0 || size.height_mm <= 0) {
-    return { columns: 0, rows: 0, pages: 0, rotated: false, tile_width_mm: 0, tile_height_mm: 0 };
+  if (
+    roomWidth <= bleed * 2 ||
+    roomHeight <= bleed * 2 ||
+    size.width_mm <= 0 ||
+    size.height_mm <= 0
+  ) {
+    return {
+      columns: 0,
+      rows: 0,
+      pages: 0,
+      rotated: false,
+      bleed_mm: bleed,
+      tile_width_mm: 0,
+      tile_height_mm: 0,
+    };
   }
 
   const upright = split(size.width_mm, size.height_mm);
@@ -74,6 +105,7 @@ export function planTiles(page: PageSize, size: TileSize, marginMm: number): Til
     rows,
     pages: columns * rows,
     rotated,
+    bleed_mm: bleed,
     tile_width_mm: (rotated ? size.height_mm : size.width_mm) / columns,
     tile_height_mm: (rotated ? size.width_mm : size.height_mm) / rows,
   };
@@ -97,31 +129,34 @@ export interface Tile {
 
 // Tiles run left to right, top to bottom, which is the order they come out of
 // the printer in and the order they are laid down in.
-export function planTileSheets(grid: TileGrid, page: PageSize, bleedMm = TILE_BLEED_MM): Tile[] {
-  const x = (page.width_mm - grid.tile_width_mm) / 2;
-  const y = (page.height_mm - grid.tile_height_mm) / 2;
+export function planTileSheets(grid: TileGrid, page: PageSize): Tile[] {
+  const { bleed_mm: bleed } = grid;
 
   return Array.from({ length: grid.pages }, (_unused, index) => {
     const row = Math.floor(index / grid.columns);
     const column = index % grid.columns;
 
-    const before = { x: column > 0 ? bleedMm : 0, y: row > 0 ? bleedMm : 0 };
+    const before = { x: column > 0 ? bleed : 0, y: row > 0 ? bleed : 0 };
     const after = {
-      x: column < grid.columns - 1 ? bleedMm : 0,
-      y: row < grid.rows - 1 ? bleedMm : 0,
+      x: column < grid.columns - 1 ? bleed : 0,
+      y: row < grid.rows - 1 ? bleed : 0,
     };
+    const inkedWidth = grid.tile_width_mm + before.x + after.x;
+    const inkedHeight = grid.tile_height_mm + before.y + after.y;
+
+    // The ink is centred rather than the cut: the bleed is on one side of an
+    // end tile, and it is the ink that has to stay inside the margin.
+    const inkedX = (page.width_mm - inkedWidth) / 2;
+    const inkedY = (page.height_mm - inkedHeight) / 2;
+    const x = inkedX + before.x;
+    const y = inkedY + before.y;
 
     return {
       index,
       row,
       column,
       cut: { x_mm: x, y_mm: y, width_mm: grid.tile_width_mm, height_mm: grid.tile_height_mm },
-      inked: {
-        x_mm: x - before.x,
-        y_mm: y - before.y,
-        width_mm: grid.tile_width_mm + before.x + after.x,
-        height_mm: grid.tile_height_mm + before.y + after.y,
-      },
+      inked: { x_mm: inkedX, y_mm: inkedY, width_mm: inkedWidth, height_mm: inkedHeight },
       whole: {
         x_mm: x - column * grid.tile_width_mm,
         y_mm: y - row * grid.tile_height_mm,
@@ -133,11 +168,11 @@ export function planTileSheets(grid: TileGrid, page: PageSize, bleedMm = TILE_BL
 }
 
 // A mark at each end of each of a tile's four cuts, so a straightedge laid
-// across two of them is the cut. They start clear of the bleed, which is what
-// `bleedMm` is here: ink that runs to the line would hide a mark drawn on it.
-export function tileCutMarks(tile: Tile, page: PageSize, bleedMm = TILE_BLEED_MM): Segment[] {
+// across two of them is the cut. Each starts where the ink stops, because ink
+// that runs past the line would hide a mark drawn on it.
+export function tileCutMarks(tile: Tile, page: PageSize): Segment[] {
   const { x_mm: x, y_mm: y, width_mm: width, height_mm: height } = tile.cut;
-  return marksAround([x, x + width], [y, y + height], page, TILE_MARK_LENGTH_MM, bleedMm);
+  return marksAround([x, x + width], [y, y + height], page, TILE_MARK_LENGTH_MM, tile.inked);
 }
 
 function millimetres(value: number): string {
@@ -188,13 +223,14 @@ export function summarizeTiles(
   sizes: readonly TileSize[],
   page: PageSize,
   marginMm: number,
+  cutMarks: boolean,
   blankBacks: boolean
 ): TileSummary {
   let pages = 0;
   let unplaceable = false;
 
   for (const size of sizes) {
-    const grid = planTiles(page, size, marginMm);
+    const grid = planTiles(page, size, marginMm, cutMarks);
     if (grid.pages === 0) unplaceable = true;
     pages += grid.pages;
   }

@@ -4,7 +4,6 @@ import {
   type PrintRun,
   type Rect,
   type SlotBox,
-  TILE_BLEED_MM,
   backPlacement,
   cardPreset,
   pageSize,
@@ -481,8 +480,8 @@ describe('renderBoards', () => {
   // each one a different piece of it. Drawn unclipped, every sheet is the same
   // corner of the artwork running off the paper.
   it('puts a different part of the board on each sheet it is spread over', async () => {
-    const main = board('main', 500, 400);
-    const grid = planTiles(letter, main, margin);
+    const main = board('main', 560, 420);
+    const grid = planTiles(letter, main, margin, true);
     const tiles = planTileSheets(grid, letter);
     const { placed, pages } = await draw([main]);
 
@@ -497,7 +496,7 @@ describe('renderBoards', () => {
 
   it('draws a board the planner has turned through the turn', async () => {
     const wide = board('wide', 420, 190);
-    const grid = planTiles(letter, wide, margin);
+    const grid = planTiles(letter, wide, margin, true);
     const { placed } = await draw([wide]);
 
     expect(grid.rotated).toBe(true);
@@ -509,8 +508,8 @@ describe('renderBoards', () => {
   });
 
   it('marks the four cuts of every tile and says which piece it is', async () => {
-    const main = board('main', 500, 400);
-    const grid = planTiles(letter, main, margin);
+    const main = board('main', 560, 420);
+    const grid = planTiles(letter, main, margin, true);
     const tiles = planTileSheets(grid, letter);
     const { lines, text } = await draw([main]);
 
@@ -521,23 +520,23 @@ describe('renderBoards', () => {
       );
     }
     expect(text.map((entry) => entry.text)).toEqual([
-      'main · row 1 of 2, column 1 of 3 · 166.7 × 200 mm',
-      'main · row 1 of 2, column 2 of 3 · 166.7 × 200 mm',
-      'main · row 1 of 2, column 3 of 3 · 166.7 × 200 mm',
-      'main · row 2 of 2, column 1 of 3 · 166.7 × 200 mm',
-      'main · row 2 of 2, column 2 of 3 · 166.7 × 200 mm',
-      'main · row 2 of 2, column 3 of 3 · 166.7 × 200 mm',
+      'main · row 1 of 2, column 1 of 3 · 186.7 × 210 mm',
+      'main · row 1 of 2, column 2 of 3 · 186.7 × 210 mm',
+      'main · row 1 of 2, column 3 of 3 · 186.7 × 210 mm',
+      'main · row 2 of 2, column 1 of 3 · 186.7 × 210 mm',
+      'main · row 2 of 2, column 2 of 3 · 186.7 × 210 mm',
+      'main · row 2 of 2, column 3 of 3 · 186.7 × 210 mm',
     ]);
     // Above the tile and clear of its bleed, so it is never under the ink.
     for (const [index, entry] of text.entries()) {
-      expect(entry.y).toBeLessThan(tiles[index].cut.y_mm - TILE_BLEED_MM);
+      expect(entry.y).toBeLessThan(tiles[index].inked.y_mm);
     }
   });
 
   // Without marks the edge of the ink is the only thing saying where to cut.
   it('stops the ink at the cut when the marks are switched off', async () => {
-    const main = board('main', 500, 400);
-    const tiles = planTileSheets(planTiles(letter, main, margin), letter, 0);
+    const main = board('main', 560, 420);
+    const tiles = planTileSheets(planTiles(letter, main, margin, false), letter);
     const { placed, lines, text } = await draw([main], { cut_marks: false });
 
     expect(lines).toEqual([]);
@@ -571,7 +570,7 @@ describe('renderBoards', () => {
   });
 
   it('draws nothing of a board the paper has no room for', async () => {
-    const { placed } = await draw([board('main', 500, 400)], { printer_margin_mm: 200 });
+    const { placed } = await draw([board('main', 560, 420)], { printer_margin_mm: 200 });
     expect(placed).toEqual([]);
   });
 });

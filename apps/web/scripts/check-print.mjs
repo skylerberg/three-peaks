@@ -45,10 +45,10 @@ const POKER_PER_SHEET = 9;
 const POKER_COLUMNS = 3;
 const MINI_PER_SHEET = 18;
 
-// A 500 x 400 mm board on Letter: three across by two down, each piece a third
+// A 560 x 420 mm board on Letter: three across by two down, each piece a third
 // of its width and half its height, inked 2 mm past every cut another piece
 // meets. Kept here for the reason the card counts are.
-const BOARD = { width: 500, height: 400, columns: 3, rows: 2 };
+const BOARD = { width: 560, height: 420, columns: 3, rows: 2 };
 const TILE_BLEED_MM = 2;
 const PRINTER_MARGIN_MM = 6.35;
 
@@ -451,7 +451,7 @@ async function run() {
       ]),
       // Each at its board's own aspect, so the artwork covers the board exactly
       // and what is measured is the tiling rather than a crop.
-      ['main-board', [...solidPng({ width: 1000, height: 800, rgb: [20, 110, 120] })]],
+      ['main-board', [...solidPng({ width: 1120, height: 840, rgb: [20, 110, 120] })]],
       ['player-mat', [...solidPng({ width: 600, height: 800, rgb: [150, 90, 30] })]],
     ]);
 
@@ -569,7 +569,7 @@ async function run() {
         return board.id;
       };
 
-      const mainBoard = await makeBoard('Main board', 'main-board', [500, 400]);
+      const mainBoard = await makeBoard('Main board', 'main-board', [560, 420]);
       await makeBoard('Player mat', 'player-mat', [150, 200]);
 
       return { projectId, alpha, beta, mainBoard };
@@ -1130,7 +1130,7 @@ async function run() {
       .textContent();
     check(
       'the screen says how the board is split before printing',
-      /500 × 400 mm/.test(boardRow ?? '') && /6 pages, 3 across by 2 down/.test(boardRow ?? ''),
+      /560 × 420 mm/.test(boardRow ?? '') && /6 pages, 3 across by 2 down/.test(boardRow ?? ''),
       boardRow ?? ''
     );
 

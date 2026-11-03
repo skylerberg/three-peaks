@@ -250,7 +250,7 @@
 
   const boardGrids = $derived(
     Object.fromEntries(
-      boards.map((board) => [board.id, planTiles(page, board.size, printerMargin)])
+      boards.map((board) => [board.id, planTiles(page, board.size, printerMargin, cutMarks)])
     ) as Record<string, TileGrid>
   );
 
@@ -267,6 +267,7 @@
       runBoards,
       page,
       printerMargin,
+      cutMarks,
       tilesWantBlankBacks(includeBacks, summary.sheets)
     )
   );
