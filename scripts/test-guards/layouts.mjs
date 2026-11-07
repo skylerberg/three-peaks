@@ -108,8 +108,8 @@ export const guards = [
     // own check would otherwise be the first to say so, card by card.
     name: 'a layout whose edges are pinned in a circle is refused',
     file: 'src/layouts.ts',
-    find: '  if (cycle !== null) errors.push(',
-    replace: '  if (false) errors.push(',
+    find: '  if (cycle !== null)\n    errors.push(',
+    replace: '  if (false)\n    errors.push(',
     tests: ['src/layouts.test.ts'],
     testName: 'names the elements going round a circle of pins',
     runner: 'shared',
