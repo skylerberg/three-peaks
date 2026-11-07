@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cardPreset, type LayoutSpec } from '@three-peaks/shared';
+import { sql } from 'kysely';
+import { db } from '../../src/db/index.ts';
+import { down, up } from '../../src/db/migrations/0020_layout_geometry.ts';
 import { createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
 
 const PNG = Buffer.from([
@@ -53,22 +56,30 @@ describe('card layouts and card content', () => {
       elements: [
         {
           type: 'image',
-          box: [0, 0, 63, 88],
+          id: null,
+          box: { left: 0, top: 0, right: 63, bottom: 88 },
           when: null,
+          rotate: 0,
           source: { from: 'file', file_id: frameId },
           fit: 'fill',
+          slice: null,
         },
         {
           type: 'image',
-          box: [5, 5, 53, 40],
+          id: null,
+          box: { left: 5, top: 5, right: 58, bottom: 45 },
           when: 'art',
+          rotate: 0,
           source: { from: 'field', field: 'art' },
           fit: 'cover',
+          slice: null,
         },
         {
           type: 'text',
-          box: [5, 50, 53, 30],
+          id: 'rules',
+          box: { left: 5, top: 50, right: 58, bottom: 80 },
           when: null,
+          rotate: 0,
           text: '**{{name}}**\n{{rules}}',
           font: 'body',
           bold_font: null,
@@ -78,6 +89,7 @@ describe('card layouts and card content', () => {
           color: '#1a1a1a',
           align: 'left',
           valign: 'top',
+          hug: false,
         },
       ],
       ...overrides,
@@ -204,6 +216,42 @@ describe('card layouts and card content', () => {
       ]);
     });
 
+    it('refuses edges pinned to each other in a circle', async () => {
+      const [, , rules] = spec().elements;
+      const res = await createLayout('Circle', {
+        spec: spec({
+          elements: [
+            {
+              type: 'rect',
+              id: 'plate',
+              box: {
+                left: 0,
+                top: { element: 'rules', edge: 'top', offset_mm: -1 },
+                right: 63,
+                bottom: 88,
+              },
+              when: null,
+              rotate: 0,
+              fill: '#000000',
+              stroke: null,
+              stroke_mm: 0,
+              radius_mm: 0,
+              opacity: 1,
+            },
+            {
+              ...rules!,
+              box: { ...rules!.box, bottom: { element: 'plate', edge: 'bottom', offset_mm: 0 } },
+            },
+          ],
+        }),
+      });
+      expect(res.status).toBe(422);
+      const messages = res.body.details.map((d: { message: string }) => d.message);
+      expect(messages).toEqual([
+        'elements are pinned to each other in a circle: plate → rules → plate',
+      ]);
+    });
+
     it('refuses a font that is not a font and an icon that is not an image', async () => {
       const res = await createLayout('Swapped', {
         spec: spec({ fonts: { body: iconId }, icons: { coin: fontId } }),
@@ -232,6 +280,34 @@ describe('card layouts and card content', () => {
       const res = await createLayout('Doomed', { spec: spec({ icons: { coin: doomed } }) });
       expect(res.status).toBe(422);
       expect(res.body.details[0].message).toBe('icon "coin" is doomed.png, which is deleted');
+    });
+
+    it('rewrites a layout stored before pinned edges into the new form, and back', async () => {
+      const { body } = await createLayout('Legacy');
+      const stored = async () =>
+        (
+          await sql<{
+            spec: LayoutSpec;
+          }>`select spec from card_layout where id = ${body.id}`.execute(db)
+        ).rows[0]!.spec;
+      const current = await stored();
+
+      await down(db as never);
+      const old = (await stored()).elements as unknown as Record<string, unknown>[];
+      expect(old[0]).toEqual({
+        type: 'image',
+        box: [0, 0, 63, 88],
+        when: null,
+        source: { from: 'file', file_id: frameId },
+        fit: 'fill',
+      });
+      // An id is one of the new settings, so the copy that has one stays new.
+      expect(old[2]!.box).toEqual({ left: 5, top: 50, right: 58, bottom: 80 });
+
+      await up(db as never);
+      const again = await stored();
+      expect(again.elements.slice(0, 2)).toEqual(current.elements.slice(0, 2));
+      expect(again.elements[2]).toEqual(current.elements[2]);
     });
 
     it('replaces a layout whole', async () => {

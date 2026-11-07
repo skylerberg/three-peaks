@@ -893,6 +893,15 @@ sha256 of one card: a dependency bump that moves it would give every rendered
 card in every project a new version at its next render, and that is a decision
 for whoever bumps it rather than a side effect.
 
+**Geometry comes before drawing.** `svg.ts` works out every element's box
+first, in the order its pinned edges need, and only then paints in list order;
+copy is set during that pass, because a hugging element's size is the copy.
+Nothing about this pass may change the document an unpinned, unturned layout
+produces -- the checksum `layoutRender.test.ts` pins is what says it did not. The pass is the
+renderer's alone: the API stores pins and checks them for cycles, but which
+way a card comes out depends on its copy and its fonts, and only the CLI has
+those.
+
 **That is the whole of the staleness bookkeeping.** Nothing records which
 version of which layout a card was drawn from. The CLI renders, compares the
 sha256 with the `checksum` the file row now carries, and uploads only on a

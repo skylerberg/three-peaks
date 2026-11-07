@@ -10,21 +10,35 @@ const L = LAYOUT_LIMITS;
 const key = type('string');
 const hexColor = type('/^#[0-9a-f]{6}$/');
 const coordinate = type(range(L.coordinate_mm));
-const box = type([coordinate, coordinate, coordinate, coordinate]);
+// Pinned edges are checked against the other elements by layoutReferenceErrors.
+const edge = coordinate.or({
+  element: key,
+  edge: "'left' | 'right' | 'top' | 'bottom'",
+  offset_mm: coordinate,
+});
+const box = type({ left: edge, top: edge, right: edge, bottom: edge });
 const when = key.or('null');
+const id = key.or('null');
+const rotate = type('0 | 90 | 180 | 270');
+const sliceInset = type(`${L.slice_px[0]} <= number.integer <= ${L.slice_px[1]}`);
 
 const imageElementSchema = type({
   type: "'image'",
+  id,
   box,
   when,
+  rotate,
   source: type({ from: "'field'", field: key }).or({ from: "'file'", file_id: uuid }),
   fit: "'cover' | 'contain' | 'fill'",
+  slice: type([sliceInset, sliceInset, sliceInset, sliceInset]).or('null'),
 });
 
 const rectElementSchema = type({
   type: "'rect'",
+  id,
   box,
   when,
+  rotate,
   fill: hexColor.or('null'),
   stroke: hexColor.or('null'),
   stroke_mm: range(L.stroke_mm),
@@ -34,8 +48,10 @@ const rectElementSchema = type({
 
 const textElementSchema = type({
   type: "'text'",
+  id,
   box,
   when,
+  rotate,
   text: `string <= ${L.max_template_length}`,
   font: key,
   bold_font: key.or('null'),
@@ -45,6 +61,7 @@ const textElementSchema = type({
   color: hexColor,
   align: "'left' | 'center' | 'right'",
   valign: "'top' | 'middle' | 'bottom'",
+  hug: 'boolean',
 });
 
 export const layoutSpecSchema = type({

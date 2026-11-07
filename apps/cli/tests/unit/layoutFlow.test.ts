@@ -162,6 +162,24 @@ describe('flowText', () => {
       fits: true,
       size_pt: 10,
       items: [],
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
     });
+  });
+
+  it('reports the room the copy took, held to the edges it is aligned to', () => {
+    // Two lines: "aa" and "a", each a line height tall, in a 20 by 30 box set
+    // against its bottom right corner.
+    const result = flowText(
+      parseMarkup('aa\na').runs,
+      faces,
+      { x: 0, y: 0, width: 20, height: 30 },
+      { ...style, align: 'right', valign: 'bottom' }
+    );
+    if (!result.fits) throw new Error();
+    const widest = 2 * 0.5 * size;
+    expect(result.bounds.x).toBeCloseTo(20 - widest, 6);
+    expect(result.bounds.width).toBeCloseTo(widest, 6);
+    expect(result.bounds.y).toBeCloseTo(30 - 2 * size, 6);
+    expect(result.bounds.height).toBeCloseTo(2 * size, 6);
   });
 });

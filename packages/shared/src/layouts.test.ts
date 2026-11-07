@@ -8,7 +8,10 @@ import {
   markupErrors,
   parseMarkup,
   templateFields,
+  type LayoutBox,
+  type LayoutElement,
   type LayoutSpec,
+  type RectElement,
   type TextElement,
 } from './layouts.ts';
 
@@ -16,11 +19,26 @@ const FONT = '00000000-0000-4000-8000-000000000001';
 const ICON = '00000000-0000-4000-8000-000000000002';
 const FRAME = '00000000-0000-4000-8000-000000000003';
 
+const box = (x: number, y: number, width: number, height: number): LayoutBox => ({
+  left: x,
+  top: y,
+  right: x + width,
+  bottom: y + height,
+});
+
+const pin = (element: string, edge: 'left' | 'right' | 'top' | 'bottom', offset_mm = 0) => ({
+  element,
+  edge,
+  offset_mm,
+});
+
 function text(overrides: Partial<TextElement> = {}): TextElement {
   return {
     type: 'text',
-    box: [5, 50, 53, 30],
+    id: null,
+    box: box(5, 50, 53, 30),
     when: null,
+    rotate: 0,
     text: '{{rules}}',
     font: 'body',
     bold_font: null,
@@ -30,6 +48,23 @@ function text(overrides: Partial<TextElement> = {}): TextElement {
     color: '#000000',
     align: 'left',
     valign: 'top',
+    hug: false,
+    ...overrides,
+  };
+}
+
+function rect(overrides: Partial<RectElement> = {}): RectElement {
+  return {
+    type: 'rect',
+    id: null,
+    box: box(0, 0, 10, 10),
+    when: null,
+    rotate: 0,
+    fill: '#000000',
+    stroke: null,
+    stroke_mm: 0,
+    radius_mm: 0,
+    opacity: 1,
     ...overrides,
   };
 }
@@ -43,17 +78,23 @@ function spec(overrides: Partial<LayoutSpec> = {}): LayoutSpec {
     elements: [
       {
         type: 'image',
-        box: [0, 0, 63, 88],
+        id: null,
+        box: box(0, 0, 63, 88),
         when: null,
+        rotate: 0,
         source: { from: 'file', file_id: FRAME },
         fit: 'fill',
+        slice: null,
       },
       {
         type: 'image',
-        box: [5, 5, 53, 40],
+        id: null,
+        box: box(5, 5, 53, 40),
         when: null,
+        rotate: 0,
         source: { from: 'field', field: 'art' },
         fit: 'cover',
+        slice: null,
       },
       text(),
     ],
@@ -126,10 +167,13 @@ describe('layoutReferenceErrors', () => {
           text({ text: '{{nope}}', when: 'missing', font: 'title', bold_font: 'heavy' }),
           {
             type: 'image',
-            box: [0, 0, 1, 1],
+            id: null,
+            box: box(0, 0, 1, 1),
             when: null,
+            rotate: 0,
             source: { from: 'field', field: 'ghost' },
             fit: 'cover',
+            slice: null,
           },
         ],
       })
@@ -150,10 +194,13 @@ describe('layoutReferenceErrors', () => {
           text({ text: '{{art}}' }),
           {
             type: 'image',
-            box: [0, 0, 1, 1],
+            id: null,
+            box: box(0, 0, 1, 1),
             when: null,
+            rotate: 0,
             source: { from: 'field', field: 'rules' },
             fit: 'cover',
+            slice: null,
           },
         ],
       })
@@ -174,13 +221,71 @@ describe('layoutReferenceErrors', () => {
     const errors = layoutReferenceErrors(
       spec({
         icons: { Coin: ICON },
-        elements: [text({ text: 'x', box: [0, 0, 0, 5], min_size_pt: 12 })],
+        elements: [text({ text: 'x', box: box(0, 0, 0, 5), min_size_pt: 12 })],
       })
     );
     expect(errors).toEqual([
       'icons key "Coin" must be lower-case letters, digits, - or _, starting with a letter',
       'element 1 (text): box width and height must be positive',
       'element 1 (text): min_size_pt is larger than size_pt',
+    ]);
+  });
+});
+
+describe('pinned edges', () => {
+  const errors = (...elements: LayoutElement[]) => layoutReferenceErrors(spec({ elements }));
+
+  it('accepts a backing pinned to the copy it sits behind, listed before it', () => {
+    expect(
+      errors(
+        rect({ box: { ...box(0, 0, 63, 10), left: pin('name', 'left', -2) } }),
+        text({ id: 'name', hug: true })
+      )
+    ).toEqual([]);
+  });
+
+  it('refuses an id that is not a key, and one two elements share', () => {
+    expect(errors(rect({ id: 'Plate' }), rect({ id: 'name' }), text({ id: 'name' }))).toEqual([
+      'element 1 (rect): id "Plate" must be lower-case letters, digits, - or _, starting with a letter',
+      'element 3 (text): id "name" is also element 2\'s',
+    ]);
+  });
+
+  it('refuses a pin to nothing, to itself, and across the other axis', () => {
+    expect(
+      errors(
+        rect({ box: { ...box(0, 0, 1, 1), top: pin('ghost', 'top') } }),
+        rect({ id: 'self', box: { ...box(0, 0, 1, 1), right: pin('self', 'left', 5) } }),
+        rect({ box: { ...box(0, 0, 1, 1), left: pin('self', 'bottom') } })
+      )
+    ).toEqual([
+      'element 1 (rect): box.top names "ghost", which is no element\'s id',
+      'element 2 (rect): box.right is pinned to its own left',
+      'element 3 (rect): box.left is pinned to self.bottom, which runs the other way',
+    ]);
+  });
+
+  it('checks a numbered box for room only along an axis with no pin', () => {
+    // Bottom above top, but pinned: only the card can say how it comes out.
+    expect(
+      errors(text({ id: 'name' }), rect({ box: { ...box(0, 10, 5, -5), top: pin('name', 'top') } }))
+    ).toEqual([]);
+  });
+
+  it('names the elements going round a circle of pins', () => {
+    expect(
+      errors(
+        rect({ id: 'a', box: { ...box(0, 0, 1, 1), left: pin('b', 'left') } }),
+        rect({ id: 'b', box: { ...box(0, 0, 1, 1), top: pin('c', 'top') } }),
+        rect({ id: 'c', box: { ...box(0, 0, 1, 1), right: pin('a', 'right') } })
+      )
+    ).toEqual(['elements are pinned to each other in a circle: a → b → c → a']);
+  });
+
+  it('refuses a nine-slice on an image that is not stretched to fill', () => {
+    const [frame] = spec().elements;
+    expect(errors({ ...frame!, slice: [4, 0, 4, 0], fit: 'contain' } as LayoutElement)).toEqual([
+      'element 1 (image): slice stretches the image, so its fit must be fill',
     ]);
   });
 });

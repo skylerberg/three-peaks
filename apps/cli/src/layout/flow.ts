@@ -38,8 +38,11 @@ type Placed =
   | { kind: 'text'; text: string; bold: boolean; x: number; baseline: number; size: number }
   | { kind: 'icon'; key: string; x: number; y: number; size: number };
 
+// `bounds` is the room the copy took: from the top of its first line to the
+// bottom of its last, and from the start of its widest line to that line's end.
 export type FlowResult =
-  { fits: true; size_pt: number; items: Placed[] } | { fits: false; reason: string };
+  | { fits: true; size_pt: number; items: Placed[]; bounds: FlowBox }
+  | { fits: false; reason: string };
 
 // A quarter of a point at a time: fine enough that a box is filled, coarse
 // enough that the loop is short, and the same steps on every machine.
@@ -137,7 +140,7 @@ function place(
   box: FlowBox,
   style: FlowStyle,
   size: number
-): Placed[] {
+): { items: Placed[]; bounds: FlowBox } {
   const { ascender, descender } = faces.regular;
   const lineHeight = style.line_height * size;
   // Half the leading above the font's own extent and half below, as CSS does,
@@ -152,6 +155,8 @@ function place(
         : box.y + box.height - blockHeight;
 
   const items: Placed[] = [];
+  let start = Infinity;
+  let end = -Infinity;
   lines.forEach((line, index) => {
     const baseline = top + index * lineHeight + halfLeading + ascender * size;
     let x =
@@ -160,6 +165,8 @@ function place(
         : style.align === 'center'
           ? box.x + (box.width - line.width) / 2
           : box.x + box.width - line.width;
+    start = Math.min(start, x);
+    end = Math.max(end, x + line.width);
     line.words.forEach((word, wordIndex) => {
       if (wordIndex > 0) x += face(faces, word.spaceBold).advance(' ', size);
       for (const piece of word.pieces) {
@@ -175,7 +182,7 @@ function place(
       }
     });
   });
-  return items;
+  return { items, bounds: { x: start, y: top, width: end - start, height: blockHeight } };
 }
 
 export function flowText(
@@ -186,7 +193,14 @@ export function flowText(
 ): FlowResult {
   const paras = paragraphs(runs);
   const empty = paras.every((para) => para.length === 0);
-  if (empty) return { fits: true, size_pt: style.size_pt, items: [] };
+  if (empty) {
+    return {
+      fits: true,
+      size_pt: style.size_pt,
+      items: [],
+      bounds: { ...box, width: 0, height: 0 },
+    };
+  }
 
   let last = '';
   for (let pt = style.size_pt; pt >= style.min_size_pt - 1e-9; pt -= STEP_PT) {
@@ -198,7 +212,7 @@ export function flowText(
     const tooWide = lines.find((line) => line.width > box.width + EPSILON_MM);
     const height = lines.length * style.line_height * size;
     if (tooWide === undefined && height <= box.height + EPSILON_MM) {
-      return { fits: true, size_pt: sizePt, items: place(faces, lines, box, style, size) };
+      return { fits: true, size_pt: sizePt, ...place(faces, lines, box, style, size) };
     }
     last =
       tooWide !== undefined
