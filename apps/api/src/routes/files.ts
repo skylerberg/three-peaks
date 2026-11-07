@@ -21,6 +21,7 @@ import {
   restoreFile,
   serializeFile,
   storeUpload,
+  versionEventData,
 } from '../services/files.ts';
 import {
   FOLDER_COLUMNS,
@@ -34,7 +35,6 @@ import {
   type FolderRow,
 } from '../services/folderTree.ts';
 import {
-  type DeckFileRole,
   deletedOwner,
   homeColumns,
   parseHome,
@@ -42,7 +42,7 @@ import {
   sameHome,
   unowned,
 } from '../services/fileHome.ts';
-import { assertRoomForCard, ensureDeckCard, readDeck, readDeckCards } from '../services/decks.ts';
+import { assertRoomForCard, ensureDeckCard, placeInDeck, publishDeck } from '../services/decks.ts';
 import { deleteStoredObjectsAfterCommit, reclaim, storage } from '../services/storage/index.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
@@ -89,19 +89,6 @@ const standardErrors = {
 
 // deleted_at is deliberately not on the wire: nothing reads one folder by id,
 // and the deleted listing carries the fact where it is needed.
-// A new version moves the file's mirror columns and the project's total as well
-// as adding a row, so the event carries all three rather than the one a client
-// would then have to read the others back for.
-async function versionEventData(
-  c: Pick<AppContext, 'get'>,
-  projectId: string,
-  fileId: string,
-  version: ReturnType<typeof serializeVersion>
-) {
-  const { storage_used_bytes: used, ...file } = await fileWithUsage(c, projectId, fileId);
-  return { version, file, storage_used_bytes: used };
-}
-
 function serializeFolder(row: FolderRow) {
   return {
     id: row.id,
@@ -210,34 +197,6 @@ async function lookupVersion(
   return mirrorAsVersionOne(db, fileId);
 }
 
-// Its own function rather than an inline test, so the single line deciding
-// between keeping the bytes and reclaiming them has one site.
-// A deck owns its artwork and its arrangement names every piece of it, so
-// arriving and leaving are two halves of one rule and both live here.
-async function placeInDeck(
-  c: AppContext,
-  deckId: string,
-  fileId: string,
-  role: DeckFileRole
-): Promise<void> {
-  const db = c.get('db');
-  if (role === 'back') {
-    await db
-      .updateTable('deck')
-      .set({ back_file_id: fileId, updated_at: new Date() })
-      .where('deck.id', '=', deckId)
-      .execute();
-    return;
-  }
-
-  await ensureDeckCard(db, deckId, fileId);
-  await db
-    .updateTable('deck')
-    .set({ updated_at: new Date() })
-    .where('deck.id', '=', deckId)
-    .execute();
-}
-
 // Restoring is the third way to arrive, and the one that may find the place
 // already kept: a delete by hand leaves the `deck_card` row alone, so the card
 // comes back where it was, while an import's removal took the row with it and
@@ -283,14 +242,6 @@ async function removeFromDeck(c: AppContext, deckId: string, fileId: string): Pr
     .set({ updated_at: new Date() })
     .where('deck.id', '=', deckId)
     .execute();
-}
-
-async function publishDeck(c: AppContext, projectId: string, deckId: string): Promise<void> {
-  const [deck, cards] = await Promise.all([readDeck(c, deckId), readDeckCards(c, deckId)]);
-  publishAfterCommit(c.get('postCommitHooks'), c.get('user').id, 'deck_updated', projectId, {
-    deck,
-    cards,
-  });
 }
 
 function purgeRequested(query: { purge?: string }): boolean {

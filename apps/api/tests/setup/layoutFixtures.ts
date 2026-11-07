@@ -1,6 +1,6 @@
 import opentype from 'opentype.js';
 import { Resvg } from '@resvg/resvg-wasm';
-import { ensureWasm } from '../src/layout/render.ts';
+import { ensureWasm } from '../../src/services/cardRender/render.ts';
 
 // Fonts and pictures made in the test rather than checked in: a font whose
 // every printable ASCII glyph is a box of one advance, so a line's width is

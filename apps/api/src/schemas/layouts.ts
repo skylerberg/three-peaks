@@ -1,6 +1,7 @@
 import { type } from 'arktype';
 import { LAYOUT_LIMITS, MODEL_LIMITS } from '@three-peaks/shared';
 import { numberRange as range, stringWithLength, uuid } from './common.ts';
+import { fileSchema } from './files.ts';
 
 const { card } = MODEL_LIMITS;
 const L = LAYOUT_LIMITS;
@@ -97,9 +98,9 @@ export const cardLayoutSchema = type({
 
 export const cardLayoutListSchema = type({ layouts: cardLayoutSchema.array() });
 
-// Which decks hold cards drawn from this layout, so that whoever changes it can
-// re-render exactly those. Deleted decks and deleted cards are left out: they
-// are not re-rendered, and a restore brings back the image they had.
+// Which decks hold cards drawn from this layout. Deleted decks and deleted
+// cards are left out: they are not drawn while deleted, and restoring one asks
+// for it to be drawn again.
 export const cardLayoutWithDecksSchema = type({
   layout: cardLayoutSchema,
   decks: type({ id: 'string', name: 'string', card_count: 'number' }).array(),
@@ -128,9 +129,21 @@ export const cardContentSchema = type({
   project_id: 'string',
   layout_id: 'string',
   fields: fieldValues,
+  // Whether the image is the picture of this content: `pending` while the
+  // background renderer has yet to draw it after a change to its layout or a
+  // file it draws, `failed` when it cannot be drawn as things stand, and why.
+  render_status: "'current' | 'pending' | 'failed'",
+  render_error: 'string | null',
   updated_by: 'string | null',
   created_at: 'string',
   updated_at: 'string',
+});
+
+// A save draws the card there and then, and says which version of its image
+// that made -- null when the image came out as it already was.
+export const savedCardContentSchema = type({
+  content: cardContentSchema,
+  image_version: 'number | null',
 });
 
 export const cardContentListSchema = type({ cards: cardContentSchema.array() });
@@ -139,5 +152,37 @@ export const cardContentQuerySchema = type({ deck_id: uuid });
 
 export const putCardContentRequestSchema = type({
   layout_id: uuid,
+  fields: fieldValues,
+});
+
+// A new card, drawn and added to the deck as its next image.
+export const createCardRequestSchema = type({
+  'id?': uuid,
+  deck_id: uuid,
+  filename: stringWithLength(1, 255),
+  layout_id: uuid,
+  fields: fieldValues,
+});
+
+export const createdCardSchema = type({
+  file: fileSchema,
+  content: cardContentSchema,
+});
+
+// Every card of a deck drawn from a layout, or only the ones named.
+export const renderCardsRequestSchema = type({
+  deck_id: uuid,
+  'file_ids?': uuid.array().atLeastLength(1),
+});
+
+export const renderCardsResultSchema = type({ requested: 'number' });
+
+// A card drawn without saving anything: a layout as it stands in an editor,
+// and one card's values for it.
+export const previewCardRequestSchema = type({
+  project_id: uuid,
+  width_mm: range(card.width_mm),
+  height_mm: range(card.height_mm),
+  spec: layoutSpecSchema,
   fields: fieldValues,
 });

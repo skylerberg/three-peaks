@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { imageSize } from '../../src/layout/imageSize.ts';
-import { solidPng } from '../layoutFixtures.ts';
+import { imageSize } from '../../../src/services/cardRender/imageSize.ts';
+import { solidPng } from '../../setup/layoutFixtures.ts';
 
 const svg = (root: string) => ({
   bytes: new TextEncoder().encode(`<?xml version="1.0"?>\n${root}<rect/></svg>`),

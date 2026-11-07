@@ -37,25 +37,13 @@ async function localFileSize(filePath: string): Promise<number> {
 // context's fetch, so a harness that swaps it reaches them too. The server
 // sniffs the type from the bytes and ignores any declared one, which is why
 // every upload is sent as an opaque stream.
-// A local path, or bytes already in memory -- a rendered card, which never
-// touches the disk.
-export type UploadSource = string | Uint8Array;
-
-async function sourceSize(source: UploadSource): Promise<number> {
-  if (typeof source === 'string') return localFileSize(source);
-  if (source.byteLength > MAX_UPLOAD_BYTES) {
-    throw new CliError(uploadTooLargeMessage(MAX_UPLOAD_BYTES, source.byteLength), EXIT.invalid);
-  }
-  return source.byteLength;
-}
-
 export async function sendFile<T>(
   ctx: RuntimeContext,
   path: string,
   query: Query,
-  source: UploadSource
+  filePath: string
 ): Promise<{ status: number; body: T }> {
-  const size = await sourceSize(source);
+  const size = await localFileSize(filePath);
 
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
@@ -73,10 +61,7 @@ export async function sendFile<T>(
   const request = new Request(`${ctx.baseUrl}${path}?${search.toString()}`, {
     method: 'POST',
     headers,
-    body:
-      typeof source === 'string'
-        ? (Readable.toWeb(createReadStream(source)) as ReadableStream<Uint8Array>)
-        : source,
+    body: Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>,
     duplex: 'half',
   } as RequestInit);
 
@@ -153,24 +138,6 @@ export async function fetchFileBytes(
   return (await stat(target)).size;
 }
 
-// A file's current bytes, held in memory, with the type the server stored
-// them as -- which is the sniffed one, never whatever the upload claimed.
-export async function downloadBytes(
-  ctx: RuntimeContext,
-  fileId: string
-): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const result = await ctx.api.GET('/api/files/{id}/download', {
-    params: { path: { id: fileId } },
-    parseAs: 'arrayBuffer',
-  });
-  if (!result.response.ok) throw toApiError(result.response, result.error);
-  const data = result.data as unknown as ArrayBuffer | undefined;
-  return {
-    bytes: new Uint8Array(data ?? new ArrayBuffer(0)),
-    contentType: (result.response.headers.get('Content-Type') ?? '').split(';')[0]!.trim(),
-  };
-}
-
 // Where a download lands: a file named outright, into a directory under the
 // file's own name, or `-` for stdout. Nothing is overwritten without `force`.
 export async function downloadTarget(
@@ -205,16 +172,16 @@ export interface UploadResult {
 export async function appendVersion(
   ctx: RuntimeContext,
   file: Pick<FileRow, 'id' | 'filename'>,
-  source: UploadSource
+  filePath: string
 ): Promise<UploadResult> {
   const { body } = await sendFile<FileVersionResult>(
     ctx,
     `/api/files/${file.id}/versions`,
     {},
-    source
+    filePath
   );
   return {
-    path: typeof source === 'string' ? source : file.filename,
+    path: filePath,
     outcome: body.created ? 'versioned' : 'unchanged',
     file_id: file.id,
     filename: file.filename,

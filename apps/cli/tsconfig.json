@@ -4,5 +4,10 @@
     "types": ["node"],
     "lib": ["ESNext", "DOM"]
   },
-  "include": ["src/**/*", "tests/**/*", "scripts/**/*"]
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    "scripts/**/*",
+    "../api/src/services/cardRender/opentype.d.ts"
+  ]
 }

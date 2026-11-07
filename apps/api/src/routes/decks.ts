@@ -14,6 +14,7 @@ import {
 } from '../services/decks.ts';
 import { ownedStorageKeys } from '../services/files.ts';
 import { deleteStoredObjectsAfterCommit } from '../services/storage/index.ts';
+import { requestDeckRenders } from '../services/renderRequests.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
 import { AppError, isUniqueViolation } from '../utils/errors.ts';
@@ -241,6 +242,10 @@ decksRouter.patch(
       }
       throw error;
     }
+    // A new size is drawn, or refused on each card until its layout matches.
+    if (body.card_width_mm !== undefined || body.card_height_mm !== undefined) {
+      await requestDeckRenders(c, deckId);
+    }
 
     // Both halves, even though this route left the cards alone: one fixed shape
     // costs a read here and saves every client testing which half arrived.
@@ -352,6 +357,8 @@ decksRouter.post(
         .set({ deleted_at: null, deleted_by: null, updated_at: new Date() })
         .where('deck.id', '=', deckId)
         .execute();
+      // Its laid-out cards may have fallen behind while it was gone.
+      await requestDeckRenders(c, deckId);
     } catch (error) {
       // The name it had may have been taken while it was gone.
       if (isUniqueViolation(error)) {

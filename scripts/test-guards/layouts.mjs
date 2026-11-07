@@ -1,5 +1,5 @@
-// Card layouts -- what the API accepts as one, and the CLI that renders cards
-// from them.
+// Card layouts -- what the API accepts as one, how it draws cards from them,
+// and the CLI that asks it to.
 
 export const guards = [
   {
@@ -7,47 +7,63 @@ export const guards = [
     // is drawn in whatever font the rasteriser finds, which is the one thing
     // two machines are free to disagree about.
     name: 'card copy is written as glyph paths, never as SVG text',
-    root: true,
-    file: 'apps/cli/src/layout/svg.ts',
+    file: 'src/services/cardRender/svg.ts',
     find: '      paths.push(font.getPath(item.text, item.x, item.baseline, item.size).toPathData(4));',
     replace:
       '      icons.push(`<text x="${n(item.x)}" y="${n(item.baseline)}" font-size="${n(item.size)}">${item.text}</text>`);',
-    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    tests: ['tests/unit/cardRender/layoutRender.test.ts'],
     testName: 'writes copy as paths and never as text',
   },
   {
     // Without it a render is either drawn always or never, and the badge on
     // the cards with a cost appears on all of them.
     name: 'an element is drawn only when its `when` field has a value',
-    root: true,
-    file: 'apps/cli/src/layout/svg.ts',
+    file: 'src/services/cardRender/svg.ts',
     find: '    if (element.when !== null && !hasValue(fields, element.when)) return null;',
     replace: '',
-    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    tests: ['tests/unit/cardRender/layoutRender.test.ts'],
     testName: 'leaves out an element whose `when` field is empty',
   },
   {
-    // Uploading whatever was rendered would still be correct -- the server
-    // appends nothing for identical bytes -- but every push would then be a
-    // transfer per card and a report of every card as updated.
-    name: 'a pushed card whose image comes out the same is not uploaded',
+    // A card drawn again that came out as it was is what `deck render` reports
+    // as unchanged; without the comparison every card reads as updated.
+    name: 'a card drawn again that came out the same is reported unchanged',
     root: true,
     file: 'apps/cli/src/layouts.ts',
-    find: '      const imageChanged = sha256(bytes) !== existing.file.checksum;',
-    replace: '      const imageChanged = true;',
+    find: "outcome: checksum === target.card.file.checksum ? 'unchanged' : 'versioned',",
+    replace: "outcome: 'versioned',",
     tests: ['../cli/tests/e2e/layout.test.ts'],
-    testName: 'changes nothing when the file has not changed',
+    testName: 'says which cards a new version of their art is waiting on',
   },
   {
-    // The same comparison on the re-render path, where it is also what --check
-    // answers with.
-    name: 'a re-rendered card whose image comes out the same is not reported stale',
-    root: true,
-    file: 'apps/cli/src/layouts.ts',
-    find: "      if (sha256(bytes) === card.file.checksum) return { ...base, outcome: 'unchanged' };\n",
+    // Without it a layout saves and its cards keep the picture of the old one,
+    // with nothing saying they are behind.
+    name: 'a change to a layout asks for its cards to be drawn again',
+    file: 'src/routes/cardLayouts.ts',
+    find: '    if (!drawsAlike) await requestLayoutRenders(c, layoutId);',
     replace: '',
-    tests: ['../cli/tests/e2e/layout.test.ts'],
-    testName: 'says which cards a new version of their art left out of date',
+    tests: ['tests/e2e/cardLayouts.test.ts'],
+    testName: 'draws the cards again in the background when their layout changes',
+  },
+  {
+    // The same for a font, an icon, a frame or art: every version is written
+    // through appendFileVersion, so this one line covers every way to make one.
+    name: 'a new version of a file asks for the cards drawing it to be drawn again',
+    file: 'src/services/files.ts',
+    find: '  await requestRendersOfFile(c, file.project_id, fileId);',
+    replace: '',
+    tests: ['tests/e2e/cardLayouts.test.ts'],
+    testName: 'draws the cards again when a file they draw gets a version',
+  },
+  {
+    // A card drawing a laid-out card is drawn again whenever that one is, and a
+    // card drawing itself is drawn again forever.
+    name: 'a laid-out card cannot be drawn into another',
+    file: 'src/services/cardLayouts.ts',
+    find: '  if (file.drawn) {',
+    replace: '  if (false) {',
+    tests: ['tests/e2e/cardLayouts.test.ts'],
+    testName: 'will not draw a laid-out card into another',
   },
   {
     // The project filter is what makes "a file in the same project" true. Left
@@ -64,9 +80,9 @@ export const guards = [
     // A layout on a card of the wrong size renders without complaint and
     // prints at the wrong scale; this is the first place that can say so.
     name: "card content is refused for a layout of a different size from the deck's",
-    file: 'src/routes/cardContent.ts',
-    find: '    if (deckSize !== layoutSize) {',
-    replace: '    if (false) {',
+    file: 'src/services/cardImages.ts',
+    find: '  if (layout.width_mm !== deck.width_mm || layout.height_mm !== deck.height_mm) {',
+    replace: '  if (false) {',
     tests: ['tests/e2e/cardLayouts.test.ts'],
     testName: 'refuses a layout drawn on a card of another size',
   },
@@ -74,33 +90,30 @@ export const guards = [
     // Copy that came out empty has no edge to pin to. Following the pin
     // anyway draws the backing behind nothing, at a size worked out from NaN.
     name: 'an element pinned to one that drew nothing is left out too',
-    root: true,
-    file: 'apps/cli/src/layout/svg.ts',
+    file: 'src/services/cardRender/svg.ts',
     find: '      if (pinned === null) return null;',
     replace: '      if (pinned === null) continue;',
-    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    tests: ['tests/unit/cardRender/layoutRender.test.ts'],
     testName: 'leaves out an element pinned to one that drew nothing',
   },
   {
     // Without it a hugging name measures as its whole box, and the backing
     // pinned to it is as long for one letter as for twenty.
     name: 'copy that hugs measures as what it set, not as its box',
-    root: true,
-    file: 'apps/cli/src/layout/svg.ts',
+    file: 'src/services/cardRender/svg.ts',
     find: '    const used = element.hug ? turned(text.flow.bounds, frame, element.rotate) : frame;',
     replace: '    const used = frame;',
-    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    tests: ['tests/unit/cardRender/layoutRender.test.ts'],
     testName: 'pins a backing to the copy it sits behind, however long the copy',
   },
   {
     // Two pieces of a sliced image that merely meet each cover half of the
     // pixel their edge crosses, and the card shows through the seam.
     name: "a nine-slice image's pieces overlap by a pixel",
-    root: true,
-    file: 'apps/cli/src/layout/svg.ts',
+    file: 'src/services/cardRender/svg.ts',
     find: '  const reach = canvas.pixel;',
     replace: '  const reach = 0;',
-    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    tests: ['tests/unit/cardRender/layoutRender.test.ts'],
     testName: 'joins its pieces with no seam',
   },
   {

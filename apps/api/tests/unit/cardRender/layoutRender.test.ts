@@ -10,9 +10,13 @@ import {
   type RectElement,
   type TextElement,
 } from '@three-peaks/shared';
-import { CardRenderer } from '../../src/layout/render.ts';
-import { CardRenderError, type CardLayout, type LoadedImage } from '../../src/layout/svg.ts';
-import { boxFont, pixelAt, rasterise, solidPng, solidSvg } from '../layoutFixtures.ts';
+import { CardRenderer } from '../../../src/services/cardRender/render.ts';
+import {
+  CardRenderError,
+  type CardLayout,
+  type LoadedImage,
+} from '../../../src/services/cardRender/svg.ts';
+import { boxFont, pixelAt, rasterise, solidPng, solidSvg } from '../../setup/layoutFixtures.ts';
 
 const ids = {
   body: '00000000-0000-4000-8000-000000000001',

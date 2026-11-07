@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { components } from '@three-peaks/shared/api';
 import { deleteUser, type TestUser } from '../../../api/tests/setup/testContext.ts';
-import { boxFont, solidPng, solidSvg } from '../layoutFixtures.ts';
+import { boxFont, solidPng, solidSvg } from '../../../api/tests/setup/layoutFixtures.ts';
+import { startRenderWorker } from '../../../api/src/services/renderWorker.ts';
 import { signedInHarness, type CliHarness } from './helpers.ts';
 
 type DeckWithCards = components['schemas']['DeckWithCards'];
@@ -59,6 +60,8 @@ describe('layout and laid-out card commands', () => {
   let owner: TestUser;
   let projectId: string;
   let dir: string;
+  // The API draws laid-out cards in the background, as a server would.
+  let stopRenders: () => Promise<void>;
 
   function cli(args: string[]) {
     return h.runCli([...args, '--project', projectId]);
@@ -83,6 +86,7 @@ describe('layout and laid-out card commands', () => {
   }
 
   beforeAll(async () => {
+    stopRenders = startRenderWorker();
     ({ h, user: owner } = await signedInHarness('cli-layout'));
     projectId = (await (await owner.api.post('/api/projects', { name: 'Layouts' })).json()).id;
     dir = join(h.workDir, 'layout');
@@ -103,6 +107,7 @@ describe('layout and laid-out card commands', () => {
   });
 
   afterAll(async () => {
+    await stopRenders();
     await deleteUser(owner);
   });
 
@@ -154,7 +159,7 @@ describe('layout and laid-out card commands', () => {
     const path = await write('cards.yaml', cardsFile('Draw two cards, then discard one.'));
     const res = await cli(['deck', 'cards', 'push', 'Heroes', path]);
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain('Updated archer.png to version 2 (content, image)');
+    expect(res.stdout).toContain('Updated archer.png to version 2 (content)');
     expect(res.stdout).toContain('Unchanged knight.png');
     expect(await versions('archer.png')).toBe(2);
     expect(await versions('knight.png')).toBe(1);
@@ -180,23 +185,28 @@ describe('layout and laid-out card commands', () => {
     expect(again.stdout).not.toMatch(/Updated|Created/);
   });
 
-  it('says which cards a new version of their art left out of date, and renders them', async () => {
+  it('says which cards a new version of their art is waiting on, and waits for them', async () => {
+    // Held, so the card is still waiting when the check looks.
+    await stopRenders();
     const green = await write('green.png', await solidPng('#00ff00'));
     expect((await cli(['file', 'push', 'Art/knight.png', green])).exitCode).toBe(0);
 
     const check = await cli(['deck', 'render', 'Heroes', '--check']);
     expect(check.exitCode).toBe(5);
-    expect(check.stdout).toContain('Out of date: knight.png');
+    expect(check.stdout).toContain('Waiting: knight.png');
     expect(check.stdout).toContain('Unchanged archer.png');
     expect(await versions('knight.png')).toBe(1);
 
+    stopRenders = startRenderWorker();
     const render = await cli(['deck', 'render', 'Heroes']);
     expect(render.exitCode).toBe(0);
-    expect(render.stdout).toContain('Updated knight.png to version 2');
+    expect(render.stdout).toContain('Updated knight.png');
+    expect(render.stdout).toContain('Unchanged archer.png');
+    expect(await versions('knight.png')).toBe(2);
     expect((await cli(['deck', 'render', 'Heroes', '--check'])).exitCode).toBe(0);
   });
 
-  it('re-renders every card drawn from a layout when the layout changes', async () => {
+  it('waits for every card drawn from a layout to be drawn again when the layout changes', async () => {
     const res = await cli([
       'layout',
       'push',

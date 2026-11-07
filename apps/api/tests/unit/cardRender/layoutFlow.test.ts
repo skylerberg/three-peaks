@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MM_PER_PT, parseMarkup } from '@three-peaks/shared';
-import { flowText, type Face, type FlowStyle } from '../../src/layout/flow.ts';
+import { flowText, type Face, type FlowStyle } from '../../../src/services/cardRender/flow.ts';
 
 // Every character half an em wide, a space a quarter, and bold a little wider,
 // so each width below is arithmetic rather than a measurement.

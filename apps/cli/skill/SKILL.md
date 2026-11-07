@@ -85,9 +85,10 @@ threepeaks deck cards push "Heroes" cards.yaml --project "Summit" --no-input
 Only a card whose image comes out different gets a new version. Copy uses
 `{icon}` for the layout's icons, `**bold**`, and newlines. A card whose copy no
 longer fits its box is refused by name and the rest still go up — shorten the
-copy rather than editing the layout to make room, unless asked. After a new
-version of a frame, an icon or art in Assets, `threepeaks deck render "Heroes"`
-brings the cards up to date; `--check` says which are behind.
+copy rather than editing the layout to make room, unless asked. The server
+draws every card, and draws them again by itself after a new version of the
+layout, a frame, an icon or art; `threepeaks deck render "Heroes" --check` says
+which are still waiting, or which can no longer be drawn and why.
 
 Component artwork, and its settings:
 

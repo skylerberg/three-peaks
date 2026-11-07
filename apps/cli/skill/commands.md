@@ -83,15 +83,15 @@ card or a component's file instead of an Assets path.
 - `threepeaks deck import as-of <deck> <run>`
 - `threepeaks deck import abandon <deck> [--force]`
 - `threepeaks deck cards pull <deck> [--output <path>] [--force]` — laid-out cards as YAML
-- `threepeaks deck cards push <deck> <path> [--dry-run]` — creates and re-renders; never removes
-- `threepeaks deck render <deck> [card...] [--check | --output <dir>]` — `--check` exits 5 if any is out of date
+- `threepeaks deck cards push <deck> <path> [--dry-run]` — creates new cards and saves changed ones, which the server draws; never removes
+- `threepeaks deck render <deck> [card...] [--check | --output <dir>]` — draws them again and waits; `--check` exits 5 while any is waiting
 
 ## Card layouts
 
 - `threepeaks layout list`
 - `threepeaks layout show <layout>` — fields, files, and the decks drawn from it
 - `threepeaks layout pull <layout> [--output <path>] [--force]` — YAML naming files by Assets path
-- `threepeaks layout push <path> [--layout <layout>] [--no-render]` — create or replace by name, re-render its cards
+- `threepeaks layout push <path> [--layout <layout>] [--no-wait]` — create or replace by name, and wait for its cards to be drawn again
 - `threepeaks layout preview <path> [cards-file] [--deck <deck>] [--card <name>]... --output <dir>` — writes PNGs, changes nothing
 - `threepeaks layout delete <layout> [--force]` — refused while a card is drawn from it
 

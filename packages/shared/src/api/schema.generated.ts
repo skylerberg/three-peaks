@@ -1031,6 +1031,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/layouts/preview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Draw a card without saving anything
+     * @description Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG. A card that cannot be drawn is a 422 saying why.
+     */
+    post: operations['postApiLayoutsPreview'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/layouts/{layoutId}': {
     parameters: {
       query?: never;
@@ -1045,7 +1065,7 @@ export interface paths {
     get: operations['getApiLayoutsByLayoutId'];
     /**
      * Replace a card layout
-     * @description Editors only. The whole layout, validated as on create. Cards already drawn from it are not touched: their images change when they are next rendered, which is the client's to do.
+     * @description Editors only. The whole layout, validated as on create. A change to anything but the name asks for every card drawn from it to be rendered again, which happens in the background: each card's content says whether it is still waiting, or why it could not be drawn.
      */
     put: operations['putApiLayoutsByLayoutId'];
     post?: never;
@@ -1072,7 +1092,11 @@ export interface paths {
      */
     get: operations['getApiCardContent'];
     put?: never;
-    post?: never;
+    /**
+     * Create a card drawn from a layout
+     * @description Editors only. Draws the card and adds the image to the deck as its next card, the way an upload into the deck would, with its content saved beside it. Validated as a save is; the name has to be free in the deck, and the deck must have room.
+     */
+    post: operations['postApiCardContent'];
     delete?: never;
     options?: never;
     head?: never;
@@ -1089,7 +1113,7 @@ export interface paths {
     get?: never;
     /**
      * Save the content of one card
-     * @description Editors only, and an upsert: one row per card. The file must be one of a deck's images, the layout one of the same project's and the size of the deck, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project. Allowed on a deleted card, like its 3D settings: the content is not the image.
+     * @description Editors only, and an upsert: one row per card. The file must be one of a deck's images, the layout one of the same project's and the size of the deck, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project, none of them itself a card drawn from a layout. The card is drawn before anything is saved: one that cannot be drawn is refused with 422, and one whose image comes out different gets it as a new version. Allowed on a deleted card, like its 3D settings, which is drawn once it is restored.
      */
     put: operations['putApiCardContentByFileId'];
     post?: never;
@@ -1098,6 +1122,26 @@ export interface paths {
      * @description Editors only. The image stays exactly as it was last rendered, and is from now on plain artwork. 404 when the card has no content.
      */
     delete: operations['deleteApiCardContentByFileId'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/card-content/render': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ask for a deck's laid-out cards to be drawn again
+     * @description Editors only. Every card of the deck drawn from a layout, or only the ones named, is drawn again in the background, and gets a new version where its image comes out different. The API asks for this itself whenever a layout or a file a card draws changes; this is for anything it cannot see, such as a new release of the renderer. Each card's content says when it is done.
+     */
+    post: operations['postApiCardContentRender'];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -1258,17 +1302,6 @@ export interface components {
             name: string;
           };
         };
-    CardContent: {
-      created_at: string;
-      fields: {
-        [key: string]: string;
-      };
-      file_id: string;
-      layout_id: string;
-      project_id: string;
-      updated_at: string;
-      updated_by: string | null;
-    };
     CardContentList: {
       cards: {
         created_at: string;
@@ -1278,6 +1311,9 @@ export interface components {
         file_id: string;
         layout_id: string;
         project_id: string;
+        render_error: string | null;
+        /** @enum {unknown} */
+        render_status: 'current' | 'failed' | 'pending';
         updated_at: string;
         updated_by: string | null;
       }[];
@@ -2131,6 +2167,41 @@ export interface components {
       updated_at: string;
       updated_by: string;
     };
+    CreatedCard: {
+      content: {
+        created_at: string;
+        fields: {
+          [key: string]: string;
+        };
+        file_id: string;
+        layout_id: string;
+        project_id: string;
+        render_error: string | null;
+        /** @enum {unknown} */
+        render_status: 'current' | 'failed' | 'pending';
+        updated_at: string;
+        updated_by: string | null;
+      };
+      file: {
+        byte_size: number;
+        checksum: string | null;
+        component_id: string | null;
+        component_role: string | null;
+        content_type: string;
+        created_at: string;
+        deck_id: string | null;
+        deleted_at: string | null;
+        filename: string;
+        folder_id: string | null;
+        id: string;
+        image_height: number | null;
+        image_width: number | null;
+        name_locked: boolean;
+        project_id: string;
+        updated_at: string;
+        uploaded_by: string;
+      };
+    };
     CreatedPersonalAccessToken: {
       personal_access_token: {
         created_at: string;
@@ -2514,6 +2585,26 @@ export interface components {
         role: 'editor' | 'viewer';
         user_id: string;
       }[];
+    };
+    RenderCardsResult: {
+      requested: number;
+    };
+    SavedCardContent: {
+      content: {
+        created_at: string;
+        fields: {
+          [key: string]: string;
+        };
+        file_id: string;
+        layout_id: string;
+        project_id: string;
+        render_error: string | null;
+        /** @enum {unknown} */
+        render_status: 'current' | 'failed' | 'pending';
+        updated_at: string;
+        updated_by: string | null;
+      };
+      image_version: number | null;
     };
     SessionList: {
       sessions: {
@@ -7758,6 +7849,257 @@ export interface operations {
       };
     };
   };
+  postApiLayoutsPreview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          fields: {
+            [key: string]: string;
+          };
+          height_mm: number;
+          project_id: components['schemas']['Uuid'];
+          spec: {
+            dpi: number;
+            elements: (
+              | {
+                  /** @enum {unknown} */
+                  align: 'center' | 'left' | 'right';
+                  bold_font: string | null;
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  color: string;
+                  font: string;
+                  hug: boolean;
+                  id: string | null;
+                  line_height: number;
+                  min_size_pt: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  size_pt: number;
+                  text: string;
+                  /** @constant */
+                  type: 'text';
+                  /** @enum {unknown} */
+                  valign: 'bottom' | 'middle' | 'top';
+                  when: string | null;
+                }
+              | {
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  fill: string | null;
+                  id: string | null;
+                  opacity: number;
+                  radius_mm: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  stroke: string | null;
+                  stroke_mm: number;
+                  /** @constant */
+                  type: 'rect';
+                  when: string | null;
+                }
+              | {
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  /** @enum {unknown} */
+                  fit: 'contain' | 'cover' | 'fill';
+                  id: string | null;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  slice: [number, number, number, number] | null;
+                  source:
+                    | {
+                        field: string;
+                        /** @constant */
+                        from: 'field';
+                      }
+                    | {
+                        file_id: components['schemas']['Uuid'];
+                        /** @constant */
+                        from: 'file';
+                      };
+                  /** @constant */
+                  type: 'image';
+                  when: string | null;
+                }
+            )[];
+            fields: {
+              [key: string]: {
+                /** @enum {unknown} */
+                type: 'image' | 'text';
+              };
+            };
+            fonts: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+            icons: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+          };
+          width_mm: number;
+        };
+      };
+    };
+    responses: {
+      /** @description The card, as a PNG */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
   getApiLayoutsByLayoutId: {
     parameters: {
       query?: never;
@@ -8219,6 +8561,108 @@ export interface operations {
       };
     };
   };
+  postApiCardContent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          deck_id: components['schemas']['Uuid'];
+          fields: {
+            [key: string]: string;
+          };
+          filename: string;
+          layout_id: components['schemas']['Uuid'];
+          id?: components['schemas']['Uuid'];
+        };
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CreatedCard'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
   putApiCardContentByFileId: {
     parameters: {
       query?: never;
@@ -8245,7 +8689,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CardContent'];
+          'application/json': components['schemas']['SavedCardContent'];
         };
       };
       /** @description Unauthorized */
@@ -8356,6 +8800,92 @@ export interface operations {
         };
         content: {
           'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  postApiCardContentRender: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          deck_id: components['schemas']['Uuid'];
+          file_ids?: components['schemas']['Uuid'][];
+        };
+      };
+    };
+    responses: {
+      /** @description How many cards were asked for */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RenderCardsResult'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
             error: string;
           };
         };

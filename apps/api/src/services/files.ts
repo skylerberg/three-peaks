@@ -12,6 +12,7 @@ import { type FileHome, deletedOwner, homeFilter, parseHome } from './fileHome.t
 import { blockedMessage } from './folderTree.ts';
 import { SNIFF_BYTES, sniffContentType } from './imageSniff.ts';
 import { publishAfterCommit } from './realtime/index.ts';
+import { requestCardRender, requestRendersOfFile } from './renderRequests.ts';
 import { deleteStoredObjectsAfterCommit, storage } from './storage/index.ts';
 import type { AppContext, Connection } from '../types/index.ts';
 
@@ -333,6 +334,7 @@ export async function appendFileVersion(
       'file.uploaded_by as uploaded_by',
       'file.created_at as created_at',
       'file.deleted_at as deleted_at',
+      'file.project_id as project_id',
     ])
     .where('file.id', '=', fileId)
     .forUpdate()
@@ -419,6 +421,10 @@ export async function appendFileVersion(
     .where('file.id', '=', fileId)
     .execute();
 
+  // Every laid-out card drawing this file -- as a font, an icon, a frame or its
+  // own art -- now draws the new version, so its image is asked for again.
+  await requestRendersOfFile(c, file.project_id, fileId);
+
   return { created: true, version: inserted };
 }
 
@@ -486,6 +492,8 @@ export async function restoreFile(
       .where('file.id', '=', fileId)
       .returning(FILE_COLUMNS)
       .executeTakeFirstOrThrow();
+    // A laid-out card may have fallen behind its layout while it was gone.
+    await requestCardRender(c, fileId);
     const restored = serializeFile(row);
     if (opts.notify !== false) {
       publishAfterCommit(
@@ -592,4 +600,17 @@ export async function freeFilename(
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
   throw new AppError(409, `A file named "${desired}" is already there`);
+}
+
+// A new version moves the file's mirror columns and the project's total as well
+// as adding a row, so the event carries all three rather than the one a client
+// would then have to read the others back for.
+export async function versionEventData(
+  c: Pick<AppContext, 'get'>,
+  projectId: string,
+  fileId: string,
+  version: ReturnType<typeof serializeVersion>
+) {
+  const { storage_used_bytes: used, ...file } = await fileWithUsage(c, projectId, fileId);
+  return { version, file, storage_used_bytes: used };
 }

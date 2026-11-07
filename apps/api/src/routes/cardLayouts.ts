@@ -1,18 +1,21 @@
 import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { describeRoute, resolver } from 'hono-openapi';
-import type { LayoutSpec } from '@three-peaks/shared';
+import type { CardFields, LayoutSpec } from '@three-peaks/shared';
 import {
   assertLayoutAccess,
   assertProjectAccess,
   assertProjectWrite,
 } from '../services/authorization.ts';
+import { CardRenderError, drawCard } from '../services/cardImages.ts';
 import {
   LAYOUT_COLUMNS,
+  assertValidCardFields,
   assertValidLayout,
   readLayout,
   serializeLayout,
 } from '../services/cardLayouts.ts';
+import { requestLayoutRenders } from '../services/renderRequests.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
 import { AppError, isForeignKeyViolation, isUniqueViolation } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
@@ -22,6 +25,7 @@ import {
   cardLayoutSchema,
   cardLayoutWithDecksSchema,
   createCardLayoutRequestSchema,
+  previewCardRequestSchema,
   putCardLayoutRequestSchema,
 } from '../schemas/layouts.ts';
 import {
@@ -35,7 +39,7 @@ import {
 import type { AppHono } from '../types/index.ts';
 
 // No realtime events: no screen draws a layout, and the images rendered from
-// one announce themselves as file versions like any other upload.
+// one announce themselves as file versions like any other.
 export const cardLayoutsRouter: AppHono = new Hono();
 
 const standardErrors = {
@@ -125,6 +129,43 @@ cardLayoutsRouter.post(
   }
 );
 
+cardLayoutsRouter.post(
+  '/preview',
+  describeRoute({
+    tags: ['Layouts'],
+    summary: 'Draw a card without saving anything',
+    description:
+      "Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG. A card that cannot be drawn is a 422 saying why.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'The card, as a PNG' },
+      ...validationErrorResponse,
+      ...standardErrors,
+    },
+  }),
+  jsonValidator(previewCardRequestSchema),
+  async (c) => {
+    const body = c.req.valid('json') as typeof previewCardRequestSchema.infer;
+    await assertProjectAccess(c, body.project_id);
+    const spec = body.spec as LayoutSpec;
+    const fields = body.fields as CardFields;
+    await assertValidLayout(c, body.project_id, spec);
+    await assertValidCardFields(c, body.project_id, spec, fields);
+    let bytes: Uint8Array;
+    try {
+      bytes = await drawCard(
+        c.get('db'),
+        { name: 'The layout', width_mm: body.width_mm, height_mm: body.height_mm, spec },
+        fields
+      );
+    } catch (error) {
+      if (error instanceof CardRenderError) throw new AppError(422, error.message);
+      throw error;
+    }
+    return c.body(new Uint8Array(bytes), 200, { 'Content-Type': 'image/png' });
+  }
+);
+
 cardLayoutsRouter.get(
   '/:layoutId',
   describeRoute({
@@ -173,7 +214,7 @@ cardLayoutsRouter.put(
     tags: ['Layouts'],
     summary: 'Replace a card layout',
     description:
-      "Editors only. The whole layout, validated as on create. Cards already drawn from it are not touched: their images change when they are next rendered, which is the client's to do.",
+      "Editors only. The whole layout, validated as on create. A change to anything but the name asks for every card drawn from it to be rendered again, which happens in the background: each card's content says whether it is still waiting, or why it could not be drawn.",
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -194,6 +235,19 @@ cardLayoutsRouter.put(
     const spec = body.spec as LayoutSpec;
     await assertValidLayout(c, access.projectId, spec);
 
+    // Compared in Postgres: jsonb equality ignores the order keys arrive in,
+    // which a comparison of the JSON text would not.
+    const { drawsAlike } = await c
+      .get('db')
+      .selectFrom('card_layout')
+      .select(
+        sql<boolean>`spec = ${JSON.stringify(spec)}::jsonb and width_mm = ${body.width_mm} and height_mm = ${body.height_mm}`.as(
+          'drawsAlike'
+        )
+      )
+      .where('id', '=', layoutId)
+      .executeTakeFirstOrThrow();
+
     try {
       await c
         .get('db')
@@ -212,6 +266,9 @@ cardLayoutsRouter.put(
       if (isUniqueViolation(error)) throw new AppError(409, NAME_TAKEN);
       throw error;
     }
+    // A new name draws nothing differently; anything else asks for every card
+    // drawn from the layout, which the API then renders in the background.
+    if (!drawsAlike) await requestLayoutRenders(c, layoutId);
     return c.json(await readLayout(c, layoutId));
   }
 );

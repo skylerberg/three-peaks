@@ -3,15 +3,13 @@ import { cardPreset, type LayoutSpec } from '@three-peaks/shared';
 import { sql } from 'kysely';
 import { db } from '../../src/db/index.ts';
 import { down, up } from '../../src/db/migrations/0020_layout_geometry.ts';
+import { drainRenders } from '../../src/services/renderWorker.ts';
+import { boxFont, solidPng } from '../setup/layoutFixtures.ts';
 import { createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
 
-const PNG = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-]);
-// The API never parses a font, only sniffs one: an sfnt header is all it reads.
-const TTF = Buffer.from([
-  0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, 0, 0x80, 0, 0x03, 0, 0x20, 0, 0, 0, 0,
-]);
+// Real ones, because saving a card draws it: a box font and a solid picture.
+const OTF = Buffer.from(boxFont(600));
+let PNG: Buffer;
 
 const poker = cardPreset('poker')!;
 const tarot = cardPreset('tarot')!;
@@ -82,7 +80,7 @@ describe('card layouts and card content', () => {
           rotate: 0,
           text: '**{{name}}**\n{{rules}}',
           font: 'body',
-          bold_font: null,
+          bold_font: 'body',
           size_pt: 9,
           min_size_pt: 6,
           line_height: 1.2,
@@ -94,6 +92,11 @@ describe('card layouts and card content', () => {
       ],
       ...overrides,
     };
+  }
+
+  async function versionCount(fileId: string): Promise<number> {
+    const res = await owner.api.get(`/api/files/${fileId}/versions`);
+    return ((await res.json()) as { versions: unknown[] }).versions.length;
   }
 
   async function createLayout(name: string, extra: Record<string, unknown> = {}, user = owner) {
@@ -109,6 +112,7 @@ describe('card layouts and card content', () => {
   }
 
   beforeAll(async () => {
+    PNG = Buffer.from(await solidPng('#336699'));
     [owner, viewer, stranger] = await Promise.all([
       createUser('layout-owner'),
       createUser('layout-viewer'),
@@ -120,8 +124,8 @@ describe('card layouts and card content', () => {
       role: 'viewer',
     });
 
-    const font = await upload(owner, projectId, 'Body.ttf', TTF);
-    expect(font.content_type).toBe('font/ttf');
+    const font = await upload(owner, projectId, 'Body.otf', OTF);
+    expect(font.content_type).toBe('font/otf');
     fontId = font.id;
     iconId = (await upload(owner, projectId, 'coin.png')).id;
     frameId = (await upload(owner, projectId, 'frame.png')).id;
@@ -144,7 +148,7 @@ describe('card layouts and card content', () => {
       await (await stranger.api.post('/api/projects', { name: 'Elsewhere' })).json()
     ).id;
     foreignImageId = (await upload(stranger, elsewhere, 'foreign.png')).id;
-    const foreignFont = (await upload(stranger, elsewhere, 'Foreign.ttf', TTF)).id;
+    const foreignFont = (await upload(stranger, elsewhere, 'Foreign.otf', OTF)).id;
     foreignLayoutId = (
       await (
         await stranger.api.post('/api/layouts', {
@@ -260,7 +264,7 @@ describe('card layouts and card content', () => {
       const messages = res.body.details.map((d: { message: string }) => d.message);
       expect(messages).toEqual([
         'font "body" is coin.png, which is not a TTF, OTF or WOFF font',
-        'icon "coin" is Body.ttf, which is not a PNG, JPEG or SVG image',
+        'icon "coin" is Body.otf, which is not a PNG, JPEG or SVG image',
       ]);
     });
 
@@ -337,14 +341,25 @@ describe('card layouts and card content', () => {
     const put = (fileId: string, body: unknown, user = owner) =>
       user.api.put(`/api/card-content/${fileId}`, body);
 
-    it("saves a card's values, upserting on a second save", async () => {
+    it("saves a card's values, drawing it, and upserts on a second save", async () => {
       const first = await put(cardId, { layout_id: layoutId, fields });
       expect(first.status).toBe(200);
-      expect(await first.json()).toMatchObject({ file_id: cardId, layout_id: layoutId, fields });
+      expect(await first.json()).toMatchObject({
+        content: { file_id: cardId, layout_id: layoutId, fields, render_status: 'current' },
+        image_version: 2,
+      });
 
       const second = await put(cardId, { layout_id: layoutId, fields: { ...fields, art: artId } });
       expect(second.status).toBe(200);
-      expect((await second.json()).fields.art).toBe(artId);
+      expect(await second.json()).toMatchObject({
+        content: { fields: { art: artId } },
+        image_version: 3,
+      });
+
+      // The same values draw the same picture, and that writes nothing.
+      const again = await put(cardId, { layout_id: layoutId, fields: { ...fields, art: artId } });
+      expect((await again.json()).image_version).toBeNull();
+      expect(await versionCount(cardId)).toBe(3);
 
       const list = await (await viewer.api.get(`/api/card-content?deck_id=${deckId}`)).json();
       expect(list.cards).toHaveLength(1);
@@ -380,7 +395,7 @@ describe('card layouts and card content', () => {
       expect(foreign.status).toBe(422);
       const font = await put(cardId, { layout_id: layoutId, fields: { art: fontId } });
       expect((await font.json()).details[0].message).toBe(
-        'art is Body.ttf, which is not a PNG, JPEG or SVG image'
+        'art is Body.otf, which is not a PNG, JPEG or SVG image'
       );
     });
 
@@ -434,11 +449,234 @@ describe('card layouts and card content', () => {
     });
   });
 
+  describe('drawing', () => {
+    let layoutId: string;
+    let drawnDeck: string;
+    let cardFile: string;
+    const fields = { name: 'Squire', rules: 'Gain {coin}.', art: '' };
+
+    async function statusOf(fileId: string) {
+      const list = await (await owner.api.get(`/api/card-content?deck_id=${drawnDeck}`)).json();
+      const card = (
+        list.cards as { file_id: string; render_status: string; render_error: string | null }[]
+      ).find((entry) => entry.file_id === fileId);
+      return { status: card?.render_status, error: card?.render_error };
+    }
+
+    const layoutBody = (overrides: Partial<LayoutSpec> = {}, name = 'Drawn') => ({
+      name,
+      width_mm: poker.width_mm,
+      height_mm: poker.height_mm,
+      spec: spec(overrides),
+    });
+
+    beforeAll(async () => {
+      layoutId = (await createLayout('Drawn')).body.id;
+      drawnDeck = (
+        await (
+          await owner.api.post('/api/decks', {
+            project_id: projectId,
+            name: 'Drawn',
+            card_width_mm: poker.width_mm,
+            card_height_mm: poker.height_mm,
+          })
+        ).json()
+      ).id;
+    });
+
+    it('creates a card in the deck from its content alone', async () => {
+      const res = await owner.api.post('/api/card-content', {
+        deck_id: drawnDeck,
+        filename: 'squire.png',
+        layout_id: layoutId,
+        fields,
+      });
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      cardFile = body.file.id;
+      expect(body.file).toMatchObject({
+        filename: 'squire.png',
+        deck_id: drawnDeck,
+        content_type: 'image/png',
+      });
+      expect(body.content).toMatchObject({ layout_id: layoutId, fields, render_status: 'current' });
+      expect(await versionCount(cardFile)).toBe(1);
+
+      const deck = await (await owner.api.get(`/api/decks/${drawnDeck}`)).json();
+      expect(deck.cards.map((card: { file_id: string }) => card.file_id)).toEqual([cardFile]);
+
+      const taken = await owner.api.post('/api/card-content', {
+        deck_id: drawnDeck,
+        filename: 'squire.png',
+        layout_id: layoutId,
+        fields,
+      });
+      expect(taken.status).toBe(409);
+      expect(
+        (
+          await owner.api.post('/api/card-content', {
+            deck_id: drawnDeck,
+            filename: 'x.png',
+            layout_id: layoutId,
+            fields,
+          })
+        ).status
+      ).toBe(201);
+    });
+
+    it('refuses copy that cannot be set, and changes nothing', async () => {
+      const res = await owner.api.put(`/api/card-content/${cardFile}`, {
+        layout_id: layoutId,
+        fields: { ...fields, rules: 'word '.repeat(600) },
+      });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/^element 3 \(text\)/);
+      expect(await versionCount(cardFile)).toBe(1);
+      const list = await (await owner.api.get(`/api/card-content?deck_id=${drawnDeck}`)).json();
+      expect(
+        list.cards.find((card: { file_id: string }) => card.file_id === cardFile).fields
+      ).toEqual(fields);
+    });
+
+    it('draws the cards again in the background when their layout changes', async () => {
+      const renamed = await owner.api.put(
+        `/api/layouts/${layoutId}`,
+        layoutBody({}, 'Drawn again')
+      );
+      expect(renamed.status).toBe(200);
+      expect((await statusOf(cardFile)).status).toBe('current');
+
+      const changed = await owner.api.put(`/api/layouts/${layoutId}`, layoutBody({ dpi: 200 }));
+      expect(changed.status).toBe(200);
+      expect((await statusOf(cardFile)).status).toBe('pending');
+
+      expect(await drainRenders()).toBeGreaterThanOrEqual(1);
+      expect(await statusOf(cardFile)).toEqual({ status: 'current', error: null });
+      expect(await versionCount(cardFile)).toBe(2);
+    });
+
+    it('draws the cards again when a file they draw gets a version', async () => {
+      const res = await owner.api.postBytes(
+        `/api/files/${frameId}/versions`,
+        Buffer.from(await solidPng('#aa3311')) as unknown as BodyInit
+      );
+      expect(res.status).toBe(201);
+      expect((await statusOf(cardFile)).status).toBe('pending');
+      await drainRenders();
+      expect((await statusOf(cardFile)).status).toBe('current');
+      expect(await versionCount(cardFile)).toBe(3);
+    });
+
+    it('says why a card can no longer be drawn, until its content is fixed', async () => {
+      await owner.api.put(`/api/card-content/${cardFile}`, {
+        layout_id: layoutId,
+        fields: { ...fields, rules: 'word '.repeat(60) },
+      });
+      const smaller = layoutBody({ dpi: 200 });
+      const rules = smaller.spec.elements[2] as { size_pt: number; min_size_pt: number };
+      rules.size_pt = 30;
+      rules.min_size_pt = 30;
+      await owner.api.put(`/api/layouts/${layoutId}`, smaller);
+      await drainRenders();
+      const failed = await statusOf(cardFile);
+      expect(failed.status).toBe('failed');
+      expect(failed.error).toMatch(/^element 3 \(text\)/);
+
+      const fixed = await owner.api.put(`/api/card-content/${cardFile}`, {
+        layout_id: layoutId,
+        fields: { ...fields, rules: 'Short.' },
+      });
+      expect(fixed.status).toBe(200);
+      // Saved and drawn; the request the layout made is still worked through,
+      // since a save cannot know it saw every change that made it.
+      expect((await statusOf(cardFile)).error).toBeNull();
+      await drainRenders();
+      expect(await statusOf(cardFile)).toEqual({ status: 'current', error: null });
+    });
+
+    it('draws every card of a deck again when asked', async () => {
+      expect(
+        (await viewer.api.post('/api/card-content/render', { deck_id: drawnDeck })).status
+      ).toBe(403);
+      const res = await owner.api.post('/api/card-content/render', {
+        deck_id: drawnDeck,
+        file_ids: [cardFile],
+      });
+      expect(await res.json()).toEqual({ requested: 1 });
+      expect((await statusOf(cardFile)).status).toBe('pending');
+      await drainRenders();
+      expect((await statusOf(cardFile)).status).toBe('current');
+    });
+
+    it('asks for a card again when it is restored', async () => {
+      await owner.api.delete(`/api/files/${cardFile}`);
+      await owner.api.post(`/api/files/${cardFile}/restore`, {});
+      expect((await statusOf(cardFile)).status).toBe('pending');
+      await drainRenders();
+      expect((await statusOf(cardFile)).status).toBe('current');
+    });
+
+    it('will not draw a laid-out card into another, either way round', async () => {
+      const layout = await createLayout('Draws a card', {
+        spec: spec({ icons: { coin: cardFile } }),
+      });
+      expect(layout.status).toBe(422);
+      expect(layout.body.details.map((d: { message: string }) => d.message)).toContain(
+        'icon "coin" is squire.png, a card drawn from a layout, which cannot be drawn into another'
+      );
+
+      const drawsArt = await owner.api.put(`/api/card-content/${cardId}`, {
+        layout_id: layoutId,
+        fields: { ...fields, art: artId },
+      });
+      expect(drawsArt.status).toBe(200);
+      const artAsCard = await owner.api.put(`/api/card-content/${artId}`, {
+        layout_id: layoutId,
+        fields,
+      });
+      expect(artAsCard.status).toBe(422);
+    });
+
+    it('previews a card without saving anything', async () => {
+      const res = await viewer.api.post('/api/layouts/preview', {
+        project_id: projectId,
+        width_mm: poker.width_mm,
+        height_mm: poker.height_mm,
+        spec: spec({ dpi: 100 }),
+        fields,
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/png');
+      const png = new Uint8Array(await res.arrayBuffer());
+      expect([...png.slice(1, 4)]).toEqual([0x50, 0x4e, 0x47]);
+
+      const bad = await viewer.api.post('/api/layouts/preview', {
+        project_id: projectId,
+        width_mm: poker.width_mm,
+        height_mm: poker.height_mm,
+        spec: spec({ dpi: 100 }),
+        fields: { ...fields, rules: 'word '.repeat(600) },
+      });
+      expect(bad.status).toBe(422);
+      expect(
+        (
+          await stranger.api.post('/api/layouts/preview', {
+            project_id: projectId,
+            width_mm: poker.width_mm,
+            height_mm: poker.height_mm,
+            spec: spec(),
+            fields,
+          })
+        ).status
+      ).toBe(404);
+    });
+  });
+
   // The layout a card names refuses its own delete, so a project delete --
   // which reaches both through cascades -- must not trip over it part way.
   it('deletes a project holding layouts in use', async () => {
     const doomed = (await (await owner.api.post('/api/projects', { name: 'Doomed' })).json()).id;
-    const font = (await upload(owner, doomed, 'Body.ttf', TTF)).id;
+    const font = (await upload(owner, doomed, 'Body.otf', OTF)).id;
     const deck = (
       await (
         await owner.api.post('/api/decks', {
