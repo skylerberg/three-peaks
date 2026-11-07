@@ -26,6 +26,7 @@ const ids = {
   art: '00000000-0000-4000-8000-000000000005',
   banner: '00000000-0000-4000-8000-000000000006',
   capped: '00000000-0000-4000-8000-000000000007',
+  ribbon: '00000000-0000-4000-8000-000000000008',
 };
 
 const DPI = 100;
@@ -135,6 +136,17 @@ function layout(elements?: LayoutSpec['elements']): CardLayout {
 async function raster(card: CardLayout, fields: Record<string, string>) {
   const svg = await renderer().svg(card, fields);
   return { svg, raster: rasterise(svg, pixelSize(card.width_mm, DPI)) };
+}
+
+// Black with a green body below its first 92 units: a ribbon's notched end,
+// kept as drawn, over the part that stretches.
+function ribbonFixture(): void {
+  files.set(ids.ribbon, {
+    bytes: new TextEncoder().encode(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" width="160" height="100"><rect width="160" height="100" fill="#000000"/><rect y="92" width="160" height="8" fill="#00ff00"/></svg>'
+    ),
+    contentType: 'image/svg+xml',
+  });
 }
 
 const at = (r: ReturnType<typeof rasterise>, xMm: number, yMm: number) =>
@@ -341,6 +353,28 @@ describe('CardRenderer', () => {
       ] as const) {
         expect(at(r, x, y)).toBe('#00ff00');
       }
+    });
+
+    // A tarot card's ribbon, hung from the bottom edge and stretched to nearly
+    // three times its height: the stretched piece reaches the edge of the
+    // card. Clipped by its own piece and again by a group around the pieces,
+    // that drawing panics resvg's WebAssembly build.
+    it('draws a sliced image stretched to the edge of the card', async () => {
+      ribbonFixture();
+      const card = {
+        ...layout([
+          image({
+            box: { left: 6.16, top: 91.48, right: 17.36, bottom: 120 },
+            source: { from: 'file', file_id: ids.ribbon },
+            slice: [92, 0, 0, 0],
+          }),
+        ]),
+        width_mm: 70,
+        height_mm: 120,
+      };
+      const r = (await raster(card, {})).raster;
+      expect(at(r, 7, 92)).toBe('#000000');
+      expect(at(r, 11.5, 119.5)).toBe('#00ff00');
     });
 
     it('refuses insets that leave nothing in the middle to stretch', async () => {
