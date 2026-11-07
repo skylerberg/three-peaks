@@ -24,6 +24,8 @@ export const LAYOUT_LIMITS = {
   max_icons: 200,
   max_template_length: 2000,
   max_field_value_length: 4000,
+  // A nine-slice inset is in the image's own pixels.
+  slice_px: [0, 100000],
 } as const;
 
 // One pattern for field, font and icon keys. Lower-case so that `{Coin}` and
@@ -43,6 +45,12 @@ export type TextAlign = (typeof TEXT_ALIGNS)[number];
 export const TEXT_VALIGNS = ['top', 'middle', 'bottom'] as const;
 export type TextValign = (typeof TEXT_VALIGNS)[number];
 
+export const ROTATIONS = [0, 90, 180, 270] as const;
+export type Rotation = (typeof ROTATIONS)[number];
+
+export const EDGES = ['left', 'right', 'top', 'bottom'] as const;
+export type Edge = (typeof EDGES)[number];
+
 // What a layout can draw, and so what the renderer can decode. GIF is left out
 // for the reason the 3D studio leaves it out: an animated image has no single
 // frame to print.
@@ -60,14 +68,38 @@ export function isFontType(contentType: string): boolean {
   return (FONT_CONTENT_TYPES as readonly string[]).includes(contentType);
 }
 
-// x, y, width, height from the card's top-left corner.
-export type LayoutBox = [number, number, number, number];
+// An edge pinned to an edge of another element as it came out on the card:
+// the backing behind a name that is as long as the name.
+export interface EdgeRef {
+  element: string;
+  edge: Edge;
+  offset_mm: number;
+}
+
+// Millimetres from the card's top-left corner, or a pinned edge.
+export type EdgeValue = number | EdgeRef;
+
+export interface LayoutBox {
+  left: EdgeValue;
+  top: EdgeValue;
+  right: EdgeValue;
+  bottom: EdgeValue;
+}
+
+// Which edges a side may be pinned to: a horizontal position to a horizontal
+// one, a vertical to a vertical.
+export const EDGE_AXIS: Record<Edge, 'x' | 'y'> = { left: 'x', right: 'x', top: 'y', bottom: 'y' };
 
 interface ElementBase {
+  // What other elements pin their edges to. Null for one nothing names.
+  id: string | null;
   box: LayoutBox;
   // Drawn only when this field has a non-empty value: the cost badge on the
   // cards that have a cost.
   when: string | null;
+  // Quarter turns clockwise about the box's centre. A quarter turn lays the
+  // content out along the box's long side.
+  rotate: Rotation;
 }
 
 // Named by `from` rather than told apart by which key is present: a union of
@@ -78,6 +110,10 @@ export interface ImageElement extends ElementBase {
   type: 'image';
   source: ImageSource;
   fit: ImageFit;
+  // Nine-slice insets, top, right, bottom, left, in the image's own pixels:
+  // the borders keep their proportions and only the middle stretches, so a
+  // banner can grow without stretching its ends. Only with fit `fill`.
+  slice: [number, number, number, number] | null;
 }
 
 export interface RectElement extends ElementBase {
@@ -103,6 +139,10 @@ export interface TextElement extends ElementBase {
   color: string;
   align: TextAlign;
   valign: TextValign;
+  // The box is the most room the copy may take, and what was set is what the
+  // element measures as: the edge align and valign hold stays put and the
+  // others close in on the copy, so edges pinned to them follow its length.
+  hug: boolean;
 }
 
 export type LayoutElement = ImageElement | RectElement | TextElement;
@@ -260,13 +300,46 @@ export function layoutReferenceErrors(spec: LayoutSpec): string[] {
     }
   }
 
+  const ids = new Map<string, number>();
+  spec.elements.forEach((element, index) => {
+    if (element.id === null) return;
+    const where = `element ${String(index + 1)} (${element.type})`;
+    if (!LAYOUT_KEY_PATTERN.test(element.id)) {
+      errors.push(
+        `${where}: id "${element.id}" must be lower-case letters, digits, - or _, starting with a letter`
+      );
+    }
+    const first = ids.get(element.id);
+    if (first === undefined) ids.set(element.id, index);
+    else errors.push(`${where}: id "${element.id}" is also element ${String(first + 1)}'s`);
+  });
+
   spec.elements.forEach((element, index) => {
     const where = `element ${String(index + 1)} (${element.type})`;
     if (element.when !== null && !declared(element.when)) {
       errors.push(`${where}: when names "${element.when}", which is not a field`);
     }
-    const [, , width, height] = element.box;
-    if (width <= 0 || height <= 0) errors.push(`${where}: box width and height must be positive`);
+    const { left, top, right, bottom } = element.box;
+    const inverted = (start: EdgeValue, end: EdgeValue) =>
+      typeof start === 'number' && typeof end === 'number' && end <= start;
+    if (inverted(left, right) || inverted(top, bottom)) {
+      errors.push(`${where}: box width and height must be positive`);
+    }
+    for (const [side, ref] of edgeRefs(element)) {
+      if (ref.element === element.id) {
+        errors.push(`${where}: box.${side} is pinned to its own ${ref.edge}`);
+      } else if (!ids.has(ref.element)) {
+        errors.push(`${where}: box.${side} names "${ref.element}", which is no element's id`);
+      } else if (EDGE_AXIS[side] !== EDGE_AXIS[ref.edge]) {
+        errors.push(
+          `${where}: box.${side} is pinned to ${ref.element}.${ref.edge}, which runs the other way`
+        );
+      }
+    }
+
+    if (element.type === 'image' && element.slice !== null && element.fit !== 'fill') {
+      errors.push(`${where}: slice stretches the image, so its fit must be fill`);
+    }
 
     if (element.type === 'image' && element.source.from === 'field') {
       const key = element.source.field;
@@ -299,7 +372,56 @@ export function layoutReferenceErrors(spec: LayoutSpec): string[] {
       }
     }
   });
+
+  const cycle = pinCycle(spec.elements);
+  if (cycle !== null)
+    errors.push(`elements are pinned to each other in a circle: ${cycle.join(' → ')}`);
   return errors;
+}
+
+// The edges of a box that are pinned to another element's.
+export function edgeRefs(element: LayoutElement): [Edge, EdgeRef][] {
+  return EDGES.flatMap((side): [Edge, EdgeRef][] => {
+    const value = element.box[side];
+    return typeof value === 'number' ? [] : [[side, value]];
+  });
+}
+
+// One circle of pinned edges, as the ids around it with the first repeated at
+// the end, or null. A self-pin and a dangling id are reported where they are
+// written, so here they are simply not followed.
+function pinCycle(elements: readonly LayoutElement[]): string[] | null {
+  const pins = new Map<string, string[]>();
+  for (const element of elements) {
+    if (element.id === null || pins.has(element.id)) continue;
+    const id = element.id;
+    pins.set(
+      id,
+      edgeRefs(element)
+        .map(([, ref]) => ref.element)
+        .filter((target) => target !== id)
+    );
+  }
+  const done = new Set<string>();
+  const path: string[] = [];
+  const visit = (id: string): string[] | null => {
+    const at = path.indexOf(id);
+    if (at !== -1) return [...path.slice(at), id];
+    if (done.has(id) || !pins.has(id)) return null;
+    path.push(id);
+    for (const target of new Set(pins.get(id))) {
+      const found = visit(target);
+      if (found !== null) return found;
+    }
+    path.pop();
+    done.add(id);
+    return null;
+  };
+  for (const id of pins.keys()) {
+    const found = visit(id);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 // Every file a layout itself names: its fonts, its icons, and its fixed images.

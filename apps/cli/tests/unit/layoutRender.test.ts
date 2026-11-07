@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { MM_PER_PT, pixelSize, type LayoutSpec, type TextElement } from '@three-peaks/shared';
+import {
+  MM_PER_PT,
+  pixelSize,
+  type EdgeRef,
+  type ImageElement,
+  type LayoutBox,
+  type LayoutSpec,
+  type RectElement,
+  type TextElement,
+} from '@three-peaks/shared';
 import { CardRenderer } from '../../src/layout/render.ts';
 import { CardRenderError, type CardLayout, type LoadedImage } from '../../src/layout/svg.ts';
 import { boxFont, pixelAt, rasterise, solidPng, solidSvg } from '../layoutFixtures.ts';
@@ -11,6 +20,8 @@ const ids = {
   coin: '00000000-0000-4000-8000-000000000003',
   frame: '00000000-0000-4000-8000-000000000004',
   art: '00000000-0000-4000-8000-000000000005',
+  banner: '00000000-0000-4000-8000-000000000006',
+  capped: '00000000-0000-4000-8000-000000000007',
 };
 
 const DPI = 100;
@@ -28,11 +39,26 @@ function renderer(): CardRenderer {
   });
 }
 
+const box = (x: number, y: number, width: number, height: number): LayoutBox => ({
+  left: x,
+  top: y,
+  right: x + width,
+  bottom: y + height,
+});
+
+const pin = (element: string, edge: EdgeRef['edge'], offset_mm = 0): EdgeRef => ({
+  element,
+  edge,
+  offset_mm,
+});
+
 function text(overrides: Partial<TextElement> = {}): TextElement {
   return {
     type: 'text',
-    box: [5, 50, 53, 30],
+    id: null,
+    box: box(5, 50, 53, 30),
     when: null,
+    rotate: 0,
     text: '{{rules}}',
     font: 'body',
     bold_font: 'bold',
@@ -42,6 +68,37 @@ function text(overrides: Partial<TextElement> = {}): TextElement {
     color: '#000000',
     align: 'left',
     valign: 'top',
+    hug: false,
+    ...overrides,
+  };
+}
+
+function rect(overrides: Partial<RectElement> = {}): RectElement {
+  return {
+    type: 'rect',
+    id: null,
+    box: box(5, 50, 53, 30),
+    when: null,
+    rotate: 0,
+    fill: '#ffffff',
+    stroke: null,
+    stroke_mm: 0,
+    radius_mm: 0,
+    opacity: 1,
+    ...overrides,
+  };
+}
+
+function image(overrides: Partial<ImageElement> = {}): ImageElement {
+  return {
+    type: 'image',
+    id: null,
+    box: box(0, 0, 63, 88),
+    when: null,
+    rotate: 0,
+    source: { from: 'file', file_id: ids.frame },
+    fit: 'fill',
+    slice: null,
     ...overrides,
   };
 }
@@ -57,30 +114,14 @@ function layout(elements?: LayoutSpec['elements']): CardLayout {
       icons: { coin: ids.coin },
       fields: { rules: { type: 'text' }, art: { type: 'image' } },
       elements: elements ?? [
-        {
-          type: 'image',
-          box: [0, 0, 63, 88],
-          when: null,
-          source: { from: 'file', file_id: ids.frame },
-          fit: 'fill',
-        },
-        {
-          type: 'image',
-          box: [10, 10, 20, 20],
+        image(),
+        image({
+          box: box(10, 10, 20, 20),
           when: 'art',
           source: { from: 'field', field: 'art' },
           fit: 'cover',
-        },
-        {
-          type: 'rect',
-          box: [5, 50, 53, 30],
-          when: null,
-          fill: '#ffffff',
-          stroke: null,
-          stroke_mm: 0,
-          radius_mm: 0,
-          opacity: 1,
-        },
+        }),
+        rect(),
         text(),
       ],
     },
@@ -103,6 +144,17 @@ beforeAll(async () => {
     [ids.frame, { bytes: await solidPng('#ff0000'), contentType: 'image/png' }],
     // Twice as wide as tall, so covering a square box has to crop it.
     [ids.art, { bytes: await solidPng('#0000ff', 16, 8), contentType: 'image/png' }],
+    [ids.banner, { bytes: await solidPng('#00ff00', 8, 8), contentType: 'image/png' }],
+    // Green with a blue band across the top quarter: the end a slice keeps.
+    [
+      ids.capped,
+      {
+        bytes: new TextEncoder().encode(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#00ff00"/><rect width="8" height="2" fill="#0000ff"/></svg>'
+        ),
+        contentType: 'image/svg+xml',
+      },
+    ],
   ]);
 });
 
@@ -128,16 +180,7 @@ describe('CardRenderer', () => {
   it('leaves out an element whose `when` field is empty', async () => {
     fetched = [];
     // A badge drawn only for cards with rules: its own box is otherwise frame.
-    const badge = {
-      type: 'rect' as const,
-      box: [40, 30, 5, 5] as [number, number, number, number],
-      when: 'rules',
-      fill: '#00ffff',
-      stroke: null,
-      stroke_mm: 0,
-      radius_mm: 0,
-      opacity: 1,
-    };
+    const badge = rect({ box: box(40, 30, 5, 5), when: 'rules', fill: '#00ffff' });
     const card = layout([...layout().spec.elements, badge]);
     expect(at((await raster(card, { rules: 'Hi', art: '' })).raster, 42, 32)).toBe('#00ffff');
     expect(at((await raster(card, { rules: ' ', art: '' })).raster, 42, 32)).toBe('#ff0000');
@@ -172,7 +215,8 @@ describe('CardRenderer', () => {
     const shared = renderer();
     await shared.render(layout(), { rules: 'a', art: ids.art });
     await shared.render(layout(), { rules: 'b', art: ids.art });
-    expect(fetched.sort()).toEqual(Object.values(ids).sort());
+    const drawn = [ids.body, ids.bold, ids.coin, ids.frame, ids.art];
+    expect(fetched.sort()).toEqual(drawn.sort());
   });
 
   // The property every comparison of checksums rests on.
@@ -188,6 +232,121 @@ describe('CardRenderer', () => {
     expect(createHash('sha256').update(first).digest('hex')).toBe(
       '6d62054812ec5cf52f018f455bf81b0a1f1b843275be9951c2be498d9d72e3bd'
     );
+  });
+
+  describe('pinned edges', () => {
+    const size = 9 * MM_PER_PT;
+    // A name set against the right of a strip, and a backing listed before it
+    // whose left edge is pinned 2 mm short of where the name begins.
+    const named = () =>
+      layout([
+        image(),
+        rect({ box: { ...box(0, 40, 58, 6), left: pin('name', 'left', -2) }, fill: '#00ffff' }),
+        text({ id: 'name', box: box(5, 40, 53, 6), align: 'right', valign: 'middle', hug: true }),
+      ]);
+
+    it('pins a backing to the copy it sits behind, however long the copy', async () => {
+      // Read below the glyphs, which stand in the middle of the strip.
+      const short = (await raster(named(), { rules: 'HH' })).raster;
+      // Two characters of half an em end at 58; the backing starts 2 mm before them.
+      const start = 58 - 2 * 0.5 * size;
+      expect(at(short, start - 1, 45)).toBe('#00ffff');
+      expect(at(short, start - 3, 45)).toBe('#ff0000');
+      const long = (await raster(named(), { rules: 'HHHHHHHH' })).raster;
+      expect(at(long, start - 3, 45)).toBe('#00ffff');
+    });
+
+    it('leaves out an element pinned to one that drew nothing', async () => {
+      const { svg, raster: r } = await raster(named(), { rules: '' });
+      expect(at(r, 57, 43)).toBe('#ff0000');
+      expect(svg).not.toContain('#00ffff');
+    });
+
+    it('refuses a box its pinned edges leave no room in', async () => {
+      const card = layout([
+        rect({ box: { ...box(0, 40, 58, 6), left: pin('name', 'left', 60) } }),
+        text({ id: 'name', box: box(5, 40, 53, 6), align: 'right', hug: true }),
+      ]);
+      await expect(renderer().svg(card, { rules: 'HH' })).rejects.toThrow(
+        /^element 1 \(rect\): its pinned edges leave its box -[\d.]+ by 6 mm$/
+      );
+    });
+
+    it('turns an element half about, content and all', async () => {
+      const card = layout([image(), rect(), text({ rotate: 180 })]);
+      const r = (await raster(card, { rules: 'HHHH' })).raster;
+      // The first glyph, written from the top left of the box, lands upside
+      // down at its bottom right: the box is 5..58 by 50..80.
+      const x = 5 + size * 0.25;
+      const y = 50 + size * 0.5;
+      expect(at(r, 63 - x, 130 - y)).toBe('#000000');
+      expect(at(r, x, y)).toBe('#ffffff');
+    });
+
+    it('lays a quarter-turned element along its long side, and pins to where it came out', async () => {
+      // A strip 6 wide and 60 tall from y = 10. Turned a quarter, its copy runs
+      // down from the top; the backing's bottom follows the copy's end.
+      const card = layout([
+        image(),
+        rect({ box: { ...box(40, 5, 6, 1), bottom: pin('name', 'bottom', 1) }, fill: '#00ffff' }),
+        text({ id: 'name', box: box(40, 10, 6, 60), rotate: 90, valign: 'middle', hug: true }),
+      ]);
+      const r = (await raster(card, { rules: 'HH' })).raster;
+      const end = 10 + 2 * 0.5 * size + 1;
+      expect(at(r, 43, end - 0.5)).toBe('#00ffff');
+      expect(at(r, 43, end + 0.5)).toBe('#ff0000');
+    });
+  });
+
+  describe('nine-slice images', () => {
+    it('keeps the ends of the image as drawn and stretches the middle', async () => {
+      // An 8 by 8 picture drawn 8 mm wide and 40 tall: a millimetre a pixel,
+      // so the 2 pixel band kept at the top is 2 mm, not stretched to 10.
+      const card = layout([
+        image(),
+        image({
+          box: box(10, 10, 8, 40),
+          source: { from: 'file', file_id: ids.capped },
+          slice: [2, 0, 0, 0],
+        }),
+      ]);
+      const r = (await raster(card, {})).raster;
+      expect(at(r, 14, 11)).toBe('#0000ff');
+      expect(at(r, 14, 13)).toBe('#00ff00');
+      expect(at(r, 14, 45)).toBe('#00ff00');
+    });
+
+    it('joins its pieces with no seam', async () => {
+      // Drawn 40 by 20 from an 8 by 8 picture: a scale of 2.5, so the pieces
+      // meet 5 mm in from each edge, partway across a pixel.
+      const card = layout([
+        image(),
+        image({
+          box: box(10, 10, 40, 20),
+          source: { from: 'file', file_id: ids.banner },
+          slice: [2, 2, 2, 2],
+        }),
+      ]);
+      const r = (await raster(card, {})).raster;
+      for (const [x, y] of [
+        [15, 20],
+        [45, 20],
+        [30, 15],
+        [30, 25],
+        [15, 15],
+      ] as const) {
+        expect(at(r, x, y)).toBe('#00ff00');
+      }
+    });
+
+    it('refuses insets that leave nothing in the middle to stretch', async () => {
+      const card = layout([
+        image({ source: { from: 'file', file_id: ids.banner }, slice: [4, 0, 4, 0] }),
+      ]);
+      await expect(renderer().svg(card, {})).rejects.toThrow(
+        'element 1 (image): slice 4, 0, 4, 0 leaves nothing of a 8 by 8 image to stretch'
+      );
+    });
   });
 
   it('refuses bold copy when the element has no bold face', async () => {

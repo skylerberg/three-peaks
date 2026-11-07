@@ -1,15 +1,19 @@
 import type { Font } from 'opentype.js';
 import {
   type CardFields,
+  type Edge,
+  type ImageElement,
   type ImageFit,
-  type LayoutBox,
+  type LayoutElement,
   type LayoutSpec,
+  type Rotation,
   type TextElement,
   fillTemplate,
   hasValue,
   parseMarkup,
 } from '@three-peaks/shared';
-import { flowText, type Face, type Faces } from './flow.ts';
+import { flowText, type Face, type Faces, type FlowBox, type FlowResult } from './flow.ts';
+import { imageSize } from './imageSize.ts';
 
 // One card as an SVG document, in millimetres. Every glyph is written out as a
 // path, so the rasteriser is never handed text: what it draws cannot depend on
@@ -61,7 +65,7 @@ const ASPECT: Record<ImageFit, string> = {
   fill: 'none',
 };
 
-function boxAttributes([x, y, width, height]: LayoutBox): string {
+function boxAttributes({ x, y, width, height }: FlowBox): string {
   return `x="${n(x)}" y="${n(y)}" width="${n(width)}" height="${n(height)}"`;
 }
 
@@ -79,13 +83,70 @@ function missingGlyphs(font: Font, text: string): string[] {
   return [...missing];
 }
 
-function textMarkup(
+// ---------------------------------------------------------------------------
+// Where each element comes out
+
+interface SetText {
+  flow: Extract<FlowResult, { fits: true }>;
+  regular: Font;
+  bold: Font | null;
+}
+
+// An element as it comes out on this card. `frame` is its box on the card;
+// `local` is the box its content is laid out in, which a quarter turn swaps
+// the sides of; `used` is what other elements' edges are pinned to.
+interface Placement {
+  frame: FlowBox;
+  local: FlowBox;
+  used: FlowBox;
+  text: SetText | null;
+}
+
+function edgeOf(box: FlowBox, edge: Edge): number {
+  switch (edge) {
+    case 'left':
+      return box.x;
+    case 'right':
+      return box.x + box.width;
+    case 'top':
+      return box.y;
+    case 'bottom':
+      return box.y + box.height;
+  }
+}
+
+function centreOf(box: FlowBox): [number, number] {
+  return [box.x + box.width / 2, box.y + box.height / 2];
+}
+
+// The box a rotation about `frame`'s centre carries the content's box onto.
+// Exact for quarter turns: the sine and cosine are whole numbers.
+function turned(box: FlowBox, frame: FlowBox, rotate: Rotation): FlowBox {
+  if (rotate === 0) return box;
+  const [cx, cy] = centreOf(frame);
+  const cos = [1, 0, -1, 0][rotate / 90]!;
+  const sin = [0, 1, 0, -1][rotate / 90]!;
+  const corners = [
+    [box.x, box.y],
+    [box.x + box.width, box.y + box.height],
+  ].map(([x, y]) => [
+    cx + (x! - cx) * cos - (y! - cy) * sin,
+    cy + (x! - cx) * sin + (y! - cy) * cos,
+  ]);
+  const xs = corners.map(([x]) => x!);
+  const ys = corners.map(([, y]) => y!);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+function setText(
   element: TextElement,
   where: string,
   fields: CardFields,
   assets: CardAssets,
-  clip: (box: LayoutBox) => string
-): string {
+  box: FlowBox
+): SetText | null {
   const { runs } = parseMarkup(fillTemplate(element.text, fields));
   const regular = assets.fonts.get(element.font)!;
   const bold = element.bold_font === null ? null : assets.fonts.get(element.bold_font)!;
@@ -108,20 +169,130 @@ function textMarkup(
   }
 
   const faces: Faces = { regular: faceOf(regular), bold: faceOf(bold ?? regular) };
-  const [x, y, width, height] = element.box;
-  const result = flowText(runs, faces, { x, y, width, height }, element);
-  if (!result.fits) throw new CardRenderError(`${where} ${result.reason}`);
+  const flow = flowText(runs, faces, box, element);
+  if (!flow.fits) throw new CardRenderError(`${where} ${flow.reason}`);
+  return flow.items.length === 0 ? null : { flow, regular, bold };
+}
 
+const nameOf = (element: LayoutElement, index: number) =>
+  `element ${String(index + 1)} (${element.type})`;
+
+// Every element's placement, worked out in the order their edges need rather
+// than the order they are painted, so a backing listed before its copy can be
+// as long as the copy. Null for an element that draws nothing on this card --
+// left out by `when`, an empty image field, copy that came out empty -- and
+// for any element pinned to one of those: there is nothing to pin it to.
+function placements(
+  layout: CardLayout,
+  fields: CardFields,
+  assets: CardAssets
+): (Placement | null)[] {
+  const { elements } = layout.spec;
+  const byId = new Map<string, number>();
+  elements.forEach((element, index) => {
+    if (element.id !== null && !byId.has(element.id)) byId.set(element.id, index);
+  });
+  const done = new Map<number, Placement | null>();
+  const pending = new Set<number>();
+
+  const place = (index: number): Placement | null => {
+    if (done.has(index)) return done.get(index)!;
+    const element = elements[index]!;
+    const where = nameOf(element, index);
+    if (pending.has(index)) throw new CardRenderError(`${where} is pinned to itself in a circle`);
+    pending.add(index);
+    const result = placeOne(element, where);
+    pending.delete(index);
+    done.set(index, result);
+    return result;
+  };
+
+  const placeOne = (element: LayoutElement, where: string): Placement | null => {
+    if (element.when !== null && !hasValue(fields, element.when)) return null;
+    if (
+      element.type === 'image' &&
+      element.source.from === 'field' &&
+      (fields[element.source.field] ?? '').trim() === ''
+    ) {
+      return null;
+    }
+
+    const edges = {} as Record<Edge, number>;
+    for (const side of ['left', 'top', 'right', 'bottom'] as const) {
+      const value = element.box[side];
+      if (typeof value === 'number') {
+        edges[side] = value;
+        continue;
+      }
+      const target = byId.get(value.element);
+      if (target === undefined) {
+        throw new CardRenderError(
+          `${where}: box.${side} names "${value.element}", which is no element's id`
+        );
+      }
+      const pinned = place(target);
+      if (pinned === null) return null;
+      edges[side] = edgeOf(pinned.used, value.edge) + value.offset_mm;
+    }
+    const frame = {
+      x: edges.left,
+      y: edges.top,
+      width: edges.right - edges.left,
+      height: edges.bottom - edges.top,
+    };
+    if (frame.width <= 0 || frame.height <= 0) {
+      throw new CardRenderError(
+        `${where}: its pinned edges leave its box ${n(frame.width)} by ${n(frame.height)} mm`
+      );
+    }
+    const [cx, cy] = centreOf(frame);
+    const local =
+      element.rotate % 180 === 0
+        ? frame
+        : {
+            x: cx - frame.height / 2,
+            y: cy - frame.width / 2,
+            width: frame.height,
+            height: frame.width,
+          };
+
+    if (element.type !== 'text') return { frame, local, used: frame, text: null };
+    const text = setText(element, where, fields, assets, local);
+    if (text === null) return null;
+    const used = element.hug ? turned(text.flow.bounds, frame, element.rotate) : frame;
+    return { frame, local, used, text };
+  };
+
+  return elements.map((_, index) => place(index));
+}
+
+// ---------------------------------------------------------------------------
+// Drawing
+
+interface Canvas {
+  defs: string[];
+  clip(box: FlowBox): string;
+  // One device pixel at the layout's resolution, in millimetres.
+  pixel: number;
+}
+
+function textMarkup(
+  element: TextElement,
+  set: SetText,
+  box: FlowBox,
+  assets: CardAssets,
+  canvas: Canvas
+): string {
   const paths: string[] = [];
   const icons: string[] = [];
-  for (const item of result.items) {
+  for (const item of set.flow.items) {
     if (item.kind === 'text') {
-      const font = item.bold ? bold! : regular;
+      const font = item.bold ? set.bold! : set.regular;
       paths.push(font.getPath(item.text, item.x, item.baseline, item.size).toPathData(4));
     } else {
       const icon = assets.icons.get(item.key)!;
       icons.push(
-        `<image ${boxAttributes([item.x, item.y, item.size, item.size])} preserveAspectRatio="xMidYMid meet" href="${dataUri(icon)}"/>`
+        `<image ${boxAttributes({ x: item.x, y: item.y, width: item.size, height: item.size })} preserveAspectRatio="xMidYMid meet" href="${dataUri(icon)}"/>`
       );
     }
   }
@@ -132,50 +303,139 @@ function textMarkup(
   if (parts.length === 0) return '';
   // Clipped to its box, so nothing that measured as fitting -- a glyph whose
   // outline overhangs its advance -- reaches past where the layout put it.
-  return `<g clip-path="${clip(element.box)}">${parts.join('')}</g>`;
+  return `<g clip-path="${canvas.clip(box)}">${parts.join('')}</g>`;
+}
+
+// Nine pieces of one picture: the corners at the image's own proportions, the
+// sides stretched one way and the middle both. The scale is the one that fits
+// the image's tighter dimension into the box, so the borders always fit.
+function slicedMarkup(
+  element: ImageElement,
+  where: string,
+  image: LoadedImage,
+  box: FlowBox,
+  canvas: Canvas
+): string {
+  const [top, right, bottom, left] = element.slice!;
+  const size = imageSize(image);
+  if (size === null) {
+    throw new CardRenderError(`${where}: slice needs the image's size, and it gives none`);
+  }
+  if (left + right >= size.width || top + bottom >= size.height) {
+    throw new CardRenderError(
+      `${where}: slice ${String(top)}, ${String(right)}, ${String(bottom)}, ${String(left)} leaves nothing of a ${String(size.width)} by ${String(size.height)} image to stretch`
+    );
+  }
+  const scale = Math.min(box.width / size.width, box.height / size.height);
+  const bands = (start: number, length: number, from: number, to: number, whole: number) => [
+    { src: 0, srcLength: from, dest: start, destLength: from * scale },
+    {
+      src: from,
+      srcLength: whole - from - to,
+      dest: start + from * scale,
+      destLength: length - (from + to) * scale,
+    },
+    { src: whole - to, srcLength: to, dest: start + length - to * scale, destLength: to * scale },
+  ];
+  const columns = bands(box.x, box.width, left, right, size.width);
+  const rows = bands(box.y, box.height, top, bottom, size.height);
+
+  const id = `i${String(canvas.defs.length)}`;
+  canvas.defs.push(
+    `<image id="${id}" width="${String(size.width)}" height="${String(size.height)}" preserveAspectRatio="none" href="${dataUri(image)}"/>`
+  );
+  // Each piece's clip reaches a pixel into its neighbours, so two pieces meet
+  // with no seam of half-covered pixels between them.
+  const reach = canvas.pixel;
+  const pieces: string[] = [];
+  columns.forEach((column, i) => {
+    rows.forEach((row, j) => {
+      if (column.srcLength <= 0 || row.srcLength <= 0) return;
+      if (column.destLength <= 0 || row.destLength <= 0) return;
+      const sx = column.destLength / column.srcLength;
+      const sy = row.destLength / row.srcLength;
+      const x0 = column.dest - (i > 0 ? reach : 0);
+      const x1 = column.dest + column.destLength + (i < 2 ? reach : 0);
+      const y0 = row.dest - (j > 0 ? reach : 0);
+      const y1 = row.dest + row.destLength + (j < 2 ? reach : 0);
+      const clipped = canvas.clip({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
+      const matrix = [sx, 0, 0, sy, column.dest - sx * column.src, row.dest - sy * row.src];
+      pieces.push(
+        `<g clip-path="${clipped}"><use href="#${id}" transform="matrix(${matrix.map(n).join(' ')})"/></g>`
+      );
+    });
+  });
+  return `<g clip-path="${canvas.clip(box)}">${pieces.join('')}</g>`;
+}
+
+// One element in its own box, before any turn.
+function elementMarkup(
+  element: LayoutElement,
+  placement: Placement,
+  where: string,
+  fields: CardFields,
+  assets: CardAssets,
+  canvas: Canvas
+): string {
+  const box = placement.local;
+  if (element.type === 'image') {
+    const id =
+      element.source.from === 'file'
+        ? element.source.file_id
+        : (fields[element.source.field] ?? '');
+    const image = assets.images.get(id);
+    if (image === undefined) throw new CardRenderError(`${where}: image ${id} was not loaded`);
+    return element.slice === null
+      ? `<image ${boxAttributes(box)} preserveAspectRatio="${ASPECT[element.fit]}" clip-path="${canvas.clip(box)}" href="${dataUri(image)}"/>`
+      : slicedMarkup(element, where, image, box, canvas);
+  }
+  if (element.type === 'rect') {
+    const attributes = [
+      boxAttributes(box),
+      element.radius_mm > 0 ? `rx="${n(element.radius_mm)}" ry="${n(element.radius_mm)}"` : '',
+      `fill="${element.fill ?? 'none'}"`,
+      element.stroke !== null && element.stroke_mm > 0
+        ? `stroke="${element.stroke}" stroke-width="${n(element.stroke_mm)}"`
+        : '',
+      element.opacity < 1 ? `opacity="${n(element.opacity)}"` : '',
+    ].filter((attribute) => attribute !== '');
+    return `<rect ${attributes.join(' ')}/>`;
+  }
+  return textMarkup(element, placement.text!, box, assets, canvas);
 }
 
 export function buildCardSvg(layout: CardLayout, fields: CardFields, assets: CardAssets): string {
+  const placed = placements(layout, fields, assets);
   const defs: string[] = [];
-  const body: string[] = [];
-  const clip = (box: LayoutBox) => {
-    const id = `c${String(defs.length)}`;
-    defs.push(`<clipPath id="${id}"><rect ${boxAttributes(box)}/></clipPath>`);
-    return `url(#${id})`;
+  const canvas: Canvas = {
+    defs,
+    clip: (box) => {
+      const id = `c${String(defs.length)}`;
+      defs.push(`<clipPath id="${id}"><rect ${boxAttributes(box)}/></clipPath>`);
+      return `url(#${id})`;
+    },
+    pixel: 25.4 / layout.spec.dpi,
   };
+  const body: string[] = [];
 
   layout.spec.elements.forEach((element, index) => {
-    if (element.when !== null && !hasValue(fields, element.when)) return;
-    const where = `element ${String(index + 1)} (${element.type})`;
-
-    if (element.type === 'image') {
-      const id =
-        element.source.from === 'file'
-          ? element.source.file_id
-          : (fields[element.source.field] ?? '');
-      // An empty image field draws nothing, which is what `when` is usually
-      // there to say; a fixed image is never empty.
-      if (id.trim() === '') return;
-      const image = assets.images.get(id);
-      if (image === undefined) throw new CardRenderError(`${where}: image ${id} was not loaded`);
-      body.push(
-        `<image ${boxAttributes(element.box)} preserveAspectRatio="${ASPECT[element.fit]}" clip-path="${clip(element.box)}" href="${dataUri(image)}"/>`
-      );
-    } else if (element.type === 'rect') {
-      const attributes = [
-        boxAttributes(element.box),
-        element.radius_mm > 0 ? `rx="${n(element.radius_mm)}" ry="${n(element.radius_mm)}"` : '',
-        `fill="${element.fill ?? 'none'}"`,
-        element.stroke !== null && element.stroke_mm > 0
-          ? `stroke="${element.stroke}" stroke-width="${n(element.stroke_mm)}"`
-          : '',
-        element.opacity < 1 ? `opacity="${n(element.opacity)}"` : '',
-      ].filter((attribute) => attribute !== '');
-      body.push(`<rect ${attributes.join(' ')}/>`);
-    } else {
-      const markup = textMarkup(element, where, fields, assets, clip);
-      if (markup !== '') body.push(markup);
+    const placement = placed[index];
+    if (placement === null || placement === undefined) return;
+    const markup = elementMarkup(
+      element,
+      placement,
+      nameOf(element, index),
+      fields,
+      assets,
+      canvas
+    );
+    if (markup === '') return;
+    if (element.rotate === 0) {
+      body.push(markup);
+      return;
     }
+    const [cx, cy] = centreOf(placement.frame);
+    body.push(`<g transform="rotate(${String(element.rotate)} ${n(cx)} ${n(cy)})">${markup}</g>`);
   });
 
   const { width_mm: width, height_mm: height } = layout;

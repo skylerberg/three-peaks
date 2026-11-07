@@ -287,6 +287,7 @@ elements: # painted in order, first at the back; box is [x, y, width, height] in
     box: [0, 0, 63, 88]
     file: Frames/hero.png # a fixed image -- or field: art, for each card's own
     fit: fill # cover (default), contain or fill
+    rotate: 0 # any element: 0 (default), 90, 180 or 270, clockwise about the box's centre
   - type: image
     box: [4, 14, 55, 34]
     field: art
@@ -310,6 +311,60 @@ elements: # painted in order, first at the back; box is [x, y, width, height] in
     align: left # left (default), center, right
     valign: middle # top (default), middle, bottom
 ```
+
+### Elements placed by other elements
+
+An element with an `id` can have the edges of other boxes pinned to it, so a
+backing is as long as the name on it and a banner as long as the ability it
+carries. A box written as edges takes two of `left`, `right` and `width`, and
+two of `top`, `bottom` and `height`; any edge can be a number or another
+element's edge, moved by so many millimetres:
+
+```yaml
+elements:
+  - type: rect # listed first, so painted behind the name
+    box: { left: name.left - 2, right: 60, top: 70, height: 7 }
+    fill: '#000000'
+  - type: image # a banner whose middle stretches to the ability's length
+    box: { left: 4, width: 9, top: ability.top - 6, bottom: 88 }
+    file: Art/banner.png
+    slice: [80, 0, 0, 0] # top, right, bottom, left, in the image's own pixels
+  - type: text
+    id: name
+    box: [5, 70, 50, 7] # the most room the name may take
+    text: '{{name}}'
+    font: body
+    size_pt: 12
+    align: right
+    valign: middle
+    hug: true
+  - type: text
+    id: ability
+    box: [4, 30, 9, 55]
+    text: '{{ability}}'
+    font: body
+    size_pt: 10
+    align: center
+    valign: bottom
+    hug: true
+```
+
+`hug: true` makes a text element measure as the copy it set rather than as its
+box: the edges that `align` and `valign` hold stay where they are, and the
+others close in on the copy. Edges are worked out in whatever order the pins
+need, separately from the order elements are painted, and a layout whose pins
+go round in a circle is refused. An element pinned to one that draws nothing on
+a card -- left out by `when`, an empty image field, empty copy -- is left out
+too. Pins name the box as it came out on the card, after any rotation; a
+quarter turn lays text along the box's long side.
+
+`slice` cuts an image into nine pieces: the corners keep their proportions, the
+edges stretch one way and the middle both, all at the scale that fits the
+image's tighter side into the box. Draw the image at the proportions of the
+shortest box it will fill -- a banner as short as one line of copy makes it --
+and its ends come out the same size on every card. One number is all four
+insets and two are top-and-bottom then the sides. A sliced image is stretched
+to fill its box.
 
 A deck's cards:
 

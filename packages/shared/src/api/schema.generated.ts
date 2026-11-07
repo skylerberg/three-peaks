@@ -1296,11 +1296,48 @@ export interface components {
               /** @enum {unknown} */
               align: 'center' | 'left' | 'right';
               bold_font: string | null;
-              box: [number, number, number, number];
+              box: {
+                bottom:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                left:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                right:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                top:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+              };
               color: string;
               font: string;
+              hug: boolean;
+              id: string | null;
               line_height: number;
               min_size_pt: number;
+              /** @enum {unknown} */
+              rotate: 0 | 180 | 270 | 90;
               size_pt: number;
               text: string;
               /** @constant */
@@ -1310,10 +1347,46 @@ export interface components {
               when: string | null;
             }
           | {
-              box: [number, number, number, number];
+              box: {
+                bottom:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                left:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                right:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                top:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+              };
               fill: string | null;
+              id: string | null;
               opacity: number;
               radius_mm: number;
+              /** @enum {unknown} */
+              rotate: 0 | 180 | 270 | 90;
               stroke: string | null;
               stroke_mm: number;
               /** @constant */
@@ -1321,9 +1394,46 @@ export interface components {
               when: string | null;
             }
           | {
-              box: [number, number, number, number];
+              box: {
+                bottom:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                left:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                right:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+                top:
+                  | number
+                  | {
+                      /** @enum {unknown} */
+                      edge: 'bottom' | 'left' | 'right' | 'top';
+                      element: string;
+                      offset_mm: number;
+                    };
+              };
               /** @enum {unknown} */
               fit: 'contain' | 'cover' | 'fill';
+              id: string | null;
+              /** @enum {unknown} */
+              rotate: 0 | 180 | 270 | 90;
+              slice: [number, number, number, number] | null;
               source:
                 | {
                     field: string;
@@ -1385,11 +1495,48 @@ export interface components {
                 /** @enum {unknown} */
                 align: 'center' | 'left' | 'right';
                 bold_font: string | null;
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 color: string;
                 font: string;
+                hug: boolean;
+                id: string | null;
                 line_height: number;
                 min_size_pt: number;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
                 size_pt: number;
                 text: string;
                 /** @constant */
@@ -1399,10 +1546,46 @@ export interface components {
                 when: string | null;
               }
             | {
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 fill: string | null;
+                id: string | null;
                 opacity: number;
                 radius_mm: number;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
                 stroke: string | null;
                 stroke_mm: number;
                 /** @constant */
@@ -1410,9 +1593,46 @@ export interface components {
                 when: string | null;
               }
             | {
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 /** @enum {unknown} */
                 fit: 'contain' | 'cover' | 'fill';
+                id: string | null;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
+                slice: [number, number, number, number] | null;
                 source:
                   | {
                       field: string;
@@ -1480,11 +1700,48 @@ export interface components {
                 /** @enum {unknown} */
                 align: 'center' | 'left' | 'right';
                 bold_font: string | null;
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 color: string;
                 font: string;
+                hug: boolean;
+                id: string | null;
                 line_height: number;
                 min_size_pt: number;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
                 size_pt: number;
                 text: string;
                 /** @constant */
@@ -1494,10 +1751,46 @@ export interface components {
                 when: string | null;
               }
             | {
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 fill: string | null;
+                id: string | null;
                 opacity: number;
                 radius_mm: number;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
                 stroke: string | null;
                 stroke_mm: number;
                 /** @constant */
@@ -1505,9 +1798,46 @@ export interface components {
                 when: string | null;
               }
             | {
-                box: [number, number, number, number];
+                box: {
+                  bottom:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  left:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  right:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                  top:
+                    | number
+                    | {
+                        /** @enum {unknown} */
+                        edge: 'bottom' | 'left' | 'right' | 'top';
+                        element: string;
+                        offset_mm: number;
+                      };
+                };
                 /** @enum {unknown} */
                 fit: 'contain' | 'cover' | 'fill';
+                id: string | null;
+                /** @enum {unknown} */
+                rotate: 0 | 180 | 270 | 90;
+                slice: [number, number, number, number] | null;
                 source:
                   | {
                       field: string;
@@ -7174,11 +7504,48 @@ export interface operations {
                   /** @enum {unknown} */
                   align: 'center' | 'left' | 'right';
                   bold_font: string | null;
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   color: string;
                   font: string;
+                  hug: boolean;
+                  id: string | null;
                   line_height: number;
                   min_size_pt: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
                   size_pt: number;
                   text: string;
                   /** @constant */
@@ -7188,10 +7555,46 @@ export interface operations {
                   when: string | null;
                 }
               | {
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   fill: string | null;
+                  id: string | null;
                   opacity: number;
                   radius_mm: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
                   stroke: string | null;
                   stroke_mm: number;
                   /** @constant */
@@ -7199,9 +7602,46 @@ export interface operations {
                   when: string | null;
                 }
               | {
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   /** @enum {unknown} */
                   fit: 'contain' | 'cover' | 'fill';
+                  id: string | null;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  slice: [number, number, number, number] | null;
                   source:
                     | {
                         field: string;
@@ -7394,11 +7834,48 @@ export interface operations {
                   /** @enum {unknown} */
                   align: 'center' | 'left' | 'right';
                   bold_font: string | null;
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   color: string;
                   font: string;
+                  hug: boolean;
+                  id: string | null;
                   line_height: number;
                   min_size_pt: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
                   size_pt: number;
                   text: string;
                   /** @constant */
@@ -7408,10 +7885,46 @@ export interface operations {
                   when: string | null;
                 }
               | {
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   fill: string | null;
+                  id: string | null;
                   opacity: number;
                   radius_mm: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
                   stroke: string | null;
                   stroke_mm: number;
                   /** @constant */
@@ -7419,9 +7932,46 @@ export interface operations {
                   when: string | null;
                 }
               | {
-                  box: [number, number, number, number];
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
                   /** @enum {unknown} */
                   fit: 'contain' | 'cover' | 'fill';
+                  id: string | null;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  slice: [number, number, number, number] | null;
                   source:
                     | {
                         field: string;

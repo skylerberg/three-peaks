@@ -21,7 +21,7 @@ export const guards = [
     name: 'an element is drawn only when its `when` field has a value',
     root: true,
     file: 'apps/cli/src/layout/svg.ts',
-    find: '    if (element.when !== null && !hasValue(fields, element.when)) return;',
+    find: '    if (element.when !== null && !hasValue(fields, element.when)) return null;',
     replace: '',
     tests: ['../cli/tests/unit/layoutRender.test.ts'],
     testName: 'leaves out an element whose `when` field is empty',
@@ -69,6 +69,50 @@ export const guards = [
     replace: '    if (false) {',
     tests: ['tests/e2e/cardLayouts.test.ts'],
     testName: 'refuses a layout drawn on a card of another size',
+  },
+  {
+    // Copy that came out empty has no edge to pin to. Following the pin
+    // anyway draws the backing behind nothing, at a size worked out from NaN.
+    name: 'an element pinned to one that drew nothing is left out too',
+    root: true,
+    file: 'apps/cli/src/layout/svg.ts',
+    find: '      if (pinned === null) return null;',
+    replace: '      if (pinned === null) continue;',
+    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    testName: 'leaves out an element pinned to one that drew nothing',
+  },
+  {
+    // Without it a hugging name measures as its whole box, and the backing
+    // pinned to it is as long for one letter as for twenty.
+    name: 'copy that hugs measures as what it set, not as its box',
+    root: true,
+    file: 'apps/cli/src/layout/svg.ts',
+    find: '    const used = element.hug ? turned(text.flow.bounds, frame, element.rotate) : frame;',
+    replace: '    const used = frame;',
+    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    testName: 'pins a backing to the copy it sits behind, however long the copy',
+  },
+  {
+    // Two pieces of a sliced image that merely meet each cover half of the
+    // pixel their edge crosses, and the card shows through the seam.
+    name: "a nine-slice image's pieces overlap by a pixel",
+    root: true,
+    file: 'apps/cli/src/layout/svg.ts',
+    find: '  const reach = canvas.pixel;',
+    replace: '  const reach = 0;',
+    tests: ['../cli/tests/unit/layoutRender.test.ts'],
+    testName: 'joins its pieces with no seam',
+  },
+  {
+    // A circle of pins is refused when the layout is pushed; the renderer's
+    // own check would otherwise be the first to say so, card by card.
+    name: 'a layout whose edges are pinned in a circle is refused',
+    file: 'src/layouts.ts',
+    find: '  if (cycle !== null) errors.push(',
+    replace: '  if (false) errors.push(',
+    tests: ['src/layouts.test.ts'],
+    testName: 'names the elements going round a circle of pins',
+    runner: 'shared',
   },
   {
     // `spec.fields.toString` is a function, not undefined, so a card could
