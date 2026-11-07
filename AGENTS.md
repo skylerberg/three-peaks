@@ -1308,6 +1308,12 @@ from under the first.
   source correct and the tests green, which is indistinguishable from a guard
   that works. Guards sharing a database run serially, because the advisory run
   lock refuses two suites against one database — correctly.
+  **CI runs them nightly, not per pull request** (`.github/workflows/nightly.yaml`):
+  that serial chain was most of a PR's wait. A pull request runs only
+  `check:test-guards:anchors`, which takes seconds; a guard whose bug a change
+  stops catching is therefore found the next morning rather than on the PR, so
+  run the guards for your area (`node scripts/check-test-guards.mjs <filter>`)
+  when you touch a guarded test. `check:all` still runs every one.
   **The entries are split one file per area, and that is about merging rather
   than tidiness**: a single list is one line every branch appends to, so any two
   branches that each add a guard conflict there and nowhere else. A new guard

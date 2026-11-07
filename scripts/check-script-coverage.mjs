@@ -20,8 +20,6 @@ const selftest = process.argv.includes('--selftest');
 // A denial written down rather than left out: an omission and an exemption look
 // identical from here, and only one of them was a decision.
 const EXEMPT = {
-  'check:test-guards:anchors':
-    'the anchor-only subset of check:test-guards, which runs in check:all and in CI',
   'check:all': 'the aggregate itself',
 };
 
