@@ -188,6 +188,23 @@ export function hasValue(fields: CardFields, key: string): boolean {
   return (fields[key] ?? '').trim() !== '';
 }
 
+// A layout's fields in the order its elements first use them, which is the
+// order to ask for them in: the stored layout keeps no order of its own. A
+// field no element uses comes last, alphabetically.
+export function fieldsInDrawingOrder(spec: Pick<LayoutSpec, 'fields' | 'elements'>): string[] {
+  const order: string[] = [];
+  const use = (key: string) => {
+    if (Object.hasOwn(spec.fields, key) && !order.includes(key)) order.push(key);
+  };
+  for (const element of spec.elements) {
+    if (element.when !== null) use(element.when);
+    if (element.type === 'image' && element.source.from === 'field') use(element.source.field);
+    if (element.type === 'text') templateFields(element.text).forEach(use);
+  }
+  const unused = Object.keys(spec.fields).filter((key) => !order.includes(key));
+  return [...order, ...unused.sort()];
+}
+
 // ---------------------------------------------------------------------------
 // Markup: `{icon}`, `**bold**`, newlines, and a backslash to print any of
 // `{`, `}`, `*` or `\` as itself.

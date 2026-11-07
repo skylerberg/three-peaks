@@ -7,6 +7,7 @@ import { isLiveCard } from '@three-peaks/shared';
 import Deck from './Deck.svelte';
 import { deckImports } from '../lib/deckImports.svelte.ts';
 import { decks } from '../lib/decks.svelte.ts';
+import { cardContent } from '../lib/cardContent.svelte.ts';
 import { realtime } from '../lib/realtime.svelte.ts';
 
 const PROJECT = '2f1c9e5a-8b3d-4f1e-9c2a-7d6b5e4f3a21';
@@ -421,14 +422,17 @@ describe('Deck editor', () => {
         if (url.includes(`/api/decks/${DECK}`)) {
           return jsonResponse(200, { deck: DECK_ROW, cards: [] });
         }
-        return jsonResponse(200, {
-          id: PROJECT,
-          name: 'Colori',
-          description: null,
-          role: 'editor',
-          created_at: '2026-01-01T00:00:00.000Z',
-          updated_at: '2026-01-01T00:00:00.000Z',
-        });
+        if (url.includes(`/api/projects/${PROJECT}`)) {
+          return jsonResponse(200, {
+            id: PROJECT,
+            name: 'Colori',
+            description: null,
+            role: 'editor',
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:00.000Z',
+          });
+        }
+        return jsonResponse(404, { error: `nothing stubbed for ${url}` });
       });
       return { abandons: () => urlsRequested().filter((url) => url.includes('/abandon')).length };
     }
@@ -475,14 +479,17 @@ describe('Deck editor', () => {
         if (url.includes(`/api/decks/${DECK}`)) {
           return jsonResponse(200, { deck: DECK_ROW, cards: [] });
         }
-        return jsonResponse(200, {
-          id: PROJECT,
-          name: 'Colori',
-          description: null,
-          role,
-          created_at: '2026-01-01T00:00:00.000Z',
-          updated_at: '2026-01-01T00:00:00.000Z',
-        });
+        if (url.includes(`/api/projects/${PROJECT}`)) {
+          return jsonResponse(200, {
+            id: PROJECT,
+            name: 'Colori',
+            description: null,
+            role,
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:00.000Z',
+          });
+        }
+        return jsonResponse(404, { error: `nothing stubbed for ${url}` });
       });
 
       const view = render(Deck, { projectId: PROJECT, deckId: DECK });
@@ -1050,6 +1057,152 @@ describe('Deck editor', () => {
       await waitFor(() => expect(decks.cards).toHaveLength(3));
 
       expect(screen.queryByLabelText('Reorder card-1.png')).toBeNull();
+    });
+  });
+
+  describe('cards drawn from a layout', () => {
+    const LAYOUT = '4d8e2c1b-7a6f-4e3d-9c2b-1a0f9e8d7c6b';
+    const ICON = '5e9f3d2c-8b7a-4f4e-8d3c-2b1a0f9e8d7c';
+    const layout = {
+      id: LAYOUT,
+      project_id: PROJECT,
+      name: 'Tarot',
+      width_mm: 63,
+      height_mm: 88,
+      spec: {
+        dpi: 300,
+        fonts: {},
+        icons: { will: ICON, connection: ICON },
+        fields: { name: { type: 'text' }, ability: { type: 'text' } },
+        elements: [
+          {
+            type: 'text',
+            id: null,
+            box: { left: 0, top: 0, right: 10, bottom: 10 },
+            when: null,
+            rotate: 0,
+            text: '{{ability}} {{name}}',
+            font: 'body',
+            bold_font: null,
+            size_pt: 9,
+            min_size_pt: 9,
+            line_height: 1.2,
+            color: '#000000',
+            align: 'left',
+            valign: 'top',
+            hug: false,
+          },
+        ],
+      },
+      created_by: null,
+      updated_by: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    const content = (overrides: Record<string, unknown> = {}) => ({
+      file_id: cardFile(1).id,
+      project_id: PROJECT,
+      layout_id: LAYOUT,
+      fields: { name: 'Knight', ability: '{will}' },
+      render_status: 'current',
+      render_error: null,
+      updated_by: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    });
+    let saved: unknown = null;
+
+    // The deck of three, the first of them drawn from a layout.
+    function stubLaidOut(): void {
+      stubDeckWithCards();
+      const deckStub = fetchMock.getMockImplementation()!;
+      saved = null;
+      fetchMock.mockImplementation(async (input, init) => {
+        const request = typeof input === 'string' ? null : (input as Request);
+        const url = request?.url ?? (input as string);
+        if (url.includes('/api/layouts/preview')) {
+          return new Response('png', { status: 200, headers: { 'Content-Type': 'image/png' } });
+        }
+        if (url.includes('/api/layouts')) return jsonResponse(200, { layouts: [layout] });
+        if (url.includes('/api/card-content') && request?.method === 'PUT') {
+          saved = await request.json();
+          return jsonResponse(200, {
+            content: content(saved as Record<string, unknown>),
+            image_version: 2,
+          });
+        }
+        if (url.includes('/api/card-content')) return jsonResponse(200, { cards: [content()] });
+        return deckStub(input, init);
+      });
+    }
+
+    afterEach(() => cardContent.close());
+
+    it('offers to edit only the cards drawn from a layout', async () => {
+      stubLaidOut();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      const row = await screen.findByRole('listitem', { name: 'card-1.png' });
+      expect(await within(row).findByRole('button', { name: 'Edit' })).toBeTruthy();
+      const other = screen.getByRole('listitem', { name: 'card-2.png' });
+      expect(within(other).queryByRole('button', { name: 'Edit' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'New card from a layout' })).toBeTruthy();
+    });
+
+    it('says when a card cannot be drawn, and stops saying it once it is, as events arrive', async () => {
+      stubLaidOut();
+      realtime.start('tok');
+      FakeWebSocket.last().open();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await screen.findByRole('button', { name: 'Edit' });
+
+      const event = (overrides: Record<string, unknown>) => ({
+        type: 'card_content_updated',
+        project_id: PROJECT,
+        data: { contents: [content(overrides)], actor_user_id: 'someone' },
+      });
+      FakeWebSocket.last().receive(event({ render_status: 'pending' }));
+      expect(await screen.findByText('Being drawn again from its layout…')).toBeTruthy();
+
+      FakeWebSocket.last().receive(
+        event({ render_status: 'failed', render_error: 'the ability does not fit' })
+      );
+      expect(
+        await screen.findByText('Can’t be drawn from its layout: the ability does not fit')
+      ).toBeTruthy();
+
+      FakeWebSocket.last().receive(event({ render_status: 'current' }));
+      await waitFor(() => expect(screen.queryByText(/Can’t be drawn/)).toBeNull());
+    });
+
+    it('edits a card beside a preview, inserting icons where the caret is, and saves it', async () => {
+      stubLaidOut();
+      render(Deck, { projectId: PROJECT, deckId: DECK });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+
+      const ability = (await screen.findByLabelText('ability')) as HTMLTextAreaElement;
+      // In the order the layout draws them, not the order they are stored in.
+      const boxes = screen.getAllByRole('textbox').map((box) => box.getAttribute('id') ?? '');
+      expect(boxes.findIndex((id) => id.endsWith('-ability'))).toBeLessThan(
+        boxes.findIndex((id) => id.endsWith('-name'))
+      );
+
+      await fireEvent.focus(ability);
+      ability.setSelectionRange(0, 0);
+      await fireEvent.click(screen.getByRole('button', { name: '{connection}' }));
+      expect(ability.value).toBe('{connection}{will}');
+
+      expect(await screen.findByAltText('The card as these fields draw it')).toBeTruthy();
+      expect(urlsRequested().some((url) => url.includes('/api/layouts/preview'))).toBe(true);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(saved).toEqual({
+          layout_id: LAYOUT,
+          fields: { ability: '{connection}{will}', name: 'Knight' },
+        })
+      );
+      await waitFor(() => expect(screen.queryByLabelText('ability')).toBeNull());
     });
   });
 });

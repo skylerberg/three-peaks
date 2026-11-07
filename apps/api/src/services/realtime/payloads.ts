@@ -1,6 +1,7 @@
 import { type } from 'arktype';
 import type { Type } from 'arktype';
 import {
+  cardContentSchema,
   componentModelSchema,
   componentSchema,
   deckCardSchema,
@@ -111,6 +112,13 @@ export const REALTIME_PAYLOAD_SCHEMAS = withActor({
 
   deck_import_started: type({ deck_id: 'string', run: importRunSchema }),
   deck_import_finished: type({ deck_id: 'string', run: importRunSchema }),
+
+  // A card's content, or where its picture stands: saved, asked to be drawn
+  // again, drawn, or found impossible to draw. Many at once when one change --
+  // a layout saved, a font versioned -- asks for every card it touches.
+  card_content_updated: type({ contents: cardContentSchema.array() }),
+  // The card is plain artwork from now on, keeping the image it last had.
+  card_content_deleted: type({ file_id: 'string' }),
 } satisfies Record<RealtimeEventType, unknown>);
 
 type RealtimePayloads = {

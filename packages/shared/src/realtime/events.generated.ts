@@ -6,6 +6,8 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     RealtimeEvent:
+      | components['schemas']['CardContentDeletedEvent']
+      | components['schemas']['CardContentUpdatedEvent']
       | components['schemas']['ComponentCreatedEvent']
       | components['schemas']['ComponentDeletedEvent']
       | components['schemas']['ComponentOrderChangedEvent']
@@ -29,6 +31,37 @@ export interface components {
       | components['schemas']['ProjectUpdatedEvent'];
     /** @description Close codes a /ws socket can be closed with, beyond the standard RFC 6455 ones. 4401 (UNAUTHORIZED): credential revoked 4429 (REPLACED): replaced by a newer connection */
     RealtimeCloseCode: 4401 | 4429;
+    CardContentDeletedEvent: {
+      /** @constant */
+      type: 'card_content_deleted';
+      project_id: string;
+      data: {
+        actor_user_id: string;
+        file_id: string;
+      };
+    };
+    CardContentUpdatedEvent: {
+      /** @constant */
+      type: 'card_content_updated';
+      project_id: string;
+      data: {
+        actor_user_id: string;
+        contents: {
+          created_at: string;
+          fields: {
+            [key: string]: string;
+          };
+          file_id: string;
+          layout_id: string;
+          project_id: string;
+          render_error: string | null;
+          /** @enum {unknown} */
+          render_status: 'current' | 'failed' | 'pending';
+          updated_at: string;
+          updated_by: string | null;
+        }[];
+      };
+    };
     ComponentCreatedEvent: {
       /** @constant */
       type: 'component_created';

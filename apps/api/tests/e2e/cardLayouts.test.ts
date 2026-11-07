@@ -4,6 +4,8 @@ import { sql } from 'kysely';
 import { db } from '../../src/db/index.ts';
 import { down, up } from '../../src/db/migrations/0020_layout_geometry.ts';
 import { drainRenders } from '../../src/services/renderWorker.ts';
+import { subscribeToBus } from '../../src/services/realtime/bus.ts';
+import type { RealtimeEnvelope } from '../../src/services/realtime/payloads.ts';
 import { boxFont, solidPng } from '../setup/layoutFixtures.ts';
 import { createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
 
@@ -635,6 +637,43 @@ describe('card layouts and card content', () => {
         fields,
       });
       expect(artAsCard.status).toBe(422);
+    });
+
+    it('announces each card as its content or its picture changes', async () => {
+      const heard: RealtimeEnvelope[] = [];
+      const stop = subscribeToBus((entry) => heard.push(entry));
+      try {
+        const card = await owner.api.post('/api/card-content', {
+          deck_id: drawnDeck,
+          filename: 'herald.png',
+          layout_id: layoutId,
+          fields,
+        });
+        const fileId = (await card.json()).file.id;
+        const statuses = () =>
+          heard.flatMap((entry) =>
+            entry.type === 'card_content_updated'
+              ? (entry.data as { contents: { file_id: string; render_status: string }[] }).contents
+                  .filter((content) => content.file_id === fileId)
+                  .map((content) => content.render_status)
+              : []
+          );
+        expect(statuses()).toEqual(['current']);
+
+        await owner.api.put(`/api/layouts/${layoutId}`, layoutBody({ dpi: 210 }));
+        expect(statuses()).toEqual(['current', 'pending']);
+        await drainRenders();
+        expect(statuses()).toEqual(['current', 'pending', 'current']);
+
+        expect((await owner.api.delete(`/api/card-content/${fileId}`)).status).toBe(204);
+        expect(heard.at(-1)).toMatchObject({
+          type: 'card_content_deleted',
+          project_id: projectId,
+          data: { file_id: fileId },
+        });
+      } finally {
+        stop();
+      }
     });
 
     it('previews a card without saving anything', async () => {

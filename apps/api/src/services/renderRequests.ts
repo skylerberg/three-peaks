@@ -1,5 +1,7 @@
 import { sql, type Expression, type ExpressionBuilder, type SqlBool } from 'kysely';
 import type { DB } from '../db/types.ts';
+import { CONTENT_COLUMNS, serializeContent } from './cardLayouts.ts';
+import { publishAfterCommit } from './realtime/index.ts';
 import type { AppContext } from '../types/index.ts';
 
 // Asking for laid-out cards to be drawn again, in the transaction of whatever
@@ -21,7 +23,7 @@ export function onRenderRequested(listener: (() => void) | null): void {
 }
 
 async function request(c: Pick<AppContext, 'get'>, where: Where): Promise<number> {
-  const result = await c
+  const rows = await c
     .get('db')
     .updateTable('card_content')
     .set({
@@ -33,10 +35,20 @@ async function request(c: Pick<AppContext, 'get'>, where: Where): Promise<number
       render_error: null,
     })
     .where(where)
-    .executeTakeFirst();
-  const count = Number(result.numUpdatedRows);
-  if (count > 0) c.get('postCommitHooks').push(() => wake?.());
-  return count;
+    .returning(CONTENT_COLUMNS)
+    .execute();
+  if (rows.length === 0) return 0;
+  const hooks = c.get('postCommitHooks');
+  hooks.push(() => wake?.());
+  // One event per project, however many cards: a layout saved over a deck of
+  // three hundred is one message, not three hundred.
+  const byProject = Map.groupBy(rows, (row) => row.project_id);
+  for (const [projectId, cards] of byProject) {
+    publishAfterCommit(hooks, c.get('user').id, 'card_content_updated', projectId, {
+      contents: cards.map(serializeContent),
+    });
+  }
+  return rows.length;
 }
 
 export function requestLayoutRenders(c: Pick<AppContext, 'get'>, layoutId: string) {

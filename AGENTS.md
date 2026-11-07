@@ -942,8 +942,19 @@ content is written, and the renderer checks again, because either can change
 afterwards; neither change is refused, so a deck and its layout can be resized
 one after the other, the cards failing to draw in between.
 
-No realtime events, for the reason print runs have none: no screen draws a
-layout. The images drawn from one announce themselves as file versions.
+A layout has no realtime events, for the reason print runs have none: no
+screen draws one. A card's content does: `card_content_updated` carries the rows
+whenever content is saved or a card's picture changes state -- asked for, drawn,
+or found impossible to draw -- one event per change however many cards it
+touches, and `card_content_deleted` when a card goes back to plain artwork. The
+deck screen shows each card's state from those alone; there is no event for a
+render that came out unchanged other than its content going back to `current`.
+The images themselves announce themselves as file versions.
+
+**The deck screen edits a laid-out card** (`CardEditor.svelte`): the layout's
+fields in the order its elements use them (`fieldsInDrawingOrder`), its icons to
+insert at the caret, and beside them the card as `POST /api/layouts/preview`
+draws it, so copy that will not fit says so before it is saved.
 
 # The Canva app
 
