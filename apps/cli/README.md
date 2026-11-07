@@ -270,54 +270,54 @@ A layout, with every setting it can have:
 
 ```yaml
 name: Hero
-size: poker                # or width_mm and height_mm; must match the deck's cards
-dpi: 300                   # the default
-fonts:                     # TTF, OTF or WOFF files, by Assets path or id
+size: poker # or width_mm and height_mm; must match the deck's cards
+dpi: 300 # the default
+fonts: # TTF, OTF or WOFF files, by Assets path or id
   body: Fonts/Lora-Regular.ttf
   bold: Fonts/Lora-Bold.ttf
-icons:                     # PNG, JPEG or SVG, written {coin} in copy
+icons: # PNG, JPEG or SVG, written {coin} in copy
   coin: Icons/coin.svg
-fields:                    # what each card supplies: text or image
+fields: # what each card supplies: text or image
   name: text
   cost: text
   rules: text
   art: image
-elements:                  # painted in order, first at the back; box is [x, y, width, height] in mm
+elements: # painted in order, first at the back; box is [x, y, width, height] in mm
   - type: image
     box: [0, 0, 63, 88]
-    file: Frames/hero.png  # a fixed image -- or field: art, for each card's own
-    fit: fill              # cover (default), contain or fill
+    file: Frames/hero.png # a fixed image -- or field: art, for each card's own
+    fit: fill # cover (default), contain or fill
   - type: image
     box: [4, 14, 55, 34]
     field: art
-    when: art              # any element: drawn only when this field is not empty
+    when: art # any element: drawn only when this field is not empty
   - type: rect
     box: [4, 51, 55, 33]
-    fill: "#ffffff"        # default none
-    stroke: "#3b2a1a"      # default none
-    stroke_mm: 0.3         # 0.25 when there is a stroke
-    radius_mm: 2           # default 0
-    opacity: 0.9           # default 1
+    fill: '#ffffff' # default none
+    stroke: '#3b2a1a' # default none
+    stroke_mm: 0.3 # 0.25 when there is a stroke
+    radius_mm: 2 # default 0
+    opacity: 0.9 # default 1
   - type: text
     box: [7, 54, 49, 27]
-    text: "{{rules}}"      # {{field}} is replaced by the card's value
+    text: '{{rules}}' # {{field}} is replaced by the card's value
     font: body
-    bold_font: bold        # needed only if the copy uses **bold**
+    bold_font: bold # needed only if the copy uses **bold**
     size_pt: 10
-    min_size_pt: 6         # shrinks in quarter points until it fits; default size_pt
-    line_height: 1.2       # the default
-    color: "#1a1a1a"       # default black
-    align: left            # left (default), center, right
-    valign: middle         # top (default), middle, bottom
+    min_size_pt: 6 # shrinks in quarter points until it fits; default size_pt
+    line_height: 1.2 # the default
+    color: '#1a1a1a' # default black
+    align: left # left (default), center, right
+    valign: middle # top (default), middle, bottom
 ```
 
 A deck's cards:
 
 ```yaml
-layout: Hero               # every card's, unless it names its own
+layout: Hero # every card's, unless it names its own
 cards:
-  - name: knight           # the deck's knight.png
-    copies: 3              # optional; left alone when absent
+  - name: knight # the deck's knight.png
+    copies: 3 # optional; left alone when absent
     fields:
       name: Knight
       cost: 3
