@@ -345,8 +345,13 @@ function slicedMarkup(
     `<image id="${id}" width="${String(size.width)}" height="${String(size.height)}" preserveAspectRatio="none" href="${dataUri(image)}"/>`
   );
   // Each piece's clip reaches a pixel into its neighbours, so two pieces meet
-  // with no seam of half-covered pixels between them.
+  // with no seam of half-covered pixels between them, and stops at the box.
+  // The box is not a second clip around the pieces: one clip inside another
+  // around a stretched piece that reaches the card's edge is a drawing resvg's
+  // WebAssembly build panics on.
   const reach = canvas.pixel;
+  const boxRight = box.x + box.width;
+  const boxBottom = box.y + box.height;
   const pieces: string[] = [];
   columns.forEach((column, i) => {
     rows.forEach((row, j) => {
@@ -354,10 +359,10 @@ function slicedMarkup(
       if (column.destLength <= 0 || row.destLength <= 0) return;
       const sx = column.destLength / column.srcLength;
       const sy = row.destLength / row.srcLength;
-      const x0 = column.dest - (i > 0 ? reach : 0);
-      const x1 = column.dest + column.destLength + (i < 2 ? reach : 0);
-      const y0 = row.dest - (j > 0 ? reach : 0);
-      const y1 = row.dest + row.destLength + (j < 2 ? reach : 0);
+      const x0 = Math.max(box.x, column.dest - (i > 0 ? reach : 0));
+      const x1 = Math.min(boxRight, column.dest + column.destLength + (i < 2 ? reach : 0));
+      const y0 = Math.max(box.y, row.dest - (j > 0 ? reach : 0));
+      const y1 = Math.min(boxBottom, row.dest + row.destLength + (j < 2 ? reach : 0));
       const clipped = canvas.clip({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
       const matrix = [sx, 0, 0, sy, column.dest - sx * column.src, row.dest - sy * row.src];
       pieces.push(
@@ -365,7 +370,7 @@ function slicedMarkup(
       );
     });
   });
-  return `<g clip-path="${canvas.clip(box)}">${pieces.join('')}</g>`;
+  return pieces.join('');
 }
 
 // One element in its own box, before any turn.
