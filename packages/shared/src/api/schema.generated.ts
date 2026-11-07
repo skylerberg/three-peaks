@@ -1010,6 +1010,99 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/layouts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the card layouts in a project */
+    get: operations['getApiLayouts'];
+    put?: never;
+    /**
+     * Create a card layout
+     * @description Editors only. Every font, icon and fixed image the layout names must be a live file in the same project, and every key it uses must be one it declares.
+     */
+    post: operations['postApiLayouts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/layouts/{layoutId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get a card layout and the decks drawn from it
+     * @description The decks are the live ones holding at least one live card whose content names this layout, with how many such cards each holds -- exactly what has to be re-rendered after the layout changes.
+     */
+    get: operations['getApiLayoutsByLayoutId'];
+    /**
+     * Replace a card layout
+     * @description Editors only. The whole layout, validated as on create. Cards already drawn from it are not touched: their images change when they are next rendered, which is the client's to do.
+     */
+    put: operations['putApiLayoutsByLayoutId'];
+    post?: never;
+    /**
+     * Delete a card layout
+     * @description Editors only, and permanent: a layout owns no bytes, so there is nothing to restore. Refused with 409 while any card -- deleted ones included -- is drawn from it, because restoring that card would bring back content naming nothing.
+     */
+    delete: operations['deleteApiLayoutsByLayoutId'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/card-content': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the content of a deck's cards
+     * @description Every card in the deck that is drawn from a layout, deleted ones included -- a restore brings back the content with the image. Cards that are only artwork have no row.
+     */
+    get: operations['getApiCardContent'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/card-content/{fileId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Save the content of one card
+     * @description Editors only, and an upsert: one row per card. The file must be one of a deck's images, the layout one of the same project's and the size of the deck, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project. Allowed on a deleted card, like its 3D settings: the content is not the image.
+     */
+    put: operations['putApiCardContentByFileId'];
+    post?: never;
+    /**
+     * Stop drawing a card from a layout
+     * @description Editors only. The image stays exactly as it was last rendered, and is from now on plain artwork. 404 when the card has no content.
+     */
+    delete: operations['deleteApiCardContentByFileId'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/canva-app/session': {
     parameters: {
       query?: never;
@@ -1165,6 +1258,303 @@ export interface components {
             name: string;
           };
         };
+    CardContent: {
+      created_at: string;
+      fields: {
+        [key: string]: string;
+      };
+      file_id: string;
+      layout_id: string;
+      project_id: string;
+      updated_at: string;
+      updated_by: string | null;
+    };
+    CardContentList: {
+      cards: {
+        created_at: string;
+        fields: {
+          [key: string]: string;
+        };
+        file_id: string;
+        layout_id: string;
+        project_id: string;
+        updated_at: string;
+        updated_by: string | null;
+      }[];
+    };
+    CardLayout: {
+      created_at: string;
+      created_by: string | null;
+      height_mm: number;
+      id: string;
+      name: string;
+      project_id: string;
+      spec: {
+        dpi: number;
+        elements: (
+          | {
+              /** @enum {unknown} */
+              align: 'center' | 'left' | 'right';
+              bold_font: string | null;
+              box: [number, number, number, number];
+              color: string;
+              font: string;
+              line_height: number;
+              min_size_pt: number;
+              size_pt: number;
+              text: string;
+              /** @constant */
+              type: 'text';
+              /** @enum {unknown} */
+              valign: 'bottom' | 'middle' | 'top';
+              when: string | null;
+            }
+          | {
+              box: [number, number, number, number];
+              fill: string | null;
+              opacity: number;
+              radius_mm: number;
+              stroke: string | null;
+              stroke_mm: number;
+              /** @constant */
+              type: 'rect';
+              when: string | null;
+            }
+          | {
+              box: [number, number, number, number];
+              /** @enum {unknown} */
+              fit: 'contain' | 'cover' | 'fill';
+              source:
+                | {
+                    field: string;
+                    /** @constant */
+                    from: 'field';
+                  }
+                | {
+                    /**
+                     * Format: uuid
+                     * @description a UUID
+                     */
+                    file_id:
+                      | string
+                      | '00000000-0000-0000-0000-000000000000'
+                      | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                    /** @constant */
+                    from: 'file';
+                  };
+              /** @constant */
+              type: 'image';
+              when: string | null;
+            }
+        )[];
+        fields: {
+          [key: string]: {
+            /** @enum {unknown} */
+            type: 'image' | 'text';
+          };
+        };
+        fonts: {
+          [key: string]:
+            | string
+            | '00000000-0000-0000-0000-000000000000'
+            | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+        };
+        icons: {
+          [key: string]:
+            | string
+            | '00000000-0000-0000-0000-000000000000'
+            | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+        };
+      };
+      updated_at: string;
+      updated_by: string | null;
+      width_mm: number;
+    };
+    CardLayoutList: {
+      layouts: {
+        created_at: string;
+        created_by: string | null;
+        height_mm: number;
+        id: string;
+        name: string;
+        project_id: string;
+        spec: {
+          dpi: number;
+          elements: (
+            | {
+                /** @enum {unknown} */
+                align: 'center' | 'left' | 'right';
+                bold_font: string | null;
+                box: [number, number, number, number];
+                color: string;
+                font: string;
+                line_height: number;
+                min_size_pt: number;
+                size_pt: number;
+                text: string;
+                /** @constant */
+                type: 'text';
+                /** @enum {unknown} */
+                valign: 'bottom' | 'middle' | 'top';
+                when: string | null;
+              }
+            | {
+                box: [number, number, number, number];
+                fill: string | null;
+                opacity: number;
+                radius_mm: number;
+                stroke: string | null;
+                stroke_mm: number;
+                /** @constant */
+                type: 'rect';
+                when: string | null;
+              }
+            | {
+                box: [number, number, number, number];
+                /** @enum {unknown} */
+                fit: 'contain' | 'cover' | 'fill';
+                source:
+                  | {
+                      field: string;
+                      /** @constant */
+                      from: 'field';
+                    }
+                  | {
+                      /**
+                       * Format: uuid
+                       * @description a UUID
+                       */
+                      file_id:
+                        | string
+                        | '00000000-0000-0000-0000-000000000000'
+                        | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                      /** @constant */
+                      from: 'file';
+                    };
+                /** @constant */
+                type: 'image';
+                when: string | null;
+              }
+          )[];
+          fields: {
+            [key: string]: {
+              /** @enum {unknown} */
+              type: 'image' | 'text';
+            };
+          };
+          fonts: {
+            [key: string]:
+              | string
+              | '00000000-0000-0000-0000-000000000000'
+              | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+          };
+          icons: {
+            [key: string]:
+              | string
+              | '00000000-0000-0000-0000-000000000000'
+              | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+          };
+        };
+        updated_at: string;
+        updated_by: string | null;
+        width_mm: number;
+      }[];
+    };
+    CardLayoutWithDecks: {
+      decks: {
+        card_count: number;
+        id: string;
+        name: string;
+      }[];
+      layout: {
+        created_at: string;
+        created_by: string | null;
+        height_mm: number;
+        id: string;
+        name: string;
+        project_id: string;
+        spec: {
+          dpi: number;
+          elements: (
+            | {
+                /** @enum {unknown} */
+                align: 'center' | 'left' | 'right';
+                bold_font: string | null;
+                box: [number, number, number, number];
+                color: string;
+                font: string;
+                line_height: number;
+                min_size_pt: number;
+                size_pt: number;
+                text: string;
+                /** @constant */
+                type: 'text';
+                /** @enum {unknown} */
+                valign: 'bottom' | 'middle' | 'top';
+                when: string | null;
+              }
+            | {
+                box: [number, number, number, number];
+                fill: string | null;
+                opacity: number;
+                radius_mm: number;
+                stroke: string | null;
+                stroke_mm: number;
+                /** @constant */
+                type: 'rect';
+                when: string | null;
+              }
+            | {
+                box: [number, number, number, number];
+                /** @enum {unknown} */
+                fit: 'contain' | 'cover' | 'fill';
+                source:
+                  | {
+                      field: string;
+                      /** @constant */
+                      from: 'field';
+                    }
+                  | {
+                      /**
+                       * Format: uuid
+                       * @description a UUID
+                       */
+                      file_id:
+                        | string
+                        | '00000000-0000-0000-0000-000000000000'
+                        | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                      /** @constant */
+                      from: 'file';
+                    };
+                /** @constant */
+                type: 'image';
+                when: string | null;
+              }
+          )[];
+          fields: {
+            [key: string]: {
+              /** @enum {unknown} */
+              type: 'image' | 'text';
+            };
+          };
+          fonts: {
+            [key: string]:
+              | string
+              | '00000000-0000-0000-0000-000000000000'
+              | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+          };
+          icons: {
+            [key: string]:
+              | string
+              | '00000000-0000-0000-0000-000000000000'
+              | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+          };
+        };
+        updated_at: string;
+        updated_by: string | null;
+        width_mm: number;
+      };
+    };
     Component: {
       created_at: string;
       created_by: string;
@@ -1172,6 +1562,7 @@ export interface components {
       files: {
         file: {
           byte_size: number;
+          checksum: string | null;
           component_id: string | null;
           component_role: string | null;
           content_type: string;
@@ -1257,6 +1648,7 @@ export interface components {
         files: {
           file: {
             byte_size: number;
+            checksum: string | null;
             component_id: string | null;
             component_role: string | null;
             content_type: string;
@@ -1460,6 +1852,7 @@ export interface components {
       cards: {
         file: {
           byte_size: number;
+          checksum: string | null;
           component_id: string | null;
           component_role: string | null;
           content_type: string;
@@ -1523,6 +1916,7 @@ export interface components {
       }[];
       files: {
         byte_size: number;
+        checksum: string | null;
         component_id: string | null;
         component_role: string | null;
         content_type: string;
@@ -1562,6 +1956,7 @@ export interface components {
     Email: string;
     File: {
       byte_size: number;
+      checksum: string | null;
       component_id: string | null;
       component_role: string | null;
       content_type: string;
@@ -6650,6 +7045,732 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description Undone */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiLayouts: {
+    parameters: {
+      query: {
+        /** @description a UUID */
+        project_id:
+          string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Layouts, by name */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardLayoutList'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  postApiLayouts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          height_mm: number;
+          name: string;
+          project_id: components['schemas']['Uuid'];
+          spec: {
+            dpi: number;
+            elements: (
+              | {
+                  /** @enum {unknown} */
+                  align: 'center' | 'left' | 'right';
+                  bold_font: string | null;
+                  box: [number, number, number, number];
+                  color: string;
+                  font: string;
+                  line_height: number;
+                  min_size_pt: number;
+                  size_pt: number;
+                  text: string;
+                  /** @constant */
+                  type: 'text';
+                  /** @enum {unknown} */
+                  valign: 'bottom' | 'middle' | 'top';
+                  when: string | null;
+                }
+              | {
+                  box: [number, number, number, number];
+                  fill: string | null;
+                  opacity: number;
+                  radius_mm: number;
+                  stroke: string | null;
+                  stroke_mm: number;
+                  /** @constant */
+                  type: 'rect';
+                  when: string | null;
+                }
+              | {
+                  box: [number, number, number, number];
+                  /** @enum {unknown} */
+                  fit: 'contain' | 'cover' | 'fill';
+                  source:
+                    | {
+                        field: string;
+                        /** @constant */
+                        from: 'field';
+                      }
+                    | {
+                        file_id: components['schemas']['Uuid'];
+                        /** @constant */
+                        from: 'file';
+                      };
+                  /** @constant */
+                  type: 'image';
+                  when: string | null;
+                }
+            )[];
+            fields: {
+              [key: string]: {
+                /** @enum {unknown} */
+                type: 'image' | 'text';
+              };
+            };
+            fonts: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+            icons: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+          };
+          width_mm: number;
+          id?: components['schemas']['Uuid'];
+        };
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardLayout'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiLayoutsByLayoutId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        layoutId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The layout */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardLayoutWithDecks'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  putApiLayoutsByLayoutId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        layoutId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          height_mm: number;
+          name: string;
+          spec: {
+            dpi: number;
+            elements: (
+              | {
+                  /** @enum {unknown} */
+                  align: 'center' | 'left' | 'right';
+                  bold_font: string | null;
+                  box: [number, number, number, number];
+                  color: string;
+                  font: string;
+                  line_height: number;
+                  min_size_pt: number;
+                  size_pt: number;
+                  text: string;
+                  /** @constant */
+                  type: 'text';
+                  /** @enum {unknown} */
+                  valign: 'bottom' | 'middle' | 'top';
+                  when: string | null;
+                }
+              | {
+                  box: [number, number, number, number];
+                  fill: string | null;
+                  opacity: number;
+                  radius_mm: number;
+                  stroke: string | null;
+                  stroke_mm: number;
+                  /** @constant */
+                  type: 'rect';
+                  when: string | null;
+                }
+              | {
+                  box: [number, number, number, number];
+                  /** @enum {unknown} */
+                  fit: 'contain' | 'cover' | 'fill';
+                  source:
+                    | {
+                        field: string;
+                        /** @constant */
+                        from: 'field';
+                      }
+                    | {
+                        file_id: components['schemas']['Uuid'];
+                        /** @constant */
+                        from: 'file';
+                      };
+                  /** @constant */
+                  type: 'image';
+                  when: string | null;
+                }
+            )[];
+            fields: {
+              [key: string]: {
+                /** @enum {unknown} */
+                type: 'image' | 'text';
+              };
+            };
+            fonts: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+            icons: {
+              [key: string]: components['schemas']['Uuid'];
+            };
+          };
+          width_mm: number;
+        };
+      };
+    };
+    responses: {
+      /** @description Saved */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardLayout'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  deleteApiLayoutsByLayoutId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        layoutId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiCardContent: {
+    parameters: {
+      query: {
+        /** @description a UUID */
+        deck_id:
+          string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Card content */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardContentList'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  putApiCardContentByFileId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        fileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          fields: {
+            [key: string]: string;
+          };
+          layout_id: components['schemas']['Uuid'];
+        };
+      };
+    };
+    responses: {
+      /** @description Saved */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CardContent'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  deleteApiCardContentByFileId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        fileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Removed */
       204: {
         headers: {
           [name: string]: unknown;

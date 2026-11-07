@@ -8,7 +8,8 @@ SPA, and a small Cloud Run edge that serves per-PR previews.
 apps/api            Hono + Kysely + Postgres        -> GKE
 apps/web            Svelte 5 runes + Vite SPA       -> GCS bucket behind a GCLB
 apps/canva          React app inside Canva's editor -> a bundle uploaded to Canva
-apps/cli            `threepeaks`, a Commander CLI  -> linked from the main checkout
+apps/cli            `threepeaks`, a Commander CLI  -> linked from the main checkout;
+                    also renders cards drawn from layouts
 apps/preview-edge   Cloud Run static edge           -> Cloud Run
 packages/shared     generated API + realtime clients, and the constants both
                     sides must agree on
@@ -872,6 +873,55 @@ drive one from — it happens inside Canva's editor. `apps/api`'s own e2e suite 
 what imports one design twice and holds the second pass to leaving every card on
 the version it already had, and `check:a11y` drives the same routes to give the
 history screens a finished run to draw.
+
+# Card layouts
+
+A card can be described rather than drawn: `card_layout` is a frame, art slots
+and boxes of copy positioned in millimetres, and `card_content` is one card's
+values for them. The image in the deck is rendered from the two by the CLI and
+uploaded as an ordinary version, so every screen that shows a card already
+shows a laid-out one, and nothing else in the app had to learn the word.
+`apps/cli/README.md` is the reference for writing a layout; this is for
+changing the machinery.
+
+**The renderer is the CLI's, and it is deterministic.** `apps/cli/src/layout/`
+sets copy with opentype.js and hands resvg an SVG of paths -- never a `<text>`,
+so neither a machine's fonts nor its shaping is anything the output depends on
+-- and resvg is the WebAssembly build, the same code on every platform. Fonts
+and pictures come only from project files. `layoutRender.test.ts` pins the
+sha256 of one card: a dependency bump that moves it would give every rendered
+card in every project a new version at its next render, and that is a decision
+for whoever bumps it rather than a side effect.
+
+**That is the whole of the staleness bookkeeping.** Nothing records which
+version of which layout a card was drawn from. The CLI renders, compares the
+sha256 with the `checksum` the file row now carries, and uploads only on a
+difference -- so "is this card up to date" is answered by rendering it, and a
+layout, an icon or a frame can change any number of times with nothing to keep
+in step.
+
+**Content goes up before the picture of it.** For a card that exists, the push
+writes `card_content` first and the image second, so a failed upload leaves a
+card whose next render repairs it; a new card has no file to hang content on
+until its image is uploaded, so there the order is reversed. Rendering comes
+before either, so a card whose copy cannot be set changes nothing at all.
+
+**`packages/shared/src/layouts.ts` is checked by both ends.** The API stores
+nothing `layoutReferenceErrors` and `cardFieldErrors` refuse, and the CLI runs
+the same two before it sends anything. Counts of fonts, icons and fields are
+limited there rather than in the ArkType schema: a narrowed record has no JSON
+Schema form, and the layout would then be inlined in the spec instead of named.
+
+**A layout in use cannot be deleted**, tombstoned cards included -- restoring
+one would bring back content naming nothing. The foreign key is `no action`,
+not `restrict`, which is what lets a project delete cascade through layouts
+and cards in one statement. A layout's size has to match its deck's at the time
+content is written, and the renderer checks again, because either can change
+afterwards; neither change is refused, so a deck and its layout can be resized
+one after the other.
+
+No realtime events, for the reason print runs have none: no screen draws a
+layout. The images rendered from one announce themselves as file versions.
 
 # The Canva app
 

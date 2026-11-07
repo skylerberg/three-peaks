@@ -173,6 +173,7 @@ describe('FileStore.apply', () => {
       filename,
       content_type: 'text/plain',
       byte_size: 10,
+      checksum: null,
       image_width: null,
       image_height: null,
       name_locked: false,

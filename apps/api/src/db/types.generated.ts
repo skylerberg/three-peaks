@@ -71,6 +71,29 @@ export interface CanvaAppPairing {
   id: string;
 }
 
+export interface CardContent {
+  created_at: Generated<Timestamp>;
+  fields: Json;
+  file_id: string;
+  layout_id: string;
+  project_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string | null;
+}
+
+export interface CardLayout {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  height_mm: Numeric;
+  id: string;
+  name: string;
+  project_id: string;
+  spec: Json;
+  updated_at: Generated<Timestamp>;
+  updated_by: string | null;
+  width_mm: Numeric;
+}
+
 export interface Component {
   created_at: Generated<Timestamp>;
   created_by: string;
@@ -277,6 +300,8 @@ export interface DB {
   canva_app_build: CanvaAppBuild;
   canva_app_link: CanvaAppLink;
   canva_app_pairing: CanvaAppPairing;
+  card_content: CardContent;
+  card_layout: CardLayout;
   component: Component;
   component_model: ComponentModel;
   deck: Deck;

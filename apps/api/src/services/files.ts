@@ -25,6 +25,7 @@ export interface FileRow {
   filename: string;
   content_type: string;
   byte_size: string | number;
+  checksum: string | null;
   image_width: number | null;
   image_height: number | null;
   name_locked: boolean;
@@ -46,6 +47,7 @@ export function serializeFile(row: FileRow) {
     content_type: row.content_type,
     // bigint arrives as a string from pg; the wire type is a number.
     byte_size: Number(row.byte_size),
+    checksum: row.checksum,
     image_width: row.image_width,
     image_height: row.image_height,
     name_locked: row.name_locked,
@@ -66,6 +68,7 @@ export const FILE_COLUMNS = [
   'file.filename as filename',
   'file.content_type as content_type',
   'file.byte_size as byte_size',
+  'file.checksum as checksum',
   'file.image_width as image_width',
   'file.image_height as image_height',
   'file.name_locked as name_locked',

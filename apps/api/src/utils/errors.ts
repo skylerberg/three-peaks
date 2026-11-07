@@ -16,3 +16,8 @@ export class AppError extends Error {
 export function isUniqueViolation(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === '23505';
 }
+
+// Postgres foreign_key_violation: a delete a referencing row still refuses.
+export function isForeignKeyViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === '23503';
+}

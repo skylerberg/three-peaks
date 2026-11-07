@@ -51,6 +51,7 @@ import {
 } from '../decks.ts';
 import { placementFromOpts, reorder, sameOrder } from '../placement.ts';
 import { purgeDeleted, restoreDeleted } from '../tombstones.ts';
+import { registerDeckCards } from './layout.ts';
 import type { CliDeps, RuntimeContext } from '../context.ts';
 
 type Schemas = components['schemas'];
@@ -317,7 +318,10 @@ function registerTransfer(deckCmd: Command, deps: CliDeps): void {
 }
 
 export function registerDeck(program: Command, deps: CliDeps): void {
-  const deckCmd = group('deck', 'Decks: their cards, copies, back, 3D settings and import history');
+  const deckCmd = group(
+    'deck',
+    'Decks: their cards, copies, back, 3D settings, laid-out cards and import history'
+  );
 
   deckCmd.addCommand(
     inProject(leaf('list'))
@@ -598,6 +602,7 @@ export function registerDeck(program: Command, deps: CliDeps): void {
   registerArrangement(deckCmd, deps);
   registerModel(deckCmd, deps);
   registerImport(deckCmd, deps);
+  registerDeckCards(deckCmd, deps);
   program.addCommand(deckCmd);
 }
 

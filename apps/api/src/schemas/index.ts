@@ -8,6 +8,7 @@ export * from './canvaApp.ts';
 export * from './decks.ts';
 export * from './files.ts';
 export * from './imports.ts';
+export * from './layouts.ts';
 export * from './models.ts';
 export * from './print.ts';
 export * from './projects.ts';

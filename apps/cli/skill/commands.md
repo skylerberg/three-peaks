@@ -82,6 +82,18 @@ card or a component's file instead of an Assets path.
 - `threepeaks deck import show <deck> <run>` — `<run>` may be `latest`
 - `threepeaks deck import as-of <deck> <run>`
 - `threepeaks deck import abandon <deck> [--force]`
+- `threepeaks deck cards pull <deck> [--output <path>] [--force]` — laid-out cards as YAML
+- `threepeaks deck cards push <deck> <path> [--dry-run]` — creates and re-renders; never removes
+- `threepeaks deck render <deck> [card...] [--check | --output <dir>]` — `--check` exits 5 if any is out of date
+
+## Card layouts
+
+- `threepeaks layout list`
+- `threepeaks layout show <layout>` — fields, files, and the decks drawn from it
+- `threepeaks layout pull <layout> [--output <path>] [--force]` — YAML naming files by Assets path
+- `threepeaks layout push <path> [--layout <layout>] [--no-render]` — create or replace by name, re-render its cards
+- `threepeaks layout preview <path> [cards-file] [--deck <deck>] [--card <name>]... --output <dir>` — writes PNGs, changes nothing
+- `threepeaks layout delete <layout> [--force]` — refused while a card is drawn from it
 
 ## Components
 

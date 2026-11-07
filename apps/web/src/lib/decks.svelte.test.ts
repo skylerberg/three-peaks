@@ -39,6 +39,7 @@ function card(fileId: string, quantity: number, position: number) {
       filename: `${fileId}.png`,
       content_type: 'image/png',
       byte_size: 10,
+      checksum: null,
       image_width: 744,
       image_height: 1039,
       name_locked: false,

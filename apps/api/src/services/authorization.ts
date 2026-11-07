@@ -148,6 +148,24 @@ export async function assertDeckAccess(
     : await assertProjectAccess(c, row.project_id);
 }
 
+export async function assertLayoutAccess(
+  c: Pick<AppContext, 'get'>,
+  layoutId: string,
+  mode: 'read' | 'write' = 'read'
+): Promise<ProjectAccess> {
+  const row = await c
+    .get('db')
+    .selectFrom('card_layout')
+    .select(['card_layout.project_id as project_id'])
+    .where('card_layout.id', '=', layoutId)
+    .executeTakeFirst();
+
+  if (!row) throw new AppError(404, 'Layout not found');
+  return mode === 'write'
+    ? await assertProjectWrite(c, row.project_id)
+    : await assertProjectAccess(c, row.project_id);
+}
+
 export interface ImportAccess extends ProjectAccess {
   deckId: string;
   importId: string;

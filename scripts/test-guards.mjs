@@ -31,6 +31,7 @@ import { guards as fileversions } from './test-guards/file-versions.mjs';
 import { guards as softdelete } from './test-guards/soft-delete.mjs';
 import { guards as decks } from './test-guards/decks.mjs';
 import { guards as imports } from './test-guards/imports.mjs';
+import { guards as layouts } from './test-guards/layouts.mjs';
 import { guards as print } from './test-guards/print.mjs';
 import { guards as model3d } from './test-guards/model3d.mjs';
 import { guards as scene } from './test-guards/scene.mjs';
@@ -46,6 +47,7 @@ const areas = [
   softdelete,
   decks,
   imports,
+  layouts,
   print,
   model3d,
   scene,
