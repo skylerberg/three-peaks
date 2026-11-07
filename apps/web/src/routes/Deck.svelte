@@ -14,6 +14,7 @@
     withHiddenCards,
   } from '@three-peaks/shared';
   import type { components } from '@three-peaks/shared/api';
+  import CardEditor from '../components/decks/CardEditor.svelte';
   import FilePicker from '../components/decks/FilePicker.svelte';
   import CardViewer from '../components/CardViewer.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
@@ -24,6 +25,7 @@
   import OverflowMenu from '../components/ui/OverflowMenu.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
+  import { cardContent } from '../lib/cardContent.svelte.ts';
   import { deckImports } from '../lib/deckImports.svelte.ts';
   import { DROP_TARGET_STYLE, flipDuration, isDragPlaceholder } from '../lib/dnd.ts';
   import { type DeckCard, decks } from '../lib/decks.svelte.ts';
@@ -53,6 +55,8 @@
   let name = $state('');
   let backFile = $state<File | null>(null);
   let viewing = $state<string | null>(null);
+  // The laid-out card open in the editor, by its file, or a new one.
+  let editing = $state<{ kind: 'card'; fileId: string } | { kind: 'new' } | null>(null);
   // Off by default: a deleted card prints nothing, and the list is the deck as
   // it will come off the printer. The rows are still held, and still sent back
   // with every save, so a restore lands where the card was.
@@ -100,6 +104,24 @@
   $effect(() => {
     const loaded = decks.deck;
     if (loaded && loaded.id === deckId) name = loaded.name;
+  });
+
+  // The project's layouts and which of this deck's cards are drawn from one.
+  // Failing to read them leaves the deck as plain artwork, which it still is.
+  $effect(() => {
+    const project = projectId;
+    const id = deckId;
+    editing = null;
+    void cardContent.load(project, id).catch(() => {});
+    return () => cardContent.close();
+  });
+
+  const editingCard = $derived.by(() => {
+    const open = editing;
+    if (open?.kind !== 'card') return null;
+    const row = cards.find((entry) => entry.file_id === open.fileId);
+    const content = cardContent.contentOf(open.fileId);
+    return row && content ? { fileId: row.file_id, filename: row.file.filename, content } : null;
   });
 
   $effect(() => {
@@ -181,6 +203,12 @@
           return;
         case 'file_version_created':
           decks.applyCardFile(event.data.file);
+          return;
+        case 'card_content_updated':
+          cardContent.applyContents(event.data.contents);
+          return;
+        case 'card_content_deleted':
+          cardContent.applyRemoved(event.data.file_id);
           return;
         case 'deck_import_started':
           if (event.data.deck_id !== deckId) return;
@@ -594,6 +622,11 @@
               Move in from Assets
             </Button>
           {/if}
+          {#if canEdit && cardContent.layouts.length > 0}
+            <Button variant="secondary" onclick={() => (editing = { kind: 'new' })}>
+              New card from a layout
+            </Button>
+          {/if}
           <OverflowMenu label="More card options">
             <MenuCheckbox bind:checked={showDeleted}>
               Show deleted cards ({deletedCount})
@@ -601,6 +634,19 @@
           </OverflowMenu>
         </div>
       </div>
+
+      {#if editing?.kind === 'new' || editingCard}
+        {#key editing}
+          <CardEditor
+            {projectId}
+            {deckId}
+            layouts={cardContent.layouts}
+            card={editingCard}
+            oncreated={() => void decks.refreshDeck().catch(() => {})}
+            onclose={() => (editing = null)}
+          />
+        {/key}
+      {/if}
 
       {#if picking === 'cards'}
         <FilePicker
@@ -646,6 +692,8 @@
                  with only its id swapped, so every control on it is disabled or
                  absent: each would address an id no card has. -->
             {@const inert = isDragPlaceholder(card.id)}
+            {@const content = cardContent.contentOf(card.file_id)}
+            {@const drawState = content?.render_status ?? 'current'}
             <li
               animate:flip={{ duration: flipDuration() }}
               aria-label={card.file.filename}
@@ -690,16 +738,31 @@
 
               {#if canEdit && !inert}
                 <div class="flex gap-1">
+                  {#if content}
+                    <Button
+                      variant="ghost"
+                      onclick={() => (editing = { kind: 'card', fileId: card.file_id })}
+                    >
+                      Edit
+                    </Button>
+                  {/if}
                   <Button variant="ghost" onclick={() => void moveOut(card)}>To Assets</Button>
                   <Button variant="ghost" onclick={() => void removeCard(card)}>Delete</Button>
                 </div>
               {/if}
 
-              {#if card.file.deleted_at || isBack || (dpi !== null && dpi < PRINT_DPI)}
+              {#if card.file.deleted_at || isBack || (dpi !== null && dpi < PRINT_DPI) || drawState !== 'current'}
                 <div class="basis-full">
                   {#if card.file.deleted_at}
                     <p class="text-xs text-danger">Deleted. Restore it to print this card.</p>
                   {:else}
+                    {#if drawState === 'pending'}
+                      <p class="text-xs text-muted">Being drawn again from its layout…</p>
+                    {:else if drawState === 'failed'}
+                      <p class="text-xs text-danger">
+                        Can’t be drawn from its layout: {content?.render_error}
+                      </p>
+                    {/if}
                     {#if isBack}
                       <p class="text-xs text-accent">
                         This deck’s back. It prints on the reverse of every card rather than as one,

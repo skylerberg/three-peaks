@@ -1,6 +1,8 @@
 import { sql } from 'kysely';
 import { db } from '../db/index.ts';
 import { CardRenderError, renderStoredCard } from './cardImages.ts';
+import { CONTENT_COLUMNS, serializeContent } from './cardLayouts.ts';
+import { publishAfterCommit } from './realtime/index.ts';
 import { onRenderRequested } from './renderRequests.ts';
 import { AppError } from '../utils/errors.ts';
 import { logger } from '../utils/logger.ts';
@@ -103,40 +105,27 @@ async function settle(connection: Connection, claimed: Claim, error: string | nu
     .execute();
 }
 
-async function work(claimed: Claim): Promise<void> {
-  const hooks: PostCommitHook[] = [];
-  try {
-    const user = await requester(claimed);
-    await db.transaction().execute(async (trx) => {
-      const variables = { db: trx, user, postCommitHooks: hooks };
-      const c = {
-        get: (key: keyof typeof variables) => variables[key],
-      } as Pick<AppContext, 'get'>;
-      await renderStoredCard(c, claimed.file_id);
-      await settle(trx, claimed, null);
-    });
-  } catch (error) {
-    // Something about the card or its project as they stand -- copy that does
-    // not fit, a project over its storage -- which trying again cannot change.
-    if (error instanceof CardRenderError || (error instanceof AppError && error.statusCode < 500)) {
-      await settle(db, claimed, error.message);
-      return;
-    }
-    logger.error('card render failed', { error, fileId: claimed.file_id });
-    if (claimed.attempts >= MAX_ATTEMPTS) {
-      const message = error instanceof Error ? error.message : String(error);
-      await settle(db, claimed, `The card could not be rendered: ${message}`);
-    } else {
-      await db
-        .updateTable('card_content')
-        .set({
-          render_claimed_until: sql<Date>`now() + make_interval(secs => ${RETRY_SECONDS * claimed.attempts})`,
-        })
-        .where('card_content.file_id', '=', claimed.file_id)
-        .execute();
-    }
-    return;
-  }
+// Where the card stands now, to every screen showing its deck: drawn, or why
+// it cannot be.
+async function announce(
+  connection: Connection,
+  fileId: string,
+  user: AuthenticatedUser,
+  hooks: PostCommitHook[]
+) {
+  const row = await connection
+    .selectFrom('card_content')
+    .select(CONTENT_COLUMNS)
+    .where('card_content.file_id', '=', fileId)
+    .executeTakeFirst();
+  if (!row) return;
+  const content = serializeContent(row);
+  publishAfterCommit(hooks, user.id, 'card_content_updated', content.project_id, {
+    contents: [content],
+  });
+}
+
+async function runHooks(hooks: readonly PostCommitHook[]) {
   for (const hook of hooks) {
     try {
       await hook();
@@ -144,6 +133,55 @@ async function work(claimed: Claim): Promise<void> {
       logger.error('post-commit hook failed', { error });
     }
   }
+}
+
+// Why trying again cannot help, or null for a failure worth retrying: a card
+// that cannot be drawn as it stands, or a refusal about its project, such as
+// one over its storage, is about the card; the rest is storage or the
+// database out from under it.
+function lastingReason(error: unknown, attempts: number): string | null {
+  if (error instanceof CardRenderError) return error.message;
+  if (error instanceof AppError && error.statusCode < 500) return error.message;
+  if (attempts >= MAX_ATTEMPTS) {
+    return `The card could not be rendered: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return null;
+}
+
+async function work(claimed: Claim): Promise<void> {
+  const hooks: PostCommitHook[] = [];
+  let user: AuthenticatedUser | null = null;
+  try {
+    const by = await requester(claimed);
+    user = by;
+    await db.transaction().execute(async (trx) => {
+      const variables = { db: trx, user: by, postCommitHooks: hooks };
+      const c = {
+        get: (key: keyof typeof variables) => variables[key],
+      } as Pick<AppContext, 'get'>;
+      await renderStoredCard(c, claimed.file_id);
+      await settle(trx, claimed, null);
+      await announce(trx, claimed.file_id, by, hooks);
+    });
+  } catch (error) {
+    // The transaction rolled back, so nothing it queued to announce happened.
+    hooks.length = 0;
+    const reason = lastingReason(error, claimed.attempts);
+    if (reason === null) {
+      logger.error('card render failed', { error, fileId: claimed.file_id });
+      await db
+        .updateTable('card_content')
+        .set({
+          render_claimed_until: sql<Date>`now() + make_interval(secs => ${RETRY_SECONDS * claimed.attempts})`,
+        })
+        .where('card_content.file_id', '=', claimed.file_id)
+        .execute();
+      return;
+    }
+    await settle(db, claimed, reason);
+    if (user !== null) await announce(db, claimed.file_id, user, hooks);
+  }
+  await runHooks(hooks);
 }
 
 // Every card there is to claim, one after another. What the loop runs, and

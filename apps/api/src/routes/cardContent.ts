@@ -18,6 +18,7 @@ import {
 } from '../services/cardImages.ts';
 import { assertRoomForCard } from '../services/decks.ts';
 import { resolveHome } from '../services/fileHome.ts';
+import { publishAfterCommit } from '../services/realtime/index.ts';
 import { requestDeckRenders } from '../services/renderRequests.ts';
 import { newId } from '../utils/uuid.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
@@ -124,14 +125,23 @@ async function refusingUndrawable<T>(draw: () => T | Promise<T>): Promise<T> {
   }
 }
 
-async function readContent(c: AppContext, fileId: string) {
+// The content as saved, announced to every screen showing the deck.
+async function announceContent(c: AppContext, fileId: string) {
   const row = await c
     .get('db')
     .selectFrom('card_content')
     .select(CONTENT_COLUMNS)
     .where('card_content.file_id', '=', fileId)
     .executeTakeFirstOrThrow();
-  return serializeContent(row);
+  const content = serializeContent(row);
+  publishAfterCommit(
+    c.get('postCommitHooks'),
+    c.get('user').id,
+    'card_content_updated',
+    content.project_id,
+    { contents: [content] }
+  );
+  return content;
 }
 
 cardContentRouter.put(
@@ -220,7 +230,7 @@ cardContentRouter.put(
             { fileId, projectId: access.projectId, checksum: card.checksum },
             bytes
           );
-    return c.json({ content: await readContent(c, fileId), image_version: imageVersion });
+    return c.json({ content: await announceContent(c, fileId), image_version: imageVersion });
   }
 );
 
@@ -282,7 +292,7 @@ cardContentRouter.post(
         updated_by: c.get('user').id,
       })
       .execute();
-    return c.json({ file, content: await readContent(c, id) }, 201);
+    return c.json({ file, content: await announceContent(c, id) }, 201);
   }
 );
 
@@ -329,13 +339,20 @@ cardContentRouter.delete(
   }),
   async (c) => {
     const fileId = c.req.param('fileId');
-    await assertFileAccess(c, fileId, 'write');
+    const access = await assertFileAccess(c, fileId, 'write');
     const removed = await c
       .get('db')
       .deleteFrom('card_content')
       .where('file_id', '=', fileId)
       .executeTakeFirst();
     if (removed.numDeletedRows === 0n) throw new AppError(404, 'This card has no content');
+    publishAfterCommit(
+      c.get('postCommitHooks'),
+      c.get('user').id,
+      'card_content_deleted',
+      access.projectId,
+      { file_id: fileId }
+    );
     return c.body(null, 204);
   }
 );

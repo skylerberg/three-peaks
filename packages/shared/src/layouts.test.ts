@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cardFieldErrors,
   cardImageIds,
+  fieldsInDrawingOrder,
   fillTemplate,
   layoutFileIds,
   layoutReferenceErrors,
@@ -152,6 +153,37 @@ describe('templates', () => {
 
   it('fills a missing value with nothing', () => {
     expect(fillTemplate('[{{a}}]', {})).toBe('[]');
+  });
+});
+
+describe('fieldsInDrawingOrder', () => {
+  it('lists fields as the elements first use them, then the unused ones alphabetically', () => {
+    const fields = {
+      zeal: { type: 'text' as const },
+      name: { type: 'text' as const },
+      rules: { type: 'text' as const },
+      art: { type: 'image' as const },
+      cost: { type: 'text' as const },
+      badge: { type: 'text' as const },
+    };
+    const ordered = spec({
+      fields,
+      elements: [
+        ...spec().elements,
+        rect({ when: 'cost' }),
+        text({ text: '**{{name}}** {{rules}} {{name}} {{unknown}}' }),
+      ],
+    });
+    // The art slot, then the rules box, then the rect drawn when there is a
+    // cost, then the name the last box adds.
+    expect(fieldsInDrawingOrder(ordered)).toEqual([
+      'art',
+      'rules',
+      'cost',
+      'name',
+      'badge',
+      'zeal',
+    ]);
   });
 });
 
