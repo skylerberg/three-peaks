@@ -23,9 +23,10 @@ import {
   type CardEntry,
 } from '../layout/authoring.ts';
 import {
-  assertLayoutFits,
+  awaitRenders,
   cardFilename,
   cardName,
+  checkRenders,
   eachCard,
   fetchLayout,
   fileNamer,
@@ -34,18 +35,17 @@ import {
   listLayouts,
   mapImageFields,
   matchLayout,
-  newRenderer,
+  previewCard,
   pushCards,
   readSource,
   renderStoredCards,
   resolveLayout,
   storedTargets,
+  writeStoredCards,
   type CardResult,
   type Layout,
   type PlannedCard,
-  type RenderMode,
 } from '../layouts.ts';
-import type { CardLayout } from '../layout/svg.ts';
 import type { CliDeps, RuntimeContext } from '../context.ts';
 
 function sizeText(layout: Pick<Layout, 'width_mm' | 'height_mm'>): string {
@@ -114,17 +114,30 @@ async function loadCardsFile(
   return planned;
 }
 
-// Every deck holding cards drawn from this layout, re-rendered. One deck that
-// fails does not stop the next; the first failure is what the command ends on.
-async function renderDependants(ctx: RuntimeContext, layoutId: string) {
+// The cards of every deck drawn from this layout, as they were before a save
+// asked for them to be drawn again -- what the wait afterwards measures "new"
+// against.
+async function dependants(ctx: RuntimeContext, layoutId: string) {
   const { decks } = await fetchLayout(ctx, layoutId);
+  return Promise.all(
+    decks.map(async (deck) => {
+      const full = await fetchDeck(ctx, deck.id);
+      return {
+        full,
+        targets: storedTargets(full, await listCardContent(ctx, deck.id), { layoutId }),
+      };
+    })
+  );
+}
+
+// Waits for the API to draw each deck's cards again. One deck that fails does
+// not stop the next; the first failure is what the command ends on.
+async function awaitDependants(ctx: RuntimeContext, decks: Awaited<ReturnType<typeof dependants>>) {
   const rendered: { deck: string; results: CardResult[] }[] = [];
   let error: CliError | null = null;
-  for (const deck of decks) {
-    const full = await fetchDeck(ctx, deck.id);
-    const targets = storedTargets(full, await listCardContent(ctx, deck.id), { layoutId });
+  for (const { full, targets } of decks) {
     if (!ctx.out.json) ctx.out.line(`${full.deck.name}: ${String(targets.length)} cards`);
-    const run = await renderStoredCards(ctx, full.deck, targets, { kind: 'push' });
+    const run = await awaitRenders(ctx, full.deck, targets);
     rendered.push({ deck: full.deck.name, results: run.results });
     error ??= run.error;
   }
@@ -227,11 +240,11 @@ export function registerLayout(program: Command, deps: CliDeps): void {
   layoutCmd.addCommand(
     inProject(leaf('push'))
       .description(
-        'Create a layout from a YAML file, or replace the one of the same name, and re-render every card drawn from it'
+        'Create a layout from a YAML file, or replace the one of the same name; the cards drawn from it are drawn again, and this waits for them'
       )
       .argument('<path>', 'the layout file, or - for stdin')
       .option('--layout <layout>', 'replace this layout, renaming it to the name in the file')
-      .option('--no-render', 'save the layout and leave the cards drawn from it as they are')
+      .option('--no-wait', 'save the layout and return while its cards are still being drawn')
       .action(
         withCtx(deps, async (ctx, opts, path) => {
           const project = await projectFromOpts(ctx, opts);
@@ -248,6 +261,8 @@ export function registerLayout(program: Command, deps: CliDeps): void {
             height_mm: document.height_mm,
             spec: document.spec,
           };
+          const wait = opts.wait !== false && existing !== undefined;
+          const before = wait ? await dependants(ctx, existing.id) : [];
           const saved =
             existing === undefined
               ? assertOk(
@@ -266,10 +281,9 @@ export function registerLayout(program: Command, deps: CliDeps): void {
               `${existing === undefined ? 'Created' : 'Updated'} layout ${saved.name} (${shortId(saved.id)})`
             );
           }
-          const { rendered, error } =
-            opts.render === false
-              ? { rendered: [], error: null }
-              : await renderDependants(ctx, saved.id);
+          const { rendered, error } = wait
+            ? await awaitDependants(ctx, before)
+            : { rendered: [], error: null };
           if (ctx.out.json) ctx.out.line(JSON.stringify({ layout: saved, rendered }, null, 2));
           if (error !== null) throw error;
         })
@@ -279,7 +293,7 @@ export function registerLayout(program: Command, deps: CliDeps): void {
   layoutCmd.addCommand(
     inProject(leaf('preview'))
       .description(
-        'Render cards from a layout file into a directory, changing nothing on the server -- for iterating on a layout before pushing it'
+        'Draw cards from a layout file into a directory, saving nothing -- for iterating on a layout before pushing it'
       )
       .argument('<path>', 'the layout file')
       .argument('[cards-file]', 'a cards file; its cards naming this layout are drawn')
@@ -314,7 +328,15 @@ export function registerLayout(program: Command, deps: CliDeps): void {
           } else {
             const deck = await resolveDeck(ctx, project.id, deckRef!);
             const full = await fetchDeck(ctx, deck.id);
-            assertLayoutFits(preview, full.deck);
+            if (
+              preview.width_mm !== full.deck.card_width_mm ||
+              preview.height_mm !== full.deck.card_height_mm
+            ) {
+              throw new CliError(
+                `${preview.name} is drawn on a ${sizeText(preview)} card and ${full.deck.name}'s cards are ${sizeText({ width_mm: full.deck.card_width_mm, height_mm: full.deck.card_height_mm })}`,
+                EXIT.invalid
+              );
+            }
             const layouts = new Map((await listLayouts(ctx, project.id)).map((l) => [l.id, l]));
             cards = storedTargets(full, await listCardContent(ctx, deck.id))
               .filter(({ content }) => sameName(layouts.get(content.layout_id)?.name ?? ''))
@@ -329,15 +351,13 @@ export function registerLayout(program: Command, deps: CliDeps): void {
 
           const output = optString(opts, 'output')!;
           await mkdir(output, { recursive: true });
-          const renderer = newRenderer(ctx);
-          const layout: CardLayout = preview;
           const run = await eachCard(
             ctx,
             cards,
             (card) => card.name,
             async (card) => {
               const target = join(output, card.name);
-              await writeFile(target, await renderer.render(layout, card.fields));
+              await writeFile(target, await previewCard(ctx, project.id, preview, card.fields));
               return { card: card.name, file_id: null, outcome: 'written', path: target };
             }
           );
@@ -434,7 +454,7 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
       )
       .argument('<deck>', 'deck id or name')
       .argument('<path>', 'the cards file, or - for stdin')
-      .option('--dry-run', 'render everything and say what would change, changing nothing')
+      .option('--dry-run', 'say which cards would be created or changed, changing nothing')
       .action(
         withCtx(deps, async (ctx, opts, deckRef, path) => {
           const project = await projectFromOpts(ctx, opts);
@@ -444,7 +464,7 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
             matchLayout(entry.layout, layouts)
           );
           const full = await fetchDeck(ctx, deck.id);
-          const run = await pushCards(ctx, project, full, planned, {
+          const run = await pushCards(ctx, full, planned, {
             dryRun: opts.dryRun === true,
           });
 
@@ -473,15 +493,15 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
   deckCmd.addCommand(
     inProject(leaf('render'))
       .description(
-        "Re-render a deck's laid-out cards from their stored content, after a layout or one of its files changed"
+        "Draw a deck's laid-out cards again from their stored content, and wait for them. The API does this itself when a layout or a file the cards draw changes; this is for anything it cannot see"
       )
       .argument('<deck>', 'deck id or name')
       .argument('[card...]', 'only these cards (default: every live card drawn from a layout)')
       .option(
         '--check',
-        'change nothing; list the cards whose image is out of date, and exit 5 if any are'
+        'change nothing; list the cards still waiting to be drawn or that cannot be, and exit non-zero if any are'
       )
-      .option('-o, --output <dir>', 'write the PNGs into a directory instead of uploading them')
+      .option('-o, --output <dir>', 'draw the PNGs into a directory, saving nothing')
       .action(
         withCtx(deps, async (ctx, opts, deckRef, cardsArg) => {
           const refs = cardsArg as unknown as string[];
@@ -512,13 +532,12 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
             );
             return;
           }
-          const mode: RenderMode =
+          const run =
             opts.check === true
-              ? { kind: 'check' }
+              ? await checkRenders(ctx, targets)
               : output !== undefined
-                ? { kind: 'write', dir: output }
-                : { kind: 'push' };
-          const run = await renderStoredCards(ctx, full.deck, targets, mode);
+                ? await writeStoredCards(ctx, full.deck, targets, output)
+                : await renderStoredCards(ctx, full.deck, targets);
           if (ctx.out.json) ctx.out.line(JSON.stringify(run.results, null, 2));
           if (run.error !== null) throw run.error;
         })

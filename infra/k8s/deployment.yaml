@@ -120,9 +120,11 @@ spec:
             preStop:
               exec:
                 command: ['sleep', '15']
+          # The limit leaves room for drawing a laid-out card, which decodes its
+          # pictures at full size; renders are one at a time per pod.
           resources:
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
-              memory: 512Mi
+              memory: 1Gi

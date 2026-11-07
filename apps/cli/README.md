@@ -247,20 +247,22 @@ changes nothing sends nothing.
 
 A card can be drawn instead of uploaded: a **layout** says where the frame, the
 art and each line of copy go, and each card supplies its own values for those
-slots. Change a card's rules and pushing again renders it and adds a version;
-change the layout and every card drawn from it is re-rendered. Both are stored
-in the project; the YAML files below are how you edit them.
+slots. The server draws every card: change a card's rules and pushing again
+draws it and adds a version; change the layout, or any file it draws, and every
+card drawn from it is drawn again in the background. Both are stored in the
+project; the YAML files below are how you edit them.
 
 ```sh
-threepeaks layout push hero.yaml                    # create, or replace the layout of that name
+threepeaks layout push hero.yaml                    # create, or replace the layout of that name, and wait for its cards
 threepeaks layout pull Hero -o hero.yaml            # the stored layout, as YAML
 threepeaks layout preview hero.yaml cards.yaml -o preview/   # PNGs on disk; nothing on the server changes
 threepeaks layout preview hero.yaml --deck Heroes -o preview/  # the deck's stored cards, drawn with this file
 threepeaks deck cards pull Heroes -o cards.yaml
 threepeaks deck cards push Heroes cards.yaml --dry-run
 threepeaks deck cards push Heroes cards.yaml
-threepeaks deck render Heroes --check               # exit 5 if any card's image is behind its content
-threepeaks deck render Heroes                       # after a new version of art, an icon or a font
+threepeaks deck render Heroes --check               # exit 5 while any card waits to be drawn; 6 if one cannot be
+threepeaks deck render Heroes                       # draw them all again and wait, for a change the server cannot see
+threepeaks deck render Heroes -o out/               # the stored cards drawn into a directory; nothing changes
 threepeaks layout list
 threepeaks layout show Hero                         # fields, files, and the decks drawn from it
 threepeaks layout delete Hero                       # refused while any card is drawn from it
@@ -386,15 +388,18 @@ prints `{`, `}`, `*` or `\` as itself. A card whose copy does not fit its box
 even at `min_size_pt`, or uses a character its font has no glyph for, is
 refused by name; the rest of the file still goes up.
 
-`deck cards push` creates the cards the deck lacks and re-renders the rest, and
-only a card whose image comes out different gains a version — pushing an
-unchanged file changes nothing. It never removes a card: one the file has
+`deck cards push` creates the cards the deck lacks and saves the ones whose
+content changed, and only a card whose image comes out different gains a
+version — pushing an unchanged file changes nothing. It never removes a card: one the file has
 stopped naming is listed, with the command that would delete it. New cards are
 added at the end of the deck; the order is the deck's to arrange.
 
 A layout follows the current version of every file it names, so a new frame
-or icon in Assets reaches the cards at the next `deck render`, and `--check`
-says which are behind before then. A Canva import into the same deck removes
+or icon in Assets reaches the cards on its own: the server draws them again,
+and `deck render --check` says which are still waiting, or which can no longer
+be drawn and why -- copy that no longer fits a changed layout, say. Saving
+that card's content again, fixed, is what clears it. A laid-out card cannot be
+drawn into another, as an icon, a frame or art. A Canva import into the same deck removes
 any card its design does not name, laid-out ones included — its plan lists
 them before anything happens.
 

@@ -4,6 +4,8 @@ import type { DB } from '../db/types.ts';
 import { AppError } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
 import { FILE_COLUMNS, serializeFile } from './files.ts';
+import type { DeckFileRole } from './fileHome.ts';
+import { publishAfterCommit } from './realtime/index.ts';
 import type { AppContext, Connection } from '../types/index.ts';
 
 // One reader for a deck and one for its cards, in a service rather than in the
@@ -309,4 +311,43 @@ export async function assertCardFiles(
       `"${stranded[0].filename}"${rest} would be left in this deck with no place in it. Delete it, or move it to Assets.`
     );
   }
+}
+
+// A deck owns its artwork and its arrangement names every piece of it, so a
+// file arriving in a deck takes its place there: a card joins the cards, a
+// back becomes the back. Shared by an upload and a card drawn from a layout.
+export async function placeInDeck(
+  c: Pick<AppContext, 'get'>,
+  deckId: string,
+  fileId: string,
+  role: DeckFileRole
+): Promise<void> {
+  const db = c.get('db');
+  if (role === 'back') {
+    await db
+      .updateTable('deck')
+      .set({ back_file_id: fileId, updated_at: new Date() })
+      .where('deck.id', '=', deckId)
+      .execute();
+    return;
+  }
+
+  await ensureDeckCard(db, deckId, fileId);
+  await db
+    .updateTable('deck')
+    .set({ updated_at: new Date() })
+    .where('deck.id', '=', deckId)
+    .execute();
+}
+
+export async function publishDeck(
+  c: Pick<AppContext, 'get'>,
+  projectId: string,
+  deckId: string
+): Promise<void> {
+  const [deck, cards] = await Promise.all([readDeck(c, deckId), readDeckCards(c, deckId)]);
+  publishAfterCommit(c.get('postCommitHooks'), c.get('user').id, 'deck_updated', projectId, {
+    deck,
+    cards,
+  });
 }

@@ -8,8 +8,7 @@ SPA, and a small Cloud Run edge that serves per-PR previews.
 apps/api            Hono + Kysely + Postgres        -> GKE
 apps/web            Svelte 5 runes + Vite SPA       -> GCS bucket behind a GCLB
 apps/canva          React app inside Canva's editor -> a bundle uploaded to Canva
-apps/cli            `threepeaks`, a Commander CLI  -> linked from the main checkout;
-                    also renders cards drawn from layouts
+apps/cli            `threepeaks`, a Commander CLI  -> linked from the main checkout
 apps/preview-edge   Cloud Run static edge           -> Cloud Run
 packages/shared     generated API + realtime clients, and the constants both
                     sides must agree on
@@ -878,42 +877,56 @@ history screens a finished run to draw.
 
 A card can be described rather than drawn: `card_layout` is a frame, art slots
 and boxes of copy positioned in millimetres, and `card_content` is one card's
-values for them. The image in the deck is rendered from the two by the CLI and
-uploaded as an ordinary version, so every screen that shows a card already
-shows a laid-out one, and nothing else in the app had to learn the word.
-`apps/cli/README.md` is the reference for writing a layout; this is for
-changing the machinery.
+values for them. The API draws the image from the two and saves it as an
+ordinary version, so every screen that shows a card already shows a laid-out
+one, and nothing else in the app had to learn the word. `apps/cli/README.md` is
+the reference for writing a layout; this is for changing the machinery.
 
-**The renderer is the CLI's, and it is deterministic.** `apps/cli/src/layout/`
-sets copy with opentype.js and hands resvg an SVG of paths -- never a `<text>`,
-so neither a machine's fonts nor its shaping is anything the output depends on
--- and resvg is the WebAssembly build, the same code on every platform. Fonts
-and pictures come only from project files. `layoutRender.test.ts` pins the
-sha256 of one card: a dependency bump that moves it would give every rendered
-card in every project a new version at its next render, and that is a decision
-for whoever bumps it rather than a side effect.
+**The renderer is deterministic.** `apps/api/src/services/cardRender/` sets copy
+with opentype.js and hands resvg an SVG of paths -- never a `<text>`, so neither
+a machine's fonts nor its shaping is anything the output depends on -- and resvg
+is the WebAssembly build, the same code on every platform. Fonts and pictures
+come only from project files. `layoutRender.test.ts` pins the sha256 of one
+card: a dependency bump that moves it would give every rendered card in every
+project a new version at its next render, and that is a decision for whoever
+bumps it rather than a side effect. Such a bump is also one thing the API cannot
+see for itself; `POST /api/card-content/render` (`threepeaks deck render`) asks
+for a deck to be drawn again.
 
 **Geometry comes before drawing.** `svg.ts` works out every element's box
 first, in the order its pinned edges need, and only then paints in list order;
 copy is set during that pass, because a hugging element's size is the copy.
 Nothing about this pass may change the document an unpinned, unturned layout
-produces -- the checksum `layoutRender.test.ts` pins is what says it did not. The pass is the
-renderer's alone: the API stores pins and checks them for cycles, but which
-way a card comes out depends on its copy and its fonts, and only the CLI has
-those.
+produces -- the checksum `layoutRender.test.ts` pins is what says it did not.
+Validation stores pins and checks them for cycles, but which way a card comes
+out depends on its copy and its fonts, so only drawing it can say whether it
+fits.
 
-**That is the whole of the staleness bookkeeping.** Nothing records which
-version of which layout a card was drawn from. The CLI renders, compares the
-sha256 with the `checksum` the file row now carries, and uploads only on a
-difference -- so "is this card up to date" is answered by rendering it, and a
-layout, an icon or a frame can change any number of times with nothing to keep
-in step.
+**Saving content draws the card.** `PUT /api/card-content/:fileId` draws first,
+so a card whose copy cannot be set is a 422 and changes nothing, then saves the
+content and appends the image if its bytes differ; `POST /api/card-content`
+creates a new card the same way. Nothing records which version of which layout
+a card was drawn from: the sha256 of what it draws is compared with the
+`checksum` the file carries, so "is this card up to date" is answered by
+drawing it, and identical bytes write nothing.
 
-**Content goes up before the picture of it.** For a card that exists, the push
-writes `card_content` first and the image second, so a failed upload leaves a
-card whose next render repairs it; a new card has no file to hang content on
-until its image is uploaded, so there the order is reversed. Rendering comes
-before either, so a card whose copy cannot be set changes nothing at all.
+**Everything else that changes a card's picture asks for it in the
+background.** A layout saved with anything but a new name, a new version of any
+file a layout or a card's field names (`appendFileVersion` is the one writer,
+so one call there covers every route), a deck resized, a card or deck restored:
+each sets `card_content.render_requested_at` in its own transaction, and every
+API pod works through them (`renderWorker.ts`). A card is claimed for a lease,
+not locked for its render, so a pod dying mid-card lets it go; a render only
+clears the request it claimed, so one made while it ran is drawn again. A card
+that cannot be drawn as things stand keeps `render_error`, which its content
+reports as `failed` until a save or a later change asks again. Renders are one
+at a time per pod (`cardImages.ts`), because a card decodes its pictures at
+full size while it is drawn.
+
+**A laid-out card is never drawn into another**, in either direction: neither a
+layout nor a card's field may name one, and a picture something draws cannot
+become one. A card drawing itself would be asked for again by its own every
+version.
 
 **`packages/shared/src/layouts.ts` is checked by both ends.** The API stores
 nothing `layoutReferenceErrors` and `cardFieldErrors` refuse, and the CLI runs
@@ -927,10 +940,10 @@ not `restrict`, which is what lets a project delete cascade through layouts
 and cards in one statement. A layout's size has to match its deck's at the time
 content is written, and the renderer checks again, because either can change
 afterwards; neither change is refused, so a deck and its layout can be resized
-one after the other.
+one after the other, the cards failing to draw in between.
 
 No realtime events, for the reason print runs have none: no screen draws a
-layout. The images rendered from one announce themselves as file versions.
+layout. The images drawn from one announce themselves as file versions.
 
 # The Canva app
 

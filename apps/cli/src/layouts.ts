@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isLiveCard, type CardFields } from '@three-peaks/shared';
 import type { components } from '@three-peaks/shared/api';
-import { ApiError, CliError, EXIT, assertOk, exitCodeForStatus } from './errors.ts';
+import { ApiError, CliError, EXIT, assertOk, exitCodeForStatus, toApiError } from './errors.ts';
 import { readAllStdin } from './prompt.ts';
 import {
   fetchDirectory,
@@ -11,20 +11,18 @@ import {
   folderPathOf,
   matchRef,
   resolveFileRef,
+  fetchDeck,
   type DeckCard,
   type DeckWithCards,
   type Project,
 } from './resolve.ts';
-import { appendVersion, downloadBytes, sendFile } from './transfer.ts';
 import { cardsInput, safeFilename } from './decks.ts';
-import { CardRenderer } from './layout/render.ts';
-import { CardRenderError, type CardLayout } from './layout/svg.ts';
 import type { RuntimeContext } from './context.ts';
 
 type Schemas = components['schemas'];
 export type Layout = Schemas['CardLayout'];
 export type LayoutWithDecks = Schemas['CardLayoutWithDecks'];
-export type CardContent = Schemas['CardContent'];
+export type CardContent = Schemas['CardContentList']['cards'][number];
 type FileRow = Schemas['File'];
 
 // --- Reading ---------------------------------------------------------------
@@ -172,35 +170,39 @@ function sameFields(a: CardFields, b: CardFields): boolean {
   return [...keys].every((key) => (a[key] ?? '') === (b[key] ?? ''));
 }
 
-// --- Rendering -------------------------------------------------------------------
+// --- Drawing ---------------------------------------------------------------------
 
-export function newRenderer(ctx: RuntimeContext): CardRenderer {
-  return new CardRenderer((id) => downloadBytes(ctx, id));
-}
+// The API draws every laid-out card: saving content draws that card there and
+// then, and a change to a layout or to a file cards draw has them drawn again in
+// the background. What is left here is asking, and waiting to see what came of
+// it.
 
-function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
-function sizeOf(width: number, height: number): string {
-  return `${String(width)} × ${String(height)} mm`;
-}
-
-// Refused before anything is drawn: a layout on a card of another size would
-// render without complaint and print at the wrong scale.
-export function assertLayoutFits(layout: Layout | CardLayout, deck: DeckWithCards['deck']): void {
-  if (layout.width_mm !== deck.card_width_mm || layout.height_mm !== deck.card_height_mm) {
-    throw new CardRenderError(
-      `${layout.name} is drawn on a ${sizeOf(layout.width_mm, layout.height_mm)} card and ${deck.name}'s cards are ${sizeOf(deck.card_width_mm, deck.card_height_mm)}`
-    );
-  }
+// A card drawn without saving anything, for iterating on a layout.
+export async function previewCard(
+  ctx: RuntimeContext,
+  projectId: string,
+  layout: Pick<Layout, 'width_mm' | 'height_mm' | 'spec'>,
+  fields: CardFields
+): Promise<Uint8Array> {
+  const result = await ctx.api.POST('/api/layouts/preview', {
+    body: {
+      project_id: projectId,
+      width_mm: layout.width_mm,
+      height_mm: layout.height_mm,
+      spec: layout.spec,
+      fields,
+    },
+    parseAs: 'arrayBuffer',
+  });
+  if (!result.response.ok) throw toApiError(result.response, result.error);
+  return new Uint8Array((result.data as unknown as ArrayBuffer | undefined) ?? new ArrayBuffer(0));
 }
 
 type CardOutcome =
   | 'created'
   | 'versioned'
   | 'unchanged'
-  | 'stale'
+  | 'pending'
   | 'written'
   | 'would-create'
   | 'would-change'
@@ -225,11 +227,13 @@ function describe(result: CardResult): string {
     case 'created':
       return `Created ${result.card}`;
     case 'versioned':
-      return `Updated ${result.card} to version ${String(result.version)}${changes}`;
+      return result.version === undefined
+        ? `Updated ${result.card}${changes}`
+        : `Updated ${result.card} to version ${String(result.version)}${changes}`;
     case 'unchanged':
       return `Unchanged ${result.card}${changes}`;
-    case 'stale':
-      return `Out of date: ${result.card} -- its image is not what its content renders to`;
+    case 'pending':
+      return `Waiting: ${result.card} -- its image has yet to be drawn again`;
     case 'written':
       return `Wrote ${result.path ?? result.card}`;
     case 'would-create':
@@ -241,12 +245,12 @@ function describe(result: CardResult): string {
   }
 }
 
-// One card at a time, the way uploads go: the quota is checked per request. A
-// card that cannot be drawn or is refused is reported and passed over; a
-// refusal that is about the caller stops the run, since every later card would
-// meet it too. Each card gets a line as it goes, and what comes back is every
-// result with the error the command should end on -- the first failure's, or
-// for a check, anything out of date -- so a caller can print JSON first.
+// One card at a time. A card that cannot be drawn or is refused is reported and
+// passed over; a refusal that is about the caller stops the run, since every
+// later card would meet it too. Each card gets a line as it goes, and what comes
+// back is every result with the error the command should end on -- the first
+// failure's, or for a check, anything still waiting -- so a caller can print
+// JSON first.
 export interface CardRun {
   results: CardResult[];
   error: CliError | null;
@@ -257,7 +261,7 @@ export async function eachCard<T>(
   items: readonly T[],
   nameOf: (item: T) => string,
   run: (item: T) => Promise<CardResult>,
-  options: { staleFails?: boolean } = {}
+  options: { pendingFails?: boolean } = {}
 ): Promise<CardRun> {
   const results: CardResult[] = [];
   let firstFailure: number | null = null;
@@ -268,15 +272,8 @@ export async function eachCard<T>(
     } catch (err) {
       const status = err instanceof ApiError ? err.status : null;
       if (status === 401 || status === 403) throw err;
-      if (!(err instanceof ApiError || err instanceof CliError || err instanceof CardRenderError)) {
-        throw err;
-      }
-      firstFailure ??=
-        err instanceof ApiError
-          ? exitCodeForStatus(err.status)
-          : err instanceof CliError
-            ? err.exitCode
-            : EXIT.invalid;
+      if (!(err instanceof ApiError || err instanceof CliError)) throw err;
+      firstFailure ??= err instanceof ApiError ? exitCodeForStatus(err.status) : err.exitCode;
       result = { card: nameOf(item), file_id: null, outcome: 'failed', error: err.message };
     }
     results.push(result);
@@ -286,72 +283,25 @@ export async function eachCard<T>(
   }
 
   const failed = results.filter((r) => r.outcome === 'failed').length;
-  const stale = results.filter((r) => r.outcome === 'stale').length;
+  const pending = results.filter((r) => r.outcome === 'pending').length;
   let error: CliError | null = null;
   if (firstFailure !== null) {
     error = new CliError(
       `${String(failed)} of ${String(results.length)} cards failed`,
       firstFailure
     );
-  } else if (options.staleFails === true && stale > 0) {
+  } else if (options.pendingFails === true && pending > 0) {
     error = new CliError(
-      `${String(stale)} of ${String(results.length)} cards are out of date; threepeaks deck render updates them`,
+      `${String(pending)} of ${String(results.length)} cards are waiting to be drawn again`,
       EXIT.conflict
     );
   }
   return { results, error };
 }
 
-export type RenderMode = { kind: 'push' } | { kind: 'check' } | { kind: 'write'; dir: string };
-
 export interface RenderTarget {
   card: DeckCard;
   content: CardContent;
-}
-
-// Re-renders cards from the content already stored, after a layout or one of
-// its files changed. Only a card whose bytes would differ gets a version.
-export async function renderStoredCards(
-  ctx: RuntimeContext,
-  deck: DeckWithCards['deck'],
-  targets: readonly RenderTarget[],
-  mode: RenderMode
-): Promise<CardRun> {
-  const renderer = newRenderer(ctx);
-  const layouts = new Map<string, Promise<Layout>>();
-  const layoutOf = (id: string) => {
-    let pending = layouts.get(id);
-    if (pending === undefined) {
-      pending = fetchLayout(ctx, id).then((detail) => detail.layout);
-      layouts.set(id, pending);
-    }
-    return pending;
-  };
-  if (mode.kind === 'write') await mkdir(mode.dir, { recursive: true });
-
-  return eachCard(
-    ctx,
-    targets,
-    (target) => target.card.file.filename,
-    async ({ card, content }) => {
-      const layout = await layoutOf(content.layout_id);
-      assertLayoutFits(layout, deck);
-      const bytes = await renderer.render(layout, content.fields);
-      const base = { card: card.file.filename, file_id: card.file_id };
-      if (mode.kind === 'write') {
-        const path = join(mode.dir, card.file.filename);
-        await writeFile(path, bytes);
-        return { ...base, outcome: 'written', path };
-      }
-      if (sha256(bytes) === card.file.checksum) return { ...base, outcome: 'unchanged' };
-      if (mode.kind === 'check') return { ...base, outcome: 'stale' };
-      const uploaded = await appendVersion(ctx, card.file, bytes);
-      return uploaded.outcome === 'versioned'
-        ? { ...base, outcome: 'versioned', version: uploaded.version?.version_number }
-        : { ...base, outcome: 'unchanged' };
-    },
-    { staleFails: mode.kind === 'check' }
-  );
 }
 
 // The live cards of a deck that are drawn from a layout, optionally only the
@@ -373,6 +323,126 @@ export function storedTargets(
   });
 }
 
+// How long a command waits for the API to finish drawing what it asked for,
+// and how often it looks.
+const RENDER_WAIT_MS = 10 * 60 * 1000;
+const RENDER_POLL_MS = 500;
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Waits until none of `targets` is waiting to be drawn, then says what became
+// of each: a new image, the same one, or why it could not be drawn. The image a
+// target held when it was read is what "new" is measured against.
+export async function awaitRenders(
+  ctx: RuntimeContext,
+  deck: DeckWithCards['deck'],
+  targets: readonly RenderTarget[]
+): Promise<CardRun> {
+  const wanted = new Set(targets.map((target) => target.card.file_id));
+  const deadline = Date.now() + RENDER_WAIT_MS;
+  let contents = await listCardContent(ctx, deck.id);
+  const waiting = () =>
+    contents.filter((c) => wanted.has(c.file_id) && c.render_status === 'pending').length;
+  while (waiting() > 0 && Date.now() < deadline) {
+    await pause(RENDER_POLL_MS);
+    contents = await listCardContent(ctx, deck.id);
+  }
+  const status = new Map(contents.map((content) => [content.file_id, content]));
+  const now = new Map((await fetchDeck(ctx, deck.id)).cards.map((card) => [card.file_id, card]));
+  return reportRenders(ctx, targets, (target) => ({
+    content: status.get(target.card.file_id),
+    checksum: now.get(target.card.file_id)?.file.checksum ?? null,
+  }));
+}
+
+// Where each card stands, without waiting or asking for anything: `--check`.
+export function checkRenders(
+  ctx: RuntimeContext,
+  targets: readonly RenderTarget[]
+): Promise<CardRun> {
+  return reportRenders(
+    ctx,
+    targets,
+    (target) => ({ content: target.content, checksum: target.card.file.checksum }),
+    { pendingFails: true }
+  );
+}
+
+function reportRenders(
+  ctx: RuntimeContext,
+  targets: readonly RenderTarget[],
+  current: (target: RenderTarget) => { content: CardContent | undefined; checksum: string | null },
+  options: { pendingFails?: boolean } = {}
+): Promise<CardRun> {
+  return eachCard(
+    ctx,
+    targets,
+    (target) => target.card.file.filename,
+    async (target) => {
+      const { content, checksum } = current(target);
+      const base = { card: target.card.file.filename, file_id: target.card.file_id };
+      if (content?.render_status === 'failed') {
+        throw new CliError(content.render_error ?? 'it could not be drawn', EXIT.invalid);
+      }
+      if (content?.render_status === 'pending') return { ...base, outcome: 'pending' };
+      return {
+        ...base,
+        outcome: checksum === target.card.file.checksum ? 'unchanged' : 'versioned',
+      };
+    },
+    options
+  );
+}
+
+// Asks for cards to be drawn again and waits for them.
+export async function renderStoredCards(
+  ctx: RuntimeContext,
+  deck: DeckWithCards['deck'],
+  targets: readonly RenderTarget[]
+): Promise<CardRun> {
+  assertOk(
+    await ctx.api.POST('/api/card-content/render', {
+      body: { deck_id: deck.id, file_ids: targets.map((target) => target.card.file_id) },
+    })
+  );
+  return awaitRenders(ctx, deck, targets);
+}
+
+// Cards drawn from their stored content into a directory, saving nothing.
+export async function writeStoredCards(
+  ctx: RuntimeContext,
+  deck: DeckWithCards['deck'],
+  targets: readonly RenderTarget[],
+  dir: string
+): Promise<CardRun> {
+  const layouts = new Map<string, Promise<Layout>>();
+  const layoutOf = (id: string) => {
+    let pending = layouts.get(id);
+    if (pending === undefined) {
+      pending = fetchLayout(ctx, id).then((detail) => detail.layout);
+      layouts.set(id, pending);
+    }
+    return pending;
+  };
+  await mkdir(dir, { recursive: true });
+  return eachCard(
+    ctx,
+    targets,
+    (target) => target.card.file.filename,
+    async ({ card, content }) => {
+      const bytes = await previewCard(
+        ctx,
+        deck.project_id,
+        await layoutOf(content.layout_id),
+        content.fields
+      );
+      const path = join(dir, card.file.filename);
+      await writeFile(path, bytes);
+      return { card: card.file.filename, file_id: card.file_id, outcome: 'written', path };
+    }
+  );
+}
+
 // --- Pushing a cards file -----------------------------------------------------
 
 export interface PlannedCard {
@@ -384,19 +454,15 @@ export interface PlannedCard {
   fields: CardFields;
 }
 
-// What one push does, card by card: render first, so a card that cannot be
-// drawn changes nothing at all; then the content, then the image, in that
-// order for a card that exists -- truth before the picture of it, so a failed
-// upload leaves a card the next render repairs -- and the image first for a
-// new one, which has no file to hang content on until it is uploaded.
+// What one push does, card by card: a new card is created from its content, and
+// a card whose content changed is saved, which draws it. Either is refused, and
+// changes nothing, when the card cannot be drawn.
 export async function pushCards(
   ctx: RuntimeContext,
-  project: Project,
   full: DeckWithCards,
   planned: readonly PlannedCard[],
   options: { dryRun: boolean }
 ): Promise<CardRun> {
-  const renderer = newRenderer(ctx);
   const contents = new Map(
     (await listCardContent(ctx, full.deck.id)).map((content) => [content.file_id, content])
   );
@@ -410,26 +476,23 @@ export async function pushCards(
     planned,
     (entry) => entry.filename,
     async (entry): Promise<CardResult> => {
-      assertLayoutFits(entry.layout, full.deck);
-      const bytes = await renderer.render(entry.layout, entry.fields);
       const existing = live.get(entry.filename.toLowerCase());
 
       if (existing === undefined) {
         if (options.dryRun) return { card: entry.filename, file_id: null, outcome: 'would-create' };
-        const { body } = await sendFile<FileRow>(
-          ctx,
-          '/api/files/upload',
-          {
-            id: randomUUID(),
-            project_id: project.id,
-            deck_id: full.deck.id,
-            filename: entry.filename,
-          },
-          bytes
+        const created = assertOk(
+          await ctx.api.POST('/api/card-content', {
+            body: {
+              id: randomUUID(),
+              deck_id: full.deck.id,
+              filename: entry.filename,
+              layout_id: entry.layout.id,
+              fields: entry.fields,
+            },
+          })
         );
-        await putContent(ctx, body.id, entry);
-        if (entry.copies !== null) copies.set(body.id, entry.copies);
-        return { card: body.filename, file_id: body.id, outcome: 'created' };
+        if (entry.copies !== null) copies.set(created.file.id, entry.copies);
+        return { card: created.file.filename, file_id: created.file.id, outcome: 'created' };
       }
 
       const before = contents.get(existing.file_id);
@@ -440,8 +503,6 @@ export async function pushCards(
         !sameFields(before.fields, entry.fields);
       if (contentChanged)
         changes.push(before === undefined ? 'now drawn from a layout' : 'content');
-      const imageChanged = sha256(bytes) !== existing.file.checksum;
-      if (imageChanged) changes.push('image');
       if (entry.copies !== null && entry.copies !== existing.quantity) {
         changes.push(`${String(existing.quantity)} → ${String(entry.copies)} copies`);
         copies.set(existing.file_id, entry.copies);
@@ -450,25 +511,22 @@ export async function pushCards(
 
       if (options.dryRun)
         return { ...base, outcome: changes.length > 0 ? 'would-change' : 'unchanged' };
-      if (contentChanged) await putContent(ctx, existing.file_id, entry);
-      if (!imageChanged) return { ...base, outcome: 'unchanged' };
-      const uploaded = await appendVersion(ctx, existing.file, bytes);
-      return { ...base, outcome: 'versioned', version: uploaded.version?.version_number };
+      if (!contentChanged) return { ...base, outcome: 'unchanged' };
+      const saved = assertOk(
+        await ctx.api.PUT('/api/card-content/{fileId}', {
+          params: { path: { fileId: existing.file_id } },
+          body: { layout_id: entry.layout.id, fields: entry.fields },
+        })
+      );
+      return saved.image_version === null
+        ? { ...base, outcome: 'unchanged' }
+        : { ...base, outcome: 'versioned', version: saved.image_version };
     }
   );
   // Written even when some cards failed: the ones that went up should not be
   // left at the count an upload gives them.
   if (!options.dryRun) await saveCopies(ctx, full.deck.id, copies);
   return run;
-}
-
-async function putContent(ctx: RuntimeContext, fileId: string, entry: PlannedCard): Promise<void> {
-  assertOk(
-    await ctx.api.PUT('/api/card-content/{fileId}', {
-      params: { path: { fileId } },
-      body: { layout_id: entry.layout.id, fields: entry.fields },
-    })
-  );
 }
 
 // One save of the whole arrangement, read fresh so the cards created by this

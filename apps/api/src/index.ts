@@ -24,6 +24,7 @@ import { printRunsRouter } from './routes/printRuns.ts';
 import { projectsRouter } from './routes/projects.ts';
 import { openApiSpec } from './spec/openapi.ts';
 import { attachRealtime, realtimeEventsDocument, startBus } from './services/realtime/index.ts';
+import { startRenderWorker } from './services/renderWorker.ts';
 import { assertPublicRoutes } from './utils/assert-public-routes.ts';
 import { logger } from './utils/logger.ts';
 import { REQUEST_TIMEOUT_MS, startupFailureMessage } from './utils/serverStartup.ts';
@@ -114,4 +115,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // /ws rides the raw HTTP upgrade on the same server, so it is same-origin with
   // the API and needs no second port or certificate.
   attachRealtime(httpServer);
+
+  // Laid-out cards asked to be drawn again, worked through on every replica.
+  startRenderWorker();
 }

@@ -7,13 +7,14 @@ import {
   isLayoutImageType,
   layoutReferenceErrors,
 } from '@three-peaks/shared';
+import { sql } from 'kysely';
 import { AppError } from '../utils/errors.ts';
 import { isValidUuid } from '../utils/uuid.ts';
 import type { AppContext } from '../types/index.ts';
 
-// The layouts a card is drawn from, and the per-card values that fill one.
-// Nothing here renders: the CLI does, and the API's half is making sure that
-// whatever it stores is something the renderer can draw.
+// The layouts a card is drawn from, and the per-card values that fill one,
+// checked so that whatever is stored is something the renderer can draw
+// (`cardImages.ts` draws it).
 
 interface LayoutRow {
   id: string;
@@ -72,6 +73,8 @@ interface ContentRow {
   project_id: string;
   layout_id: string;
   fields: CardFields;
+  render_requested_at: Date | string | null;
+  render_error: string | null;
   updated_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -82,6 +85,8 @@ export const CONTENT_COLUMNS = [
   'card_content.project_id as project_id',
   'card_content.layout_id as layout_id',
   'card_content.fields as fields',
+  'card_content.render_requested_at as render_requested_at',
+  'card_content.render_error as render_error',
   'card_content.updated_by as updated_by',
   'card_content.created_at as created_at',
   'card_content.updated_at as updated_at',
@@ -93,6 +98,13 @@ export function serializeContent(row: ContentRow) {
     project_id: row.project_id,
     layout_id: row.layout_id,
     fields: row.fields,
+    render_status:
+      row.render_requested_at === null
+        ? ('current' as const)
+        : row.render_error === null
+          ? ('pending' as const)
+          : ('failed' as const),
+    render_error: row.render_error,
     updated_by: row.updated_by,
     created_at: new Date(row.created_at).toISOString(),
     updated_at: new Date(row.updated_at).toISOString(),
@@ -112,6 +124,7 @@ interface ReferencedFile {
   filename: string;
   content_type: string;
   deleted_at: Date | string | null;
+  drawn: boolean;
 }
 
 async function filesInProject(
@@ -128,6 +141,16 @@ async function filesInProject(
       'file.filename as filename',
       'file.content_type as content_type',
       'file.deleted_at as deleted_at',
+      (eb) =>
+        eb
+          .exists(
+            eb
+              .selectFrom('card_content')
+              .select('card_content.file_id')
+              .whereRef('card_content.file_id', '=', 'file.id')
+          )
+          .$castTo<boolean>()
+          .as('drawn'),
     ])
     .where('file.id', 'in', [...new Set(ids)])
     .where('file.project_id', '=', projectId)
@@ -147,6 +170,13 @@ function fileErrors(
   if (file === undefined) return [`${what} must be a file in the same project (${id})`];
   const errors: string[] = [];
   if (file.deleted_at !== null) errors.push(`${what} is ${file.filename}, which is deleted`);
+  // A card drawing another laid-out card would be drawn again each time that
+  // one was, and a card drawing itself would never stop.
+  if (file.drawn) {
+    errors.push(
+      `${what} is ${file.filename}, a card drawn from a layout, which cannot be drawn into another`
+    );
+  }
   const fits =
     accepts === 'font' ? isFontType(file.content_type) : isLayoutImageType(file.content_type);
   if (!fits) {
@@ -224,4 +254,36 @@ export async function assertValidCardFields(
     else errors.push(...fileErrors(key, value, files.get(value), 'image'));
   }
   if (errors.length > 0) throw invalid("The card's fields are invalid", 'fields', errors);
+}
+
+// The other half of the rule above: a picture something draws cannot itself
+// become a card drawn from a layout.
+export async function assertNotDrawnElsewhere(
+  c: Pick<AppContext, 'get'>,
+  projectId: string,
+  fileId: string
+): Promise<void> {
+  const id = sql`jsonb_build_object('id', ${fileId}::text)`;
+  const user = await c
+    .get('db')
+    .selectFrom('card_layout')
+    .select(['card_layout.name as name'])
+    .where('card_layout.project_id', '=', projectId)
+    .where(sql<boolean>`jsonb_path_exists(card_layout.spec, '$.** ? (@ == $id)', ${id})`)
+    .union((eb) =>
+      eb
+        .selectFrom('card_content')
+        .innerJoin('file', 'file.id', 'card_content.file_id')
+        .select(['file.filename as name'])
+        .where('card_content.project_id', '=', projectId)
+        .where(sql<boolean>`jsonb_path_exists(card_content.fields, '$.* ? (@ == $id)', ${id})`)
+    )
+    .limit(1)
+    .executeTakeFirst();
+  if (user) {
+    throw new AppError(
+      422,
+      `${user.name} draws this picture, so it cannot itself be drawn from a layout`
+    );
+  }
 }

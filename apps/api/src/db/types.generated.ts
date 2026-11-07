@@ -77,6 +77,11 @@ export interface CardContent {
   file_id: string;
   layout_id: string;
   project_id: string;
+  render_attempts: Generated<number>;
+  render_claimed_until: Timestamp | null;
+  render_error: string | null;
+  render_requested_at: Timestamp | null;
+  render_requested_by: string | null;
   updated_at: Generated<Timestamp>;
   updated_by: string | null;
 }
