@@ -10,7 +10,15 @@
 export const SNIFF_BYTES = 1024;
 
 export type SniffedContentType =
-  'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/svg+xml' | 'model/gltf-binary';
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/gif'
+  | 'image/webp'
+  | 'image/svg+xml'
+  | 'model/gltf-binary'
+  | 'font/ttf'
+  | 'font/otf'
+  | 'font/woff';
 
 function startsWith(buffer: Buffer, bytes: number[], offset = 0): boolean {
   if (buffer.length < offset + bytes.length) return false;
@@ -63,6 +71,24 @@ function isSvg(head: Buffer): boolean {
   return /^<svg[\s/>]/i.test(skipXmlPreamble(text));
 }
 
+// What a card layout's text is drawn in. An sfnt opens with a four-byte version
+// and then its table count, and the count is checked too: 00 01 00 00 alone is a
+// prefix plenty of binary formats could start with. A collection (`ttcf`) is
+// left unrecognised because nothing here can choose a face out of one.
+function sniffFont(head: Buffer): 'font/ttf' | 'font/otf' | 'font/woff' | null {
+  if (head.length < 12) return null;
+  if (startsWith(head, [0x77, 0x4f, 0x46, 0x46])) return 'font/woff';
+  const tables = head.readUInt16BE(4);
+  if (tables < 1 || tables > 100) return null;
+  // 00 01 00 00 is TrueType outlines, and "true" is Apple's older spelling of it.
+  if (startsWith(head, [0x00, 0x01, 0x00, 0x00]) || startsWith(head, [0x74, 0x72, 0x75, 0x65])) {
+    return 'font/ttf';
+  }
+  // "OTTO": CFF outlines.
+  if (startsWith(head, [0x4f, 0x54, 0x54, 0x4f])) return 'font/otf';
+  return null;
+}
+
 export function sniffContentType(head: Buffer): SniffedContentType | null {
   // 89 50 4E 47 0D 0A 1A 0A
   if (startsWith(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
@@ -79,6 +105,8 @@ export function sniffContentType(head: Buffer): SniffedContentType | null {
   if (startsWith(head, [0x67, 0x6c, 0x54, 0x46]) && startsWith(head, [0x02, 0x00, 0x00, 0x00], 4)) {
     return 'model/gltf-binary';
   }
+  const font = sniffFont(head);
+  if (font !== null) return font;
   if (isSvg(head)) return 'image/svg+xml';
   return null;
 }

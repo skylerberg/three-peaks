@@ -10,6 +10,8 @@ import { corsMiddleware } from './middleware/cors.ts';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.ts';
 import { transactionMiddleware } from './middleware/transaction.ts';
 import { authRouter, publicAuthRouter } from './routes/auth.ts';
+import { cardContentRouter } from './routes/cardContent.ts';
+import { cardLayoutsRouter } from './routes/cardLayouts.ts';
 import { componentsRouter } from './routes/components.ts';
 import { canvaAppRouter, publicCanvaAppRouter } from './routes/canvaApp.ts';
 import { deckImportsRouter } from './routes/deckImports.ts';
@@ -69,6 +71,8 @@ app.route('/api/models', modelsRouter);
 app.route('/api/decks', decksRouter);
 app.route('/api/decks', deckImportsRouter);
 app.route('/api/print', printRunsRouter);
+app.route('/api/layouts', cardLayoutsRouter);
+app.route('/api/card-content', cardContentRouter);
 app.route('/api/canva-app', publicCanvaAppRouter);
 app.route('/api/canva-app', canvaAppRouter);
 

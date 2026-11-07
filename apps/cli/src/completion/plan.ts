@@ -10,6 +10,7 @@ type ValueKind =
   | 'project'
   | 'deck'
   | 'card'
+  | 'layout'
   | 'component'
   | 'member'
   | 'entry'
@@ -40,6 +41,7 @@ const VALUE_KINDS: Record<string, ValueKind | 'path' | 'config-key'> = {
   project: 'project',
   deck: 'deck',
   card: 'card',
+  layout: 'layout',
   component: 'component',
   member: 'member',
   entry: 'entry',
@@ -52,6 +54,7 @@ const VALUE_KINDS: Record<string, ValueKind | 'path' | 'config-key'> = {
   link: 'link',
   path: 'path',
   paths: 'path',
+  'cards-file': 'path',
   dir: 'path',
   key: 'config-key',
 };

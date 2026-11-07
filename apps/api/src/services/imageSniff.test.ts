@@ -6,6 +6,16 @@ const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
 const gif = Buffer.from('GIF89a......', 'latin1');
 const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')]);
 const glb = Buffer.concat([Buffer.from('glTF'), Buffer.from([0x02, 0x00, 0x00, 0x00])]);
+// An sfnt header: version, then a table count of 12, then the search fields.
+const sfnt = (version: number[]) => Buffer.from([...version, 0x00, 0x0c, 0, 0, 0, 0, 0, 0]);
+const ttf = sfnt([0x00, 0x01, 0x00, 0x00]);
+const appleTtf = sfnt([0x74, 0x72, 0x75, 0x65]);
+const otf = sfnt([0x4f, 0x54, 0x54, 0x4f]);
+const woff = Buffer.concat([
+  Buffer.from('wOFF'),
+  Buffer.from([0x00, 0x01, 0x00, 0x00]),
+  Buffer.alloc(4),
+]);
 
 describe('sniffContentType', () => {
   it.each([
@@ -14,6 +24,10 @@ describe('sniffContentType', () => {
     ['gif', gif, 'image/gif'],
     ['webp', webp, 'image/webp'],
     ['glb', glb, 'model/gltf-binary'],
+    ['ttf', ttf, 'font/ttf'],
+    ["Apple's ttf", appleTtf, 'font/ttf'],
+    ['otf', otf, 'font/otf'],
+    ['woff', woff, 'font/woff'],
   ])('identifies %s', (_name, buffer, expected) => {
     expect(sniffContentType(buffer)).toBe(expected);
   });
@@ -32,6 +46,15 @@ describe('sniffContentType', () => {
   it('does not accept a glTF container at a version that does not exist', () => {
     const v1 = Buffer.concat([Buffer.from('glTF'), Buffer.from([0x01, 0x00, 0x00, 0x00])]);
     expect(sniffContentType(v1)).toBeNull();
+  });
+
+  it('does not take any buffer opening 00 01 00 00 for a font', () => {
+    const noTables = Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0]);
+    expect(sniffContentType(noTables)).toBeNull();
+  });
+
+  it('leaves a font collection unrecognised', () => {
+    expect(sniffContentType(sfnt([0x74, 0x74, 0x63, 0x66]))).toBeNull();
   });
 
   it('does not accept HTML that claims to be an image', () => {

@@ -243,6 +243,106 @@ refused with the real keys listed, and `kind` can never change. `--file` lays a
 JSON object over the stored settings before any `--set` is applied. A save that
 changes nothing sends nothing.
 
+## Card layouts
+
+A card can be drawn instead of uploaded: a **layout** says where the frame, the
+art and each line of copy go, and each card supplies its own values for those
+slots. Change a card's rules and pushing again renders it and adds a version;
+change the layout and every card drawn from it is re-rendered. Both are stored
+in the project; the YAML files below are how you edit them.
+
+```sh
+threepeaks layout push hero.yaml                    # create, or replace the layout of that name
+threepeaks layout pull Hero -o hero.yaml            # the stored layout, as YAML
+threepeaks layout preview hero.yaml cards.yaml -o preview/   # PNGs on disk; nothing on the server changes
+threepeaks layout preview hero.yaml --deck Heroes -o preview/  # the deck's stored cards, drawn with this file
+threepeaks deck cards pull Heroes -o cards.yaml
+threepeaks deck cards push Heroes cards.yaml --dry-run
+threepeaks deck cards push Heroes cards.yaml
+threepeaks deck render Heroes --check               # exit 5 if any card's image is behind its content
+threepeaks deck render Heroes                       # after a new version of art, an icon or a font
+threepeaks layout list
+threepeaks layout show Hero                         # fields, files, and the decks drawn from it
+threepeaks layout delete Hero                       # refused while any card is drawn from it
+```
+
+A layout, with every setting it can have:
+
+```yaml
+name: Hero
+size: poker # or width_mm and height_mm; must match the deck's cards
+dpi: 300 # the default
+fonts: # TTF, OTF or WOFF files, by Assets path or id
+  body: Fonts/Lora-Regular.ttf
+  bold: Fonts/Lora-Bold.ttf
+icons: # PNG, JPEG or SVG, written {coin} in copy
+  coin: Icons/coin.svg
+fields: # what each card supplies: text or image
+  name: text
+  cost: text
+  rules: text
+  art: image
+elements: # painted in order, first at the back; box is [x, y, width, height] in mm
+  - type: image
+    box: [0, 0, 63, 88]
+    file: Frames/hero.png # a fixed image -- or field: art, for each card's own
+    fit: fill # cover (default), contain or fill
+  - type: image
+    box: [4, 14, 55, 34]
+    field: art
+    when: art # any element: drawn only when this field is not empty
+  - type: rect
+    box: [4, 51, 55, 33]
+    fill: '#ffffff' # default none
+    stroke: '#3b2a1a' # default none
+    stroke_mm: 0.3 # 0.25 when there is a stroke
+    radius_mm: 2 # default 0
+    opacity: 0.9 # default 1
+  - type: text
+    box: [7, 54, 49, 27]
+    text: '{{rules}}' # {{field}} is replaced by the card's value
+    font: body
+    bold_font: bold # needed only if the copy uses **bold**
+    size_pt: 10
+    min_size_pt: 6 # shrinks in quarter points until it fits; default size_pt
+    line_height: 1.2 # the default
+    color: '#1a1a1a' # default black
+    align: left # left (default), center, right
+    valign: middle # top (default), middle, bottom
+```
+
+A deck's cards:
+
+```yaml
+layout: Hero # every card's, unless it names its own
+cards:
+  - name: knight # the deck's knight.png
+    copies: 3 # optional; left alone when absent
+    fields:
+      name: Knight
+      cost: 3
+      rules: "**Defend:** gain 2 {coin}.\nDraw a card."
+      art: Art/knight.png
+```
+
+Copy is markup: `{icon}` draws one of the layout's icons one em square,
+`**bold**` switches to `bold_font`, a newline breaks the line, and a backslash
+prints `{`, `}`, `*` or `\` as itself. A card whose copy does not fit its box
+even at `min_size_pt`, or uses a character its font has no glyph for, is
+refused by name; the rest of the file still goes up.
+
+`deck cards push` creates the cards the deck lacks and re-renders the rest, and
+only a card whose image comes out different gains a version — pushing an
+unchanged file changes nothing. It never removes a card: one the file has
+stopped naming is listed, with the command that would delete it. New cards are
+added at the end of the deck; the order is the deck's to arrange.
+
+A layout follows the current version of every file it names, so a new frame
+or icon in Assets reaches the cards at the next `deck render`, and `--check`
+says which are behind before then. A Canva import into the same deck removes
+any card its design does not name, laid-out ones included — its plan lists
+them before anything happens.
+
 ## Printing
 
 ```sh

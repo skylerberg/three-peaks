@@ -58,6 +58,7 @@ function artworkFile(id: string, deletedAt: string | null = null) {
       filename: 'Main board.png',
       content_type: 'image/png',
       byte_size: 128,
+      checksum: null,
       image_width: 1890,
       image_height: 1890,
       name_locked: false,

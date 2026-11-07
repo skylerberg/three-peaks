@@ -41,6 +41,7 @@ export interface components {
         files: {
           file: {
             byte_size: number;
+            checksum: string | null;
             component_id: string | null;
             component_role: string | null;
             content_type: string;
@@ -131,6 +132,7 @@ export interface components {
         files: {
           file: {
             byte_size: number;
+            checksum: string | null;
             component_id: string | null;
             component_role: string | null;
             content_type: string;
@@ -223,6 +225,7 @@ export interface components {
           files: {
             file: {
               byte_size: number;
+              checksum: string | null;
               component_id: string | null;
               component_role: string | null;
               content_type: string;
@@ -315,6 +318,7 @@ export interface components {
         files: {
           file: {
             byte_size: number;
+            checksum: string | null;
             component_id: string | null;
             component_role: string | null;
             content_type: string;
@@ -497,6 +501,7 @@ export interface components {
         cards: {
           file: {
             byte_size: number;
+            checksum: string | null;
             component_id: string | null;
             component_role: string | null;
             content_type: string;
@@ -540,6 +545,7 @@ export interface components {
       data: {
         actor_user_id: string;
         byte_size: number;
+        checksum: string | null;
         component_id: string | null;
         component_role: string | null;
         content_type: string;
@@ -566,6 +572,7 @@ export interface components {
       data: {
         actor_user_id: string;
         byte_size: number;
+        checksum: string | null;
         component_id: string | null;
         component_role: string | null;
         content_type: string;
@@ -590,6 +597,7 @@ export interface components {
       data: {
         actor_user_id: string;
         byte_size: number;
+        checksum: string | null;
         component_id: string | null;
         component_role: string | null;
         content_type: string;
@@ -614,6 +622,7 @@ export interface components {
       data: {
         actor_user_id: string;
         byte_size: number;
+        checksum: string | null;
         component_id: string | null;
         component_role: string | null;
         content_type: string;
@@ -640,6 +649,7 @@ export interface components {
         actor_user_id: string;
         file: {
           byte_size: number;
+          checksum: string | null;
           component_id: string | null;
           component_role: string | null;
           content_type: string;

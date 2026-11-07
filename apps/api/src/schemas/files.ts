@@ -23,6 +23,10 @@ export const fileSchema = type({
   filename: 'string',
   content_type: 'string',
   byte_size: 'number',
+  // The sha256 of the current version's bytes, null for a row older than the
+  // version history. On the wire so a client holding bytes can tell whether
+  // uploading them would change anything without sending them.
+  checksum: 'string | null',
   image_width: 'number | null',
   image_height: 'number | null',
   // Whether a person has named this file, which is what an import will not

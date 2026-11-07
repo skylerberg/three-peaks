@@ -1,6 +1,6 @@
 ---
 name: threepeaks
-description: Work with Three Peaks Hub (tools.threepeaksgames.com), the board game design tools, through the `threepeaks` CLI — push card art into a deck, set copy counts and the back, upload and version component artwork, move files around Assets, read what the printer still owes and what a Canva import did, and restore anything deleted. Use whenever Three Peaks Hub, threepeaks, a deck, card, component, punchboard, Assets or print run of a Three Peaks game comes up, in any repo.
+description: Work with Three Peaks Hub (tools.threepeaksgames.com), the board game design tools, through the `threepeaks` CLI — push card art into a deck, edit the rules on laid-out cards, set copy counts and the back, upload and version component artwork, move files around Assets, read what the printer still owes and what a Canva import did, and restore anything deleted. Use whenever Three Peaks Hub, threepeaks, a deck, card, component, punchboard, Assets or print run of a Three Peaks game comes up, in any repo.
 ---
 
 # Three Peaks Hub
@@ -70,6 +70,24 @@ threepeaks deck back "Heroes" back.png --project "Summit" --no-input
 
 A copy count of 0 keeps the card and prints none of it. Taking a card out of a
 deck means deleting its image or moving it to Assets — ask before either.
+
+Cards drawn from a layout rather than uploaded as finished art. Their rules,
+names and art choices live on the server; editing them means pulling the deck's
+cards file, changing it, and pushing it back:
+
+```sh
+threepeaks deck cards pull "Heroes" -o cards.yaml --project "Summit"
+# edit the rules in cards.yaml
+threepeaks deck cards push "Heroes" cards.yaml --dry-run --project "Summit" --no-input
+threepeaks deck cards push "Heroes" cards.yaml --project "Summit" --no-input
+```
+
+Only a card whose image comes out different gets a new version. Copy uses
+`{icon}` for the layout's icons, `**bold**`, and newlines. A card whose copy no
+longer fits its box is refused by name and the rest still go up — shorten the
+copy rather than editing the layout to make room, unless asked. After a new
+version of a frame, an icon or art in Assets, `threepeaks deck render "Heroes"`
+brings the cards up to date; `--check` says which are behind.
 
 Component artwork, and its settings:
 

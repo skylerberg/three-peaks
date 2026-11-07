@@ -15,6 +15,7 @@ import {
   splitPath,
   type DirectoryListing,
 } from '../resolve.ts';
+import { listLayouts } from '../layouts.ts';
 import { readCached, writeCached } from './cache.ts';
 import type { RuntimeContext } from '../context.ts';
 import type { Candidate, CompletionPlan, PlanScope } from './plan.ts';
@@ -76,6 +77,12 @@ async function projectId(ctx: RuntimeContext, scope: PlanScope): Promise<string>
 async function decks(ctx: RuntimeContext, project: string): Promise<NamedRef[]> {
   return cached(ctx, `decks:${project}`, async () =>
     (await listDecks(ctx, project)).map((d) => ({ id: d.id, name: d.name }))
+  );
+}
+
+async function layouts(ctx: RuntimeContext, project: string): Promise<NamedRef[]> {
+  return cached(ctx, `layouts:${project}`, async () =>
+    (await listLayouts(ctx, project)).map((l) => ({ id: l.id, name: l.name }))
   );
 }
 
@@ -190,6 +197,8 @@ export async function candidatesFor(
   switch (plan.valueKind) {
     case 'deck':
       return toCandidates(await decks(ctx, project));
+    case 'layout':
+      return toCandidates(await layouts(ctx, project));
     case 'component':
       return toCandidates(await components(ctx, project));
     case 'member':

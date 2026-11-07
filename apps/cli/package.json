@@ -11,10 +11,13 @@
     "install:global": "node scripts/install.mjs"
   },
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "@three-peaks/shared": "workspace:*",
     "commander": "^15.0.0",
     "openapi-fetch": "~0.17.0",
-    "tsx": "^4.23.12"
+    "opentype.js": "^2.0.0",
+    "tsx": "^4.23.12",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.1",

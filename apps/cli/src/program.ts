@@ -8,6 +8,7 @@ import { registerComponent } from './commands/component.ts';
 import { registerConfig } from './commands/config.ts';
 import { registerDeck } from './commands/deck.ts';
 import { registerFiles } from './commands/files.ts';
+import { registerLayout } from './commands/layout.ts';
 import { registerPrint } from './commands/print.ts';
 import { registerProject } from './commands/project.ts';
 import { registerStatus } from './commands/status.ts';
@@ -30,6 +31,7 @@ export function buildProgram(deps: CliDeps): Command {
   registerFiles(program, deps);
   registerTrash(program, deps);
   registerDeck(program, deps);
+  registerLayout(program, deps);
   registerComponent(program, deps);
   registerPrint(program, deps);
   registerCanva(program, deps);
