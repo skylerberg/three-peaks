@@ -27,6 +27,10 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run type-check
       - run: pnpm run knip
+      # Seconds, and no database: every guard's edit still lands on the line it
+      # names. The guards themselves run nightly, so this is what tells a pull
+      # request that it moved one out from under its anchor.
+      - run: pnpm run check:test-guards:anchors
 
       # openapi:dump uses --env-file-if-exists and touches no database, so the
       # drift check needs neither an env file nor Postgres.
@@ -234,44 +238,6 @@ jobs:
       # has neither a canvas nor WebGL.
       - run: pnpm run check:scene
       - run: pnpm run check:a11y
-
-  # Mutation testing: every guard names a bug and the edit that puts it back,
-  # and the named tests must FAIL with that edit in place. A guard whose tests
-  # still pass has stopped guarding anything.
-  guards:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: three_peaks_hub_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: 'pnpm' }
-      - run: pnpm install --frozen-lockfile
-      - name: Write apps/api/.env.test
-        run: |
-          cat > apps/api/.env.test <<'EOF'
-          ENVIRONMENT=test
-          DB_HOSTNAME=127.0.0.1
-          DB_PORT=5432
-          DB_USER=postgres
-          DB_PASSWORD=postgres
-          DB_DATABASE=three_peaks_hub_test
-          STORAGE_DRIVER=disk
-          STORAGE_DISK_ROOT=./data/test-uploads
-          EOF
-      - run: pnpm run check:test-guards
 
   # The Dockerfiles are otherwise unverified until a merge to main triggers a
   # production build. Build both here without pushing, so a broken image fails
