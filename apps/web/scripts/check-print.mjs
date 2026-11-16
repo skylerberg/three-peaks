@@ -598,7 +598,7 @@ async function run() {
     const said = await browser.page.textContent('p:has-text("sheets of US Letter")');
     check(
       'the screen counts the cards and the sheets before printing',
-      /29\s+cards on 6\s+sheets/.test(said ?? '') && /across 2 card sizes/.test(said ?? ''),
+      /29\s+cards on 6\s+sheets/.test(said ?? '') && /across 2 sizes/.test(said ?? ''),
       said ?? ''
     );
 
