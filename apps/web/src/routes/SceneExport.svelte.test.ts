@@ -77,6 +77,7 @@ function component(id: string, name: string, kind: string, files: ReturnType<typ
     deleted_at: null,
     files: files.map((row) => ({ role: 'artwork' as const, file: row })),
     missing_roles: files.length > 0 ? [] : (['artwork'] as const),
+    tokens: [],
   };
 }
 

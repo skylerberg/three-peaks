@@ -162,6 +162,7 @@ function board(overrides: { name?: string; artwork?: Record<string, unknown> | n
     deleted_at: null,
     files: artwork,
     missing_roles: [],
+    tokens: [],
   };
 }
 

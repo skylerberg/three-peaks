@@ -37,22 +37,26 @@ export interface SceneImageRef {
   content_type: string;
 }
 
-export interface SceneComponentSelection {
-  label: string;
+// One of a punchboard's tokens, as its sheet is built from them.
+interface SceneTokenRef {
   front: SceneImageRef;
   back: SceneImageRef | null;
-  // A punchboard's die line. Null for every other kind, which is built from
-  // one image.
-  cut: SceneImageRef | null;
+  quantity: number;
+}
+
+export interface SceneComponentSelection {
+  label: string;
+  // The image it is built from: a component's artwork, or a token's front.
+  // Null for a punchboard's sheet, which is built from its tokens.
+  front: SceneImageRef | null;
+  back: SceneImageRef | null;
+  // Every token a punchboard's sheet cuts; null for anything else.
+  tokens: readonly SceneTokenRef[] | null;
   settings: ModelSettings;
   copies: number;
-  // One mesh of a component that has several -- a punchboard's sheet, or one of
-  // its tokens. Null is the whole thing, which every other kind is.
+  // One piece of a component that has several -- a punchboard's sheet, or one
+  // of its tokens. Null is the whole thing, which every other kind is.
   part: string | null;
-  // What that part measures. Absent for a component sized by its own settings;
-  // a punchboard's token is cut by a die line, and reading one would put three
-  // in this module -- which is the one thing kept out of the planner.
-  footprint?: Footprint & { height_mm: number };
 }
 
 export interface SceneDeckCardSelection {
@@ -92,9 +96,9 @@ export interface AssetBuild {
   path: string;
   label: string;
   settings: ModelSettings;
-  front: SceneImageRef;
+  front: SceneImageRef | null;
   back: SceneImageRef | null;
-  cut: SceneImageRef | null;
+  tokens: readonly SceneTokenRef[] | null;
   part: string | null;
 }
 
@@ -167,9 +171,13 @@ function stableKey(value: unknown): string {
 export function assetKey(component: PlannedAsset): string {
   return stableKey([
     component.settings,
-    component.front.file_id,
+    component.front?.file_id ?? null,
     component.back?.file_id ?? null,
-    component.cut?.file_id ?? null,
+    component.tokens?.map((token) => [
+      token.front.file_id,
+      token.back?.file_id ?? null,
+      token.quantity,
+    ]) ?? null,
     component.part,
   ]);
 }
@@ -177,9 +185,20 @@ export function assetKey(component: PlannedAsset): string {
 /**
  * How much table a component takes and how tall it stands, in the document's
  * axes rather than three's: laid flat, a piece's build width and height are its
- * footprint and its extrusion is its height.
+ * footprint and its extrusion is its height. A punchboard's token is the size
+ * its sheet cuts it.
  */
-export function componentFootprint(settings: ModelSettings): Footprint & { height_mm: number } {
+export function componentFootprint(
+  settings: ModelSettings,
+  part: string | null = null
+): Footprint & { height_mm: number } {
+  if (settings.kind === 'punchboard' && part === 'token') {
+    return {
+      width_mm: settings.token_width_mm,
+      depth_mm: settings.token_height_mm,
+      height_mm: settings.thickness_mm,
+    };
+  }
   switch (settings.kind) {
     case 'card':
       return {
@@ -208,21 +227,12 @@ export function componentFootprint(settings: ModelSettings): Footprint & { heigh
         height_mm: settings.thickness_mm,
       };
     case 'punchboard':
-      // The sheet. A token is smaller and the die line says by how much, which
-      // is why a token carries its own measurement instead.
       return {
         width_mm: settings.width_mm,
         depth_mm: settings.height_mm,
         height_mm: settings.thickness_mm,
       };
   }
-}
-
-// What a selection takes up: what it says, or what its settings imply.
-function selectionFootprint(
-  selection: Pick<SceneComponentSelection, 'settings' | 'footprint'>
-): Footprint & { height_mm: number } {
-  return selection.footprint ?? componentFootprint(selection.settings);
 }
 
 // A card nobody has opened in the studio still has a size: the deck's. One that
@@ -293,7 +303,7 @@ class AssetRegistry {
       settings: component.settings,
       front: component.front,
       back: component.back,
-      cut: component.cut,
+      tokens: component.tokens,
       part: component.part,
     });
     return id;
@@ -360,7 +370,7 @@ function deckBlock(
       label: card.label,
       front: card.front,
       back: deck.back,
-      cut: null,
+      tokens: null,
       part: null,
       settings,
     });
@@ -397,7 +407,7 @@ function filesBlock(
   let spacing: Footprint = { width_mm: 0, depth_mm: 0 };
 
   for (const file of files) {
-    const size = selectionFootprint(file);
+    const size = componentFootprint(file.settings, file.part);
     spacing = {
       width_mm: Math.max(spacing.width_mm, size.width_mm + PIECE_GAP_MM),
       depth_mm: Math.max(spacing.depth_mm, size.depth_mm + PIECE_GAP_MM),

@@ -272,11 +272,28 @@ shaped like the ones a project held before either, on a scratch database.
 
 **A component is an owner; `component_model` is a property.** The `component`
 table is the thing a person creates and names — a wooden piece, a box, a board, a
-punchboard — and its settings live on it, because a punchboard's describe two
-files and so cannot be keyed on one. `component_model` keeps one job and only
-that job: the 3D dial-in for one image, which after this means a deck card.
-`file.component_role` says which slot a file fills (`artwork` or `cut`), with a
-partial unique index so a component holds at most one of each.
+punchboard — and its settings live on it, because a punchboard's describe every
+token it cuts and so cannot be keyed on one file. `component_model` keeps one job
+and only that job: the 3D dial-in for one image, which after this means a deck
+card. `file.component_role` says which a file is: the `artwork` slot, which a
+partial unique index holds to one per component, or a face of one of a
+punchboard's tokens (`token`), of which it has as many as it has tokens.
+
+**A punchboard's tokens are to it what a deck's cards are to a deck.**
+`component_token` is the list: a front, what is printed behind it, a copy count
+and a position, replaced whole by `PUT /api/components/:id/tokens`. A back is
+null for unprinted board, the front's own id for the same image both sides, or
+an image of the punchboard's that is no token's front. `assertTokenFiles` holds
+the rule `assertCardFiles` holds for a deck -- every live image the punchboard
+owns is some token's front or back -- and the paths that would break it are
+written around it: an upload is a token, or with `back_of` the back of one that
+has none of its own (one it has takes a version instead); a purged front takes
+the back that was its alone; a front with a back of its own refuses to move
+out until the back has; and a restored image that lost its place becomes a
+token. The sheet itself is never stored: `planPunchboard` in
+`packages/shared/src/punchboards.ts` packs the copies onto it wherever a sheet is
+needed -- the studio, the scene, the printed sides and die line the punchboard
+screen downloads -- so none of them can fall behind the tokens.
 
 **A section is an order, and `component.position` is it** — per kind, because a
 section is one kind and dragging a wooden piece must not move the box. It is not
@@ -492,19 +509,19 @@ only this screen pays for.
   their node translation, so the crease between two neighbours is the midpoint
   of their two positions — which is the hinge somebody folds it about by hand.
   The fold gap is cut out of the board rather than added to it.
-- **A punchboard is two files: a printed sheet and an SVG cut sheet**, and the
-  cut sheet _is_ the token layout — every closed path in it is one token, read
-  by the `svgOutlines` the wooden pieces already use. Nothing is traced, because
-  a die line is an outline already. The document's viewBox is stretched over the
-  sheet's own millimetres, and that one mapping decides both a token's size and
-  the rectangle of artwork it samples, so the two cannot disagree — the property
-  `boxNetRegions` has for a wrap. `sheet_state` decides whether the sheet beside
-  the tokens still holds them or is the frame left after punching; the tokens are
-  exported either way.
-- **`punchboardLayout` builds no geometry**, and `buildPunchboardPiece` builds
-  one piece. The scene exports the sheet and each token as a file of its own, and
-  extruding all of them once per file would be quadratic in the tokens on a
-  sheet.
+- **A punchboard is built from its tokens**, never from a picture of the sheet:
+  each token is a mesh cut to the punchboard's token shape, carrying its own
+  front and back images edge to edge, and the sheet is the frame the die leaves,
+  every token's outline cut through it, in unprinted board. One geometry serves
+  every copy of a token, and each token's two faces are materials named after
+  its place in the list. `sheet_state` decides whether the sheet exported on its
+  own still holds its tokens in their holes or is the frame left after punching;
+  the studio shows them in place either way, and the tokens are exported either
+  way too.
+- **`punchboardLayout` builds no geometry**: it is `planPunchboard` read in
+  metres with y turned up. The scene exports the sheet and each token as a file
+  of its own, and extruding every token once per file would be quadratic in the
+  tokens on a sheet.
 - The box is closed. An open one needs a wall thickness to line, which is a
   setting it has not got, so there is no interior colour to offer either.
 
@@ -926,7 +943,19 @@ full size while it is drawn.
 **A laid-out card is never drawn into another**, in either direction: neither a
 layout nor a card's field may name one, and a picture something draws cannot
 become one. A card drawing itself would be asked for again by its own every
-version.
+version. The back a token's layout draws counts as drawn too
+(`drawnFromLayout`).
+
+**A layout may draw a back, and only a token has one to draw.** `spec.back` is a
+second list of elements, null for a layout that draws one face; each face is
+laid out on its own, so ids and pins stay within it. A punchboard's token is the
+other piece content can draw (`readPiece` says which a file is, and the size it
+is drawn at): its front is the file the content is keyed by, and its back goes
+into the token's back when that is a live image of its own, or into a new image
+`saveDrawnBack` makes and gives it. Such a back is the layout's -- the token list
+refuses to change it or to give it to another token, and no upload can replace
+it -- while a deck's cards share their deck's back, so content, a new card and a
+layout save all refuse a back on anything a deck holds.
 
 **`packages/shared/src/layouts.ts` is checked by both ends.** The API stores
 nothing `layoutReferenceErrors` and `cardFieldErrors` refuse, and the CLI runs
@@ -937,10 +966,11 @@ Schema form, and the layout would then be inlined in the spec instead of named.
 **A layout in use cannot be deleted**, tombstoned cards included -- restoring
 one would bring back content naming nothing. The foreign key is `no action`,
 not `restrict`, which is what lets a project delete cascade through layouts
-and cards in one statement. A layout's size has to match its deck's at the time
-content is written, and the renderer checks again, because either can change
-afterwards; neither change is refused, so a deck and its layout can be resized
-one after the other, the cards failing to draw in between.
+and cards in one statement. A layout's size has to match its deck's, or its
+punchboard's token size, at the time content is written, and the renderer
+checks again, because either can change afterwards; neither change is refused,
+so a deck and its layout can be resized one after the other, the cards failing
+to draw in between.
 
 A layout has no realtime events, for the reason print runs have none: no
 screen draws one. A card's content does: `card_content_updated` carries the rows
@@ -1167,14 +1197,10 @@ an image used twice in a deck, a token picked in two places — all of them name
 one file, and in Blender one mesh datablock. Two cards cut to one size with
 different artwork cannot share a file, because an instance names a path and
 nothing narrower. A punchboard is the one component that is several files: its
-sheet and one per token, told apart by `part` on the selection, which is why
-`assetKey` reads that as well as the images.
-
-**A token's size comes from the die line, and the planner may not read one.**
-Parsing an SVG needs three, and `assets.ts` is deliberately the half of this that
-does not touch it — so the screen reads the layout behind its own `await import()`
-and hands each part its `footprint` as data. `componentFootprint` sizes everything
-else from its settings alone.
+sheet, built from every token it cuts, and one per token, its copies instances of
+that one file -- told apart by `part` on the selection, which is why `assetKey`
+reads that and the sheet's tokens as well as the images. `componentFootprint`
+sizes a token from its punchboard's settings the way it sizes the sheet.
 
 **A library piece has no file at all.** A die, a meeple, a cube, a disc and a
 cylinder are built by `pieces.py` from a name, a size and a colour, so they cost

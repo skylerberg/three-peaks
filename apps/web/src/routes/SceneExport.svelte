@@ -30,7 +30,6 @@
   import { newId } from '../lib/ids.ts';
   import { link } from '../lib/router.svelte.ts';
   import type {
-    Footprint,
     SceneBundleProgress,
     SceneComponentSelection,
     SceneImageRef,
@@ -154,10 +153,17 @@
       0
     )
   );
-  // A punchboard puts its sheet and every token on the table, and how many
-  // tokens that is only the die line knows. One apiece here is the floor, and
-  // the real count is checked against the bound when the plan is built.
-  const instanceCount = $derived(cardCount + chosenComponents.length + pieceCount);
+  // A punchboard puts its sheet and every copy of every token on the table.
+  const componentCount = $derived(
+    chosenComponents.reduce(
+      (total, component) =>
+        total +
+        1 +
+        component.tokens.filter(isLiveCard).reduce((sum, token) => sum + token.quantity, 0),
+      0
+    )
+  );
+  const instanceCount = $derived(cardCount + componentCount + pieceCount);
   const tooBig = $derived(instanceCount > SCENE_LIMITS.instances[1]);
 
   function toggleComponent(component: ProjectComponent, on: boolean): void {
@@ -165,28 +171,53 @@
     else delete selectedComponents[component.id];
   }
 
-  function roleFile(component: ProjectComponent, role: 'artwork' | 'cut'): FileRow | null {
-    return component.files.find((entry) => entry.role === role)?.file ?? null;
+  function artworkOf(component: ProjectComponent): FileRow | null {
+    return component.files.find((entry) => entry.role === 'artwork')?.file ?? null;
   }
 
-  // A punchboard is a sheet and a token each, and the die line is what says how
-  // many. Read here rather than in the planner: parsing an SVG needs three, and
-  // the planner is deliberately the half of this that does not touch it.
-  async function punchboardParts(
-    component: ProjectComponent,
-    cut: FileRow
-  ): Promise<{ part: string; label: string; footprint: Footprint }[]> {
-    const { MM, loadSource, punchboardLayout } = await import('../lib/model3d/index.ts');
-    const source = await loadSource(cut.id, cut.content_type);
-    if (source.svgText === null) throw new Error(`${cut.filename} is not an SVG cut sheet.`);
+  function imageRef(file: FileRow): SceneImageRef {
+    return { file_id: file.id, content_type: file.content_type };
+  }
 
-    const settings = component.settings as PunchboardModelSettings;
-    const layout = punchboardLayout(settings, source.svgText);
-    return layout.pieces.map((piece, index) => ({
-      part: piece.name,
-      label: index === 0 ? component.name : `${component.name} ${piece.name}`,
-      footprint: { width_mm: piece.size.width / MM, depth_mm: piece.size.height / MM },
+  // A punchboard's sheet and each token it cuts, the copies of a token being
+  // instances of one file. A back that is deleted prints nothing, as the
+  // studio shows it.
+  function punchboardSelections(
+    component: ProjectComponent,
+    settings: PunchboardModelSettings
+  ): SceneComponentSelection[] {
+    const live = component.tokens.filter(isLiveCard);
+    const tokens = live.map((token) => ({
+      front: imageRef(token.file),
+      back: token.back_file?.deleted_at === null ? imageRef(token.back_file) : null,
+      quantity: token.quantity,
     }));
+    return [
+      {
+        label: label(component.name),
+        front: null,
+        back: null,
+        tokens,
+        settings,
+        copies: 1,
+        part: 'sheet',
+      },
+      ...live.flatMap((token, index) =>
+        token.quantity === 0
+          ? []
+          : [
+              {
+                label: label(`${component.name} ${token.file.filename}`),
+                front: tokens[index]!.front,
+                back: tokens[index]!.back,
+                tokens: null,
+                settings,
+                copies: token.quantity,
+                part: 'token',
+              },
+            ]
+      ),
+    ];
   }
 
   function addPiece(piece: LibraryPiece): void {
@@ -230,9 +261,9 @@
     }
   }
 
-  // What each component is built from. A component carries its own files and
-  // its own dial-in, so the only thing still to read is a deck card's -- and,
-  // for a punchboard, the die line that says how many tokens there are.
+  // What each component is built from. A component carries its own files, its
+  // tokens and its own dial-in, so the only thing still to read is a deck
+  // card's.
   async function resolveSelection(): Promise<SceneSelection> {
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- filled and read inside this one call; nothing renders from it
     const rows = new Map<string, FileRow>();
@@ -261,38 +292,22 @@
 
     const components: SceneComponentSelection[] = [];
     for (const component of chosenComponents) {
-      const artwork = roleFile(component, 'artwork');
-      if (!artwork) continue;
-      const front = { file_id: artwork.id, content_type: artwork.content_type };
       const settings = component.settings as ModelSettings;
-      const cutRow = roleFile(component, 'cut');
-      const cut = cutRow ? { file_id: cutRow.id, content_type: cutRow.content_type } : null;
-
-      if (settings.kind !== 'punchboard' || !cutRow) {
-        components.push({
-          label: label(component.name),
-          front,
-          back: null,
-          cut,
-          settings,
-          copies: 1,
-          part: null,
-        });
+      if (settings.kind === 'punchboard') {
+        components.push(...punchboardSelections(component, settings));
         continue;
       }
-
-      for (const piece of await punchboardParts(component, cutRow)) {
-        components.push({
-          label: label(piece.label),
-          front,
-          back: null,
-          cut,
-          settings,
-          copies: 1,
-          part: piece.part,
-          footprint: { ...piece.footprint, height_mm: settings.thickness_mm },
-        });
-      }
+      const artwork = artworkOf(component);
+      if (!artwork) continue;
+      components.push({
+        label: label(component.name),
+        front: imageRef(artwork),
+        back: null,
+        tokens: null,
+        settings,
+        copies: 1,
+        part: null,
+      });
     }
 
     return {

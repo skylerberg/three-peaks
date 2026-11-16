@@ -5,17 +5,24 @@
   import Thumbnail from '../Thumbnail.svelte';
   import Button from '../ui/Button.svelte';
   import Input from '../ui/Input.svelte';
-  import { type CardContent, type CardLayout, cardContent } from '../../lib/cardContent.svelte.ts';
+  import {
+    type CardContent,
+    type CardLayout,
+    type PieceHome,
+    cardContent,
+  } from '../../lib/cardContent.svelte.ts';
   import { apiMessage } from '../../lib/session.svelte.ts';
 
   type File = components['schemas']['File'];
 
   // A card drawn from a layout, edited field by field beside a preview the API
-  // draws as the fields change. Editing an existing card keeps its layout; a
-  // new card chooses one and a name.
+  // draws as the fields change -- both faces of a token whose layout draws its
+  // back. Editing an existing card keeps its layout; a new card chooses one and
+  // a name.
   interface Props {
     projectId: string;
-    deckId: string;
+    // The deck it is a card of, or the punchboard it is a token of.
+    home: PieceHome;
     layouts: readonly CardLayout[];
     // The card being edited, or null for a new one.
     card: { fileId: string; filename: string; content: CardContent } | null;
@@ -23,7 +30,8 @@
     oncreated: () => void;
     onclose: () => void;
   }
-  let { projectId, deckId, layouts, card, oncreated, onclose }: Props = $props();
+  let { projectId, home, layouts, card, oncreated, onclose }: Props = $props();
+  const noun = $derived('deck_id' in home ? 'card' : 'token');
 
   // How long the fields have to stand still before the preview is drawn again:
   // a request per keystroke would be a render per keystroke.
@@ -40,7 +48,11 @@
   let filename = $state('');
   let saving = $state(false);
   let saveError = $state<string | null>(null);
-  let previewUrl = $state<string | null>(null);
+  // Each face the layout draws, as the API drew it last.
+  let previewUrls = $state<{ front: string | null; back: string | null }>({
+    front: null,
+    back: null,
+  });
   let previewError = $state<string | null>(null);
   let drawing = $state(false);
   let picking = $state<string | null>(null);
@@ -74,12 +86,19 @@
     const mine = ++generation;
     const timer = setTimeout(() => {
       drawing = true;
-      cardContent
-        .preview(projectId, current, values)
-        .then((blob) => {
+      Promise.all([
+        cardContent.preview(projectId, current, values),
+        current.spec.back === null
+          ? Promise.resolve(null)
+          : cardContent.preview(projectId, current, values, 'back'),
+      ])
+        .then(([front, back]) => {
           if (mine !== generation) return;
-          if (previewUrl) URL.revokeObjectURL(previewUrl);
-          previewUrl = URL.createObjectURL(blob);
+          revokePreviews();
+          previewUrls = {
+            front: URL.createObjectURL(front),
+            back: back === null ? null : URL.createObjectURL(back),
+          };
           previewError = null;
         })
         .catch((caught: unknown) => {
@@ -92,10 +111,13 @@
     return () => clearTimeout(timer);
   });
 
+  function revokePreviews(): void {
+    if (previewUrls.front) URL.revokeObjectURL(previewUrls.front);
+    if (previewUrls.back) URL.revokeObjectURL(previewUrls.back);
+  }
+
   $effect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
+    return () => revokePreviews();
   });
 
   // At the caret of the copy box last used, or at the end of the first one.
@@ -131,7 +153,7 @@
       else {
         const name = filename.trim();
         await cardContent.create(
-          deckId,
+          home,
           /\.png$/i.test(name) ? name : `${name}.png`,
           layout.id,
           sentFields
@@ -152,7 +174,7 @@
   aria-labelledby="{uid}-title"
 >
   <h2 id="{uid}-title" class="text-lg font-semibold">
-    {card ? `Edit ${card.filename}` : 'New card from a layout'}
+    {card ? `Edit ${card.filename}` : `New ${noun} from a layout`}
   </h2>
 
   <div class="flex flex-col gap-4 md:flex-row">
@@ -237,12 +259,22 @@
 
     <div class="flex w-full flex-col items-center gap-2 md:w-72">
       <span class="self-start text-sm font-medium">Preview</span>
-      {#if previewUrl}
+      {#if previewUrls.front}
         <img
-          src={previewUrl}
-          alt="The card as these fields draw it"
+          src={previewUrls.front}
+          alt="The {noun} as these fields draw it"
           class="w-full rounded-md border border-edge {drawing || previewError ? 'opacity-50' : ''}"
         />
+        {#if previewUrls.back}
+          <span class="self-start text-sm font-medium">Back</span>
+          <img
+            src={previewUrls.back}
+            alt="The back of the {noun} as these fields draw it"
+            class="w-full rounded-md border border-edge {drawing || previewError
+              ? 'opacity-50'
+              : ''}"
+          />
+        {/if}
       {:else if !previewError}
         <p class="text-sm text-muted">Drawing…</p>
       {/if}
@@ -257,7 +289,7 @@
   {/if}
   <div class="flex flex-wrap gap-2">
     <Button disabled={saving || !layout || !nameValid} onclick={() => void save()}>
-      {saving ? 'Saving…' : card ? 'Save' : 'Create card'}
+      {saving ? 'Saving…' : card ? 'Save' : `Create ${noun}`}
     </Button>
     <Button variant="secondary" disabled={saving} onclick={onclose}>Cancel</Button>
   </div>

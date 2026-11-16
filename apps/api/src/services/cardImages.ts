@@ -1,20 +1,31 @@
 import { createHash } from 'node:crypto';
-import type { CardFields } from '@three-peaks/shared';
+import {
+  type CardFields,
+  type CardSize,
+  type LayoutFace,
+  type PunchboardModelSettings,
+  faceElements,
+} from '@three-peaks/shared';
 import { CardRenderer } from './cardRender/render.ts';
 import { CardRenderError, type CardLayout } from './cardRender/svg.ts';
 import { imageSize } from './cardRender/imageSize.ts';
+import { assertNotDrawnElsewhere } from './cardLayouts.ts';
+import { publishComponent } from './components.ts';
 import { placeInDeck, publishDeck } from './decks.ts';
+import { type FileHome, homeColumns } from './fileHome.ts';
 import {
   FILE_COLUMNS,
   appendFileVersion,
   assertQuota,
   fileWithUsage,
+  freeFilename,
   serializeFile,
   serializeVersion,
   versionEventData,
 } from './files.ts';
 import { publishAfterCommit } from './realtime/index.ts';
 import { reclaim, storage } from './storage/index.ts';
+import { ensureToken, setBack } from './tokens.ts';
 import { AppError, isUniqueViolation } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
 import type { AppContext, Connection } from '../types/index.ts';
@@ -28,21 +39,91 @@ export { CardRenderError, type CardLayout };
 
 const PNG = 'image/png';
 
-interface CardSize {
-  width_mm: number;
-  height_mm: number;
-}
-
 function sizeText(size: CardSize): string {
   return `${String(size.width_mm)} × ${String(size.height_mm)} mm`;
 }
 
+/**
+ * What a laid-out file is, which decides the size it is drawn at and what is
+ * printed behind it: a deck's card, at the deck's size behind the deck's back,
+ * or a punchboard's token, at the size the punchboard cuts it, with a back of
+ * its own that its layout may draw too.
+ */
+export type Piece = {
+  fileId: string;
+  projectId: string;
+  filename: string;
+  checksum: string | null;
+  // Whether it can take a version: neither it nor what holds it is deleted.
+  live: boolean;
+  size: CardSize;
+} & ({ kind: 'card'; deckId: string } | { kind: 'token'; componentId: string });
+
+export async function readPiece(db: Connection, fileId: string): Promise<Piece | null> {
+  const row = await db
+    .selectFrom('file')
+    .leftJoin('deck', 'deck.id', 'file.deck_id')
+    .leftJoin('component', 'component.id', 'file.component_id')
+    .leftJoin('component_token', 'component_token.file_id', 'file.id')
+    .select([
+      'file.project_id as project_id',
+      'file.filename as filename',
+      'file.checksum as checksum',
+      'file.deleted_at as deleted_at',
+      'deck.id as deck_id',
+      'deck.deleted_at as deck_deleted_at',
+      'deck.card_width_mm as card_width_mm',
+      'deck.card_height_mm as card_height_mm',
+      'component.id as component_id',
+      'component.deleted_at as component_deleted_at',
+      'component.settings as settings',
+      'component_token.id as token_id',
+    ])
+    .where('file.id', '=', fileId)
+    .executeTakeFirst();
+  if (!row) return null;
+  const common = {
+    fileId,
+    projectId: row.project_id,
+    filename: row.filename,
+    checksum: row.checksum,
+  };
+  if (row.deck_id !== null) {
+    return {
+      ...common,
+      kind: 'card',
+      deckId: row.deck_id,
+      live: row.deleted_at === null && row.deck_deleted_at === null,
+      size: { width_mm: Number(row.card_width_mm), height_mm: Number(row.card_height_mm) },
+    };
+  }
+  if (row.component_id !== null && row.token_id !== null) {
+    const settings = row.settings as unknown as PunchboardModelSettings;
+    return {
+      ...common,
+      kind: 'token',
+      componentId: row.component_id,
+      live: row.deleted_at === null && row.component_deleted_at === null,
+      size: { width_mm: settings.token_width_mm, height_mm: settings.token_height_mm },
+    };
+  }
+  return null;
+}
+
 // Refused before anything is drawn: a layout on a card of another size would
-// render without complaint and print at the wrong scale.
-export function assertLayoutFits(layout: CardLayout, deck: CardSize): void {
-  if (layout.width_mm !== deck.width_mm || layout.height_mm !== deck.height_mm) {
+// render without complaint and print at the wrong scale, and a back drawn for
+// a card would be printed behind nothing, since a deck's cards share its back.
+export function assertLayoutFits(layout: CardLayout, piece: Pick<Piece, 'kind' | 'size'>): void {
+  const size = piece.size;
+  if (layout.width_mm !== size.width_mm || layout.height_mm !== size.height_mm) {
+    const pieces = piece.kind === 'card' ? "this deck's cards" : "this punchboard's tokens";
     throw new CardRenderError(
-      `${layout.name} is drawn on a ${sizeText(layout)} card and this deck's cards are ${sizeText(deck)}`
+      `${layout.name} is drawn on a ${sizeText(layout)} card and ${pieces} are ${sizeText(size)}`
+    );
+  }
+  if (piece.kind === 'card' && faceElements(layout.spec, 'back') !== null) {
+    throw new CardRenderError(
+      `${layout.name} draws a back of its own, and a deck's cards share the deck's back. A layout with a back draws a punchboard's tokens`
     );
   }
 }
@@ -58,13 +139,14 @@ function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// The card as PNG bytes. Fonts and pictures are read from storage as they
-// stand: a file that has gained a version since the layout named it is drawn
-// at that version, which is why a new version asks for its cards again.
+// One face of the card as PNG bytes. Fonts and pictures are read from storage
+// as they stand: a file that has gained a version since the layout named it is
+// drawn at that version, which is why a new version asks for its cards again.
 export function drawCard(
   db: Connection,
   layout: CardLayout,
-  fields: CardFields
+  fields: CardFields,
+  face: LayoutFace = 'front'
 ): Promise<Uint8Array> {
   const renderer = new CardRenderer(async (fileId) => {
     const file = await db
@@ -83,7 +165,24 @@ export function drawCard(
     if (bytes === null) throw new Error(`${file.filename} is missing from storage`);
     return { bytes: new Uint8Array(bytes), contentType: file.content_type };
   });
-  return oneAtATime(() => renderer.render(layout, fields));
+  return oneAtATime(() => renderer.render(layout, fields, face));
+}
+
+// Every face the layout draws: the front, and the back where it has one.
+export interface DrawnFaces {
+  front: Uint8Array;
+  back: Uint8Array | null;
+}
+
+export async function drawFaces(
+  db: Connection,
+  layout: CardLayout,
+  fields: CardFields
+): Promise<DrawnFaces> {
+  const front = await drawCard(db, layout, fields, 'front');
+  const back =
+    faceElements(layout.spec, 'back') === null ? null : await drawCard(db, layout, fields, 'back');
+  return { front, back };
 }
 
 function checksumOf(bytes: Uint8Array): string {
@@ -123,7 +222,7 @@ interface CardFile {
 
 // The rendered bytes as the card's next version, announced as any new version
 // is. Null when they are the bytes it already has, which writes nothing at all.
-export async function saveCardImage(
+async function saveCardImage(
   c: Pick<AppContext, 'get'>,
   card: CardFile,
   bytes: Uint8Array
@@ -145,28 +244,26 @@ export async function saveCardImage(
   return version.version_number;
 }
 
-// A new card: its image is the deck's next card, the way an upload into the
-// deck would make it.
-export async function createCardFile(
+// A drawn image as a new file in `home`, announced as an upload is. Where it
+// stands in the deck or the punchboard is the caller's.
+async function createDrawnFile(
   c: Pick<AppContext, 'get'>,
-  card: { id: string; projectId: string; deckId: string; filename: string },
+  file: { id: string; projectId: string; home: FileHome; filename: string },
   bytes: Uint8Array
 ) {
   const db = c.get('db');
   const row = await stored(bytes, async (storageKey) => {
-    await assertQuota(c, card.projectId, bytes.byteLength);
+    await assertQuota(c, file.projectId, bytes.byteLength);
     const version = candidate(storageKey, bytes);
     let inserted;
     try {
       inserted = await db
         .insertInto('file')
         .values({
-          id: card.id,
-          project_id: card.projectId,
-          deck_id: card.deckId,
-          folder_id: null,
-          component_id: null,
-          filename: card.filename,
+          id: file.id,
+          project_id: file.projectId,
+          ...homeColumns(file.home),
+          filename: file.filename,
           storage_key: storageKey,
           content_type: PNG,
           byte_size: String(version.byteSize),
@@ -179,47 +276,170 @@ export async function createCardFile(
         .executeTakeFirstOrThrow();
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new AppError(409, 'A card with that id or name already exists in this deck');
+        throw new AppError(409, 'A card with that id or name already exists here');
       }
       throw error;
     }
     await appendFileVersion(c, inserted.id, version);
     return inserted;
   });
-  await placeInDeck(c, card.deckId, row.id, 'card');
   publishAfterCommit(
     c.get('postCommitHooks'),
     c.get('user').id,
     'file_uploaded',
-    card.projectId,
-    await fileWithUsage(c, card.projectId, row.id)
+    file.projectId,
+    await fileWithUsage(c, file.projectId, row.id)
   );
-  await publishDeck(c, card.projectId, card.deckId);
   return serializeFile(row);
+}
+
+// What a token's back is called: after its front, so the two sit together in
+// any listing of the punchboard's files.
+function backFilename(front: string): string {
+  const dot = front.lastIndexOf('.');
+  return `${dot > 0 ? front.slice(0, dot) : front} (back).png`;
+}
+
+/**
+ * Saves a token's drawn back. It goes into the back the token already has when
+ * that is a live image of the punchboard's own that no other token prints;
+ * otherwise -- a token with no back, one printing its front on both sides, or
+ * one sharing its back -- it becomes a new image that is this token's alone,
+ * and the token's back from now on.
+ */
+async function saveDrawnBack(
+  c: Pick<AppContext, 'get'>,
+  piece: Extract<Piece, { kind: 'token' }>,
+  bytes: Uint8Array
+): Promise<void> {
+  const db = c.get('db');
+  const token = await db
+    .selectFrom('component_token')
+    .leftJoin('file', 'file.id', 'component_token.back_file_id')
+    .select([
+      'component_token.back_file_id as back_file_id',
+      'file.checksum as checksum',
+      'file.deleted_at as deleted_at',
+      'file.component_id as component_id',
+    ])
+    .where('component_token.file_id', '=', piece.fileId)
+    .executeTakeFirstOrThrow();
+
+  const backId = token.back_file_id;
+  if (
+    backId !== null &&
+    backId !== piece.fileId &&
+    token.deleted_at === null &&
+    token.component_id === piece.componentId
+  ) {
+    const shared = await db
+      .selectFrom('component_token')
+      .select('component_token.id')
+      .where('component_token.back_file_id', '=', backId)
+      .where('component_token.file_id', '<>', piece.fileId)
+      .executeTakeFirst();
+    if (shared === undefined) {
+      // A picture something else draws cannot become one a layout draws.
+      await assertNotDrawnElsewhere(c, piece.projectId, backId);
+      await saveCardImage(
+        c,
+        { fileId: backId, projectId: piece.projectId, checksum: token.checksum },
+        bytes
+      );
+      return;
+    }
+  }
+
+  const home: FileHome = { kind: 'component', componentId: piece.componentId, role: 'token' };
+  const created = await createDrawnFile(
+    c,
+    {
+      id: newId(),
+      projectId: piece.projectId,
+      home,
+      filename: await freeFilename(db, piece.projectId, home, backFilename(piece.filename)),
+    },
+    bytes
+  );
+  await setBack(db, piece.componentId, piece.fileId, created.id);
+  await publishComponent(c, piece.projectId, piece.componentId);
+}
+
+// Each face saved where it is printed, as a version only where it came out
+// different. The front's new version, or null for one that came out the same.
+export async function saveFaces(
+  c: Pick<AppContext, 'get'>,
+  piece: Piece,
+  faces: DrawnFaces
+): Promise<number | null> {
+  const version = await saveCardImage(
+    c,
+    { fileId: piece.fileId, projectId: piece.projectId, checksum: piece.checksum },
+    faces.front
+  );
+  if (faces.back !== null && piece.kind === 'token') await saveDrawnBack(c, piece, faces.back);
+  return version;
+}
+
+// Where a new piece is made: the deck it is the next card of, or the
+// punchboard it is the next token of.
+export type PieceHome = { kind: 'deck'; deckId: string } | { kind: 'token'; componentId: string };
+
+// A new piece, drawn: its front is the next card or token, the way an upload
+// would make it, and a token's drawn back is its own new image.
+export async function createPieceFile(
+  c: Pick<AppContext, 'get'>,
+  piece: { id: string; projectId: string; home: PieceHome; filename: string },
+  faces: DrawnFaces
+) {
+  const db = c.get('db');
+  const home: FileHome =
+    piece.home.kind === 'deck'
+      ? { kind: 'deck', deckId: piece.home.deckId }
+      : { kind: 'component', componentId: piece.home.componentId, role: 'token' };
+  const file = await createDrawnFile(
+    c,
+    { id: piece.id, projectId: piece.projectId, home, filename: piece.filename },
+    faces.front
+  );
+  if (piece.home.kind === 'deck') {
+    await placeInDeck(c, piece.home.deckId, file.id, 'card');
+    await publishDeck(c, piece.projectId, piece.home.deckId);
+    return file;
+  }
+  const componentId = piece.home.componentId;
+  await ensureToken(db, componentId, file.id);
+  if (faces.back !== null) {
+    const back = await createDrawnFile(
+      c,
+      {
+        id: newId(),
+        projectId: piece.projectId,
+        home,
+        filename: await freeFilename(db, piece.projectId, home, backFilename(file.filename)),
+      },
+      faces.back
+    );
+    await setBack(db, componentId, file.id, back.id);
+  }
+  await publishComponent(c, piece.projectId, componentId);
+  return file;
 }
 
 // A card drawn from its stored content as things stand, and saved if it came
 // out different. Null for a card there is nothing to draw for any more: its
-// content is gone, or its image or its deck is deleted -- restoring either asks
-// for it again.
+// content is gone, it is no longer a deck's card or a punchboard's token, or
+// it or what holds it is deleted -- restoring either asks for it again.
 export async function renderStoredCard(
   c: Pick<AppContext, 'get'>,
   fileId: string
 ): Promise<{ version: number | null } | null> {
   const db = c.get('db');
-  const card = await db
+  const content = await db
     .selectFrom('card_content')
-    .innerJoin('file', 'file.id', 'card_content.file_id')
-    .innerJoin('deck', 'deck.id', 'file.deck_id')
     .innerJoin('card_layout', 'card_layout.id', 'card_content.layout_id')
     .select([
       'card_content.fields as fields',
-      'file.project_id as project_id',
-      'file.checksum as checksum',
-      'file.deleted_at as deleted_at',
-      'deck.deleted_at as deck_deleted_at',
-      'deck.card_width_mm as deck_width_mm',
-      'deck.card_height_mm as deck_height_mm',
       'card_layout.name as name',
       'card_layout.width_mm as width_mm',
       'card_layout.height_mm as height_mm',
@@ -227,23 +447,17 @@ export async function renderStoredCard(
     ])
     .where('card_content.file_id', '=', fileId)
     .executeTakeFirst();
-  if (!card || card.deleted_at !== null || card.deck_deleted_at !== null) return null;
+  if (!content) return null;
+  const piece = await readPiece(db, fileId);
+  if (piece === null || !piece.live) return null;
 
   const layout: CardLayout = {
-    name: card.name,
-    width_mm: Number(card.width_mm),
-    height_mm: Number(card.height_mm),
-    spec: card.spec,
+    name: content.name,
+    width_mm: Number(content.width_mm),
+    height_mm: Number(content.height_mm),
+    spec: content.spec,
   };
-  assertLayoutFits(layout, {
-    width_mm: Number(card.deck_width_mm),
-    height_mm: Number(card.deck_height_mm),
-  });
-  const bytes = await drawCard(db, layout, card.fields as CardFields);
-  const version = await saveCardImage(
-    c,
-    { fileId, projectId: card.project_id, checksum: card.checksum },
-    bytes
-  );
-  return { version };
+  assertLayoutFits(layout, piece);
+  const faces = await drawFaces(db, layout, content.fields as CardFields);
+  return { version: await saveFaces(c, piece, faces) };
 }

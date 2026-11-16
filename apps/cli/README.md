@@ -209,15 +209,14 @@ threepeaks deck import abandon Heroes          # pages already imported keep the
 ## Components
 
 Wooden pieces, boxes, boards and punchboards. Each kind has a section in the
-web app, and each component owns its own files: one `artwork` image, plus a
-`cut` SVG for a punchboard — the die line, where every closed path is a token.
+web app, and each component owns its own files: one `artwork` image, or for a
+punchboard its tokens (below).
 
 ```sh
 threepeaks component kinds                              # the kinds and the files each takes
 threepeaks component list --kind box                    # by section, in section order
 threepeaks component create "Retail box" --kind box --set width_mm=200 --set depth_mm=40
 threepeaks component upload "Retail box" box-wrap.png   # fills the missing slot
-threepeaks component upload Sprue sprue-cut.svg --role cut
 threepeaks component show "Retail box"                  # files, what is missing, settings
 threepeaks component settings "Retail box" --set corner_bevel_mm=2
 threepeaks component settings "Retail box" --file box.json   # - reads stdin
@@ -234,6 +233,38 @@ file, so the previous artwork stays one `file revert` away. If the slot's file
 has been deleted, restore or purge it first — the command names both. A deleted
 component is still found by name for `show`, `settings`, `download` and
 `delete --purge`; `rename`, `upload` and `move` refuse it until it is restored.
+
+### A punchboard's tokens
+
+A punchboard is a sheet of board and the tokens die-cut from it. Each token is a
+front and what is printed behind it -- an image of its own, its front again, or
+nothing -- with a copy count and a place in the order the sheet is packed in.
+Every token is cut to the punchboard's token shape (`token_width_mm`,
+`token_height_mm`, `token_corner_radius_mm`; half the width and height is a
+disc), spaced by `token_gap_mm` inside a `margin_mm` frame. The sheet and its
+die line are worked out from the tokens, and the web app downloads both printed
+sides and the die line for a manufacturer.
+
+```sh
+threepeaks component create Tokens --kind punchboard --set token_width_mm=30 --set token_height_mm=30 --set token_corner_radius_mm=15
+threepeaks component tokens upload Tokens seeker.png reader.png --same-back   # each image a token, the same on both sides
+threepeaks component tokens back Tokens seeker.png seeker-back.png            # a back of its own; again, a new version of it
+threepeaks component tokens back Tokens seeker.png --none                     # or --same; a back of its own goes to the trash
+threepeaks component tokens copies Tokens reader.png 2                        # 0 keeps it and cuts none
+threepeaks component tokens move Tokens reader.png --top
+threepeaks component show Tokens                                              # every token, and how many the sheet holds
+```
+
+Tokens can be drawn from a layout too, exactly as a deck's cards are: the file
+lists them under `tokens` rather than `cards`, and a layout with `back:`
+elements draws each token's back as well -- see "Card layouts" below.
+
+```sh
+threepeaks component tokens pull Tokens -o tokens.yaml
+threepeaks component tokens push Tokens tokens.yaml --dry-run
+threepeaks component tokens push Tokens tokens.yaml
+threepeaks component tokens render Tokens --check
+```
 
 ### Settings
 
@@ -257,6 +288,7 @@ threepeaks layout push hero.yaml                    # create, or replace the lay
 threepeaks layout pull Hero -o hero.yaml            # the stored layout, as YAML
 threepeaks layout preview hero.yaml cards.yaml -o preview/   # PNGs on disk; nothing on the server changes
 threepeaks layout preview hero.yaml --deck Heroes -o preview/  # the deck's stored cards, drawn with this file
+threepeaks layout preview token.yaml --punchboard Tokens -o preview/  # a punchboard's stored tokens, backs beside fronts
 threepeaks deck cards pull Heroes -o cards.yaml
 threepeaks deck cards push Heroes cards.yaml --dry-run
 threepeaks deck cards push Heroes cards.yaml
@@ -272,7 +304,7 @@ A layout, with every setting it can have:
 
 ```yaml
 name: Hero
-size: poker # or width_mm and height_mm; must match the deck's cards
+size: poker # or width_mm and height_mm; must match the deck's cards, or the punchboard's tokens
 dpi: 300 # the default
 fonts: # TTF, OTF or WOFF files, by Assets path or id
   body: Fonts/Lora-Regular.ttf
@@ -312,6 +344,30 @@ elements: # painted in order, first at the back; box is [x, y, width, height] in
     color: '#1a1a1a' # default black
     align: left # left (default), center, right
     valign: middle # top (default), middle, bottom
+```
+
+### A back
+
+A layout drawing a punchboard's tokens can draw their backs too: `back` is a
+second list of elements, written exactly as `elements` is, laid out on its own
+(an `id` names an element of its own face, and pins reach only those). Each
+token drawn from it gets a back of its own, named after its front --
+`two.png`'s is `two (back).png` -- and drawn again whenever the front is. A
+deck's cards share the deck's back, so a layout with a back cannot draw them.
+
+```yaml
+back:
+  - type: rect
+    box: [0, 0, 30, 30]
+    fill: '#c9a227'
+    radius_mm: 15
+  - type: text
+    box: [3, 10, 24, 10]
+    text: '{{points}}'
+    font: body
+    size_pt: 14
+    align: center
+    valign: middle
 ```
 
 ### Elements placed by other elements

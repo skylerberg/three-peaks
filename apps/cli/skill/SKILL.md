@@ -6,9 +6,9 @@ description: Work with Three Peaks Hub (tools.threepeaksgames.com), the board ga
 # Three Peaks Hub
 
 Three Peaks Hub is where a game's physical parts live: decks of card images
-with copy counts and a back, components (wooden pieces, boxes, boards,
-punchboards) with their artwork and 3D settings, and a folder tree called Assets
-for everything else. The web app is where Skyler works; `threepeaks` is the
+with copy counts and a back, components (wooden pieces, boxes, boards) with
+their artwork and 3D settings, punchboards holding tokens that each have a
+front and a back, and a folder tree called Assets for everything else. The web app is where Skyler works; `threepeaks` is the
 agent-facing surface onto the same API, so anything you change is in front of a
 person the moment you change it.
 
@@ -100,6 +100,20 @@ threepeaks component settings "Game box" --set depth_mm=45 --project "Summit" --
 A filled slot gains a version rather than losing its file. Settings keys are the
 ones `component settings <component>` prints; an unknown key is refused with the
 real ones listed.
+
+A punchboard has no artwork of its own: it holds tokens, each a front and a
+back, and its sheet and die line are laid out from them. Tokens are uploaded, or
+drawn from a layout the way laid-out cards are -- a layout's `back:` elements
+draw each token's back too:
+
+```sh
+threepeaks component tokens upload "Tokens" seeker.png reader.png --same-back --project "Summit" --no-input
+threepeaks component tokens push "Tokens" tokens.yaml --dry-run --project "Summit" --no-input
+threepeaks component show "Tokens" --project "Summit"   # every token, and how many the sheet holds
+```
+
+The token size is the punchboard's settings (`token_width_mm`, `token_height_mm`,
+`token_corner_radius_mm`), and a layout drawing its tokens must be that size.
 
 What the printer still owes, and what the last Canva import did:
 

@@ -5,9 +5,12 @@ import {
   type ImageElement,
   type ImageFit,
   type LayoutElement,
+  type LayoutFace,
   type LayoutSpec,
   type Rotation,
   type TextElement,
+  elementName,
+  faceElements,
   fillTemplate,
   hasValue,
   parseMarkup,
@@ -174,20 +177,17 @@ function setText(
   return flow.items.length === 0 ? null : { flow, regular, bold };
 }
 
-const nameOf = (element: LayoutElement, index: number) =>
-  `element ${String(index + 1)} (${element.type})`;
-
 // Every element's placement, worked out in the order their edges need rather
 // than the order they are painted, so a backing listed before its copy can be
 // as long as the copy. Null for an element that draws nothing on this card --
 // left out by `when`, an empty image field, copy that came out empty -- and
 // for any element pinned to one of those: there is nothing to pin it to.
 function placements(
-  layout: CardLayout,
+  elements: readonly LayoutElement[],
+  face: LayoutFace,
   fields: CardFields,
   assets: CardAssets
 ): (Placement | null)[] {
-  const { elements } = layout.spec;
   const byId = new Map<string, number>();
   elements.forEach((element, index) => {
     if (element.id !== null && !byId.has(element.id)) byId.set(element.id, index);
@@ -198,7 +198,7 @@ function placements(
   const place = (index: number): Placement | null => {
     if (done.has(index)) return done.get(index)!;
     const element = elements[index]!;
-    const where = nameOf(element, index);
+    const where = elementName(element, index, face);
     if (pending.has(index)) throw new CardRenderError(`${where} is pinned to itself in a circle`);
     pending.add(index);
     const result = placeOne(element, where);
@@ -409,8 +409,17 @@ function elementMarkup(
   return textMarkup(element, placement.text!, box, assets, canvas);
 }
 
-export function buildCardSvg(layout: CardLayout, fields: CardFields, assets: CardAssets): string {
-  const placed = placements(layout, fields, assets);
+// One face of the card: the front, which is the whole of most cards, or the
+// back of a piece with backs of its own.
+export function buildCardSvg(
+  layout: CardLayout,
+  fields: CardFields,
+  assets: CardAssets,
+  face: LayoutFace = 'front'
+): string {
+  const elements = faceElements(layout.spec, face);
+  if (elements === null) throw new CardRenderError(`${layout.name} draws no back`);
+  const placed = placements(elements, face, fields, assets);
   const defs: string[] = [];
   const canvas: Canvas = {
     defs,
@@ -423,13 +432,13 @@ export function buildCardSvg(layout: CardLayout, fields: CardFields, assets: Car
   };
   const body: string[] = [];
 
-  layout.spec.elements.forEach((element, index) => {
+  elements.forEach((element, index) => {
     const placement = placed[index];
     if (placement === null || placement === undefined) return;
     const markup = elementMarkup(
       element,
       placement,
-      nameOf(element, index),
+      elementName(element, index, face),
       fields,
       assets,
       canvas

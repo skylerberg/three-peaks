@@ -15,7 +15,8 @@ import { EXIT } from '../../src/errors.ts';
 
 type Component = components['schemas']['Component'];
 
-const CUT_SHEET =
+// A wooden piece cut from an SVG's own paths, which downloads as the text it was.
+const OUTLINE =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
   '<path d="M10 10 L40 10 L40 40 L10 40 Z"/><path d="M60 60 L90 60 L90 90 L60 90 Z"/></svg>';
 
@@ -63,10 +64,12 @@ describe('component commands', () => {
     expect(res.exitCode).toBe(0);
     const kinds = res.json<{ kind: string; roles: string[] }[]>();
     expect(kinds.map((k) => k.kind)).toEqual([...COMPONENT_KINDS]);
-    expect(kinds.find((k) => k.kind === 'punchboard')?.roles).toEqual(['artwork', 'cut']);
+    expect(kinds.find((k) => k.kind === 'box')?.roles).toEqual(['artwork']);
+    expect(kinds.find((k) => k.kind === 'punchboard')?.roles).toEqual([]);
 
     const human = await h.runCli(['component', 'kinds']);
     expect(human.stdout).toContain('Punchboards');
+    expect(human.stdout).toContain('tokens, each a front and a back');
   });
 
   describe('create', () => {
@@ -188,43 +191,18 @@ describe('component commands', () => {
       expect(versions.versions).toHaveLength(2);
     });
 
-    it('refuses a role the kind does not take', async () => {
-      await create('Plain piece', 'wood');
-      const res = await cli([
-        'component',
-        'upload',
-        'Plain piece',
-        await fixture('sheet.svg', CUT_SHEET),
-        '--role',
-        'cut',
-      ]);
-      expect(res.exitCode).toBe(EXIT.usage);
-      expect(res.stderr).toContain('A wooden piece has no cut file; it takes: artwork');
-    });
-
-    it('fills a punchboard’s missing slots in order', async () => {
+    it('sends a punchboard’s images to its tokens instead', async () => {
       await create('Sprue', 'punchboard');
-      const artwork = await cli([
+      const res = await cli([
         'component',
         'upload',
         'Sprue',
         await fixture('sprue.png', pngBytes(3)),
       ]);
-      expect(artwork.stdout).toContain('as the artwork of punchboard "Sprue"');
-      expect(artwork.stdout).toContain('Still missing: cut');
-
-      const cut = await cli([
-        'component',
-        'upload',
-        'Sprue',
-        await fixture('sprue-cut.svg', CUT_SHEET),
-      ]);
-      expect(cut.exitCode, cut.stderr).toBe(0);
-      expect(cut.stdout).toContain('as the cut of punchboard "Sprue"');
-
-      const shown = await cli(['component', 'show', 'Sprue']);
-      expect(shown.stdout).toMatch(/cut\s+sprue-cut\.svg/);
-      expect(shown.stdout).not.toContain('missing');
+      expect(res.exitCode).toBe(EXIT.usage);
+      expect(res.stderr).toContain(
+        'A punchboard has no artwork of its own; its tokens are uploaded with: threepeaks component tokens upload'
+      );
     });
 
     it('downloads a file, refuses to overwrite one, and writes into a directory', async () => {
@@ -255,20 +233,12 @@ describe('component commands', () => {
     });
 
     it('downloads to stdout, and says so when there is nothing to download', async () => {
-      await create('Cut board', 'punchboard');
-      await cli(['component', 'upload', 'Cut board', await fixture('cb.png', pngBytes(5))]);
-      await cli([
-        'component',
-        'upload',
-        'Cut board',
-        await fixture('cb.svg', CUT_SHEET),
-        '--role',
-        'cut',
-      ]);
+      await create('Outline', 'wood');
+      await cli(['component', 'upload', 'Outline', await fixture('outline.svg', OUTLINE)]);
 
-      const piped = await cli(['component', 'download', 'Cut board', '--role', 'cut', '-o', '-']);
+      const piped = await cli(['component', 'download', 'Outline', '-o', '-']);
       expect(piped.exitCode, piped.stderr).toBe(0);
-      expect(piped.stdout).toBe(CUT_SHEET);
+      expect(piped.stdout).toBe(OUTLINE);
 
       await create('Bare', 'board');
       const none = await cli(['component', 'download', 'Bare']);
@@ -505,5 +475,93 @@ describe('component commands', () => {
     } finally {
       await deleteUser(viewer);
     }
+  });
+  describe('punchboard tokens', () => {
+    type Token = Component['tokens'][number];
+
+    async function tokens(name: string): Promise<Token[]> {
+      return (await cli(['component', 'show', name, '--json'])).json<Component>().tokens;
+    }
+
+    it('uploads each image as a token, printed on both sides when asked', async () => {
+      await create('Roles', 'punchboard');
+      const res = await cli([
+        'component',
+        'tokens',
+        'upload',
+        'Roles',
+        await fixture('seeker.png', pngBytes(20)),
+        await fixture('reader.png', pngBytes(21)),
+        '--same-back',
+      ]);
+      expect(res.exitCode, res.stderr).toBe(0);
+      expect(res.stdout).toContain('Uploaded seeker.png to Roles');
+
+      const held = await tokens('Roles');
+      expect(held.map((t) => [t.file.filename, t.back_file_id === t.file_id])).toEqual([
+        ['seeker.png', true],
+        ['reader.png', true],
+      ]);
+
+      const shown = await cli(['component', 'show', 'Roles']);
+      expect(shown.stdout).toMatch(/sheet\s+2 of \d+ places cut/);
+      expect(shown.stdout).toContain('seeker.png  1 copy, same image both sides');
+      const listed = await cli(['component', 'list', '--kind', 'punchboard']);
+      expect(listed.stdout).toContain('2 tokens');
+    });
+
+    it('gives a token a back of its own, versions it, and takes it away again', async () => {
+      const back = await cli([
+        'component',
+        'tokens',
+        'back',
+        'Roles',
+        'reader.png',
+        await fixture('reader-back.png', pngBytes(22)),
+      ]);
+      expect(back.exitCode, back.stderr).toBe(0);
+      expect(back.stdout).toContain('Uploaded reader-back.png as the back of reader.png');
+
+      const again = await cli([
+        'component',
+        'tokens',
+        'back',
+        'Roles',
+        'reader.png',
+        await fixture('reader-back-2.png', pngBytes(23)),
+      ]);
+      expect(again.exitCode, again.stderr).toBe(0);
+      expect(again.stdout).toContain("reader.png's back, reader-back.png, is now version 2");
+
+      const none = await cli(['component', 'tokens', 'back', 'Roles', 'reader.png', '--none']);
+      expect(none.exitCode, none.stderr).toBe(0);
+      expect(none.stdout).toContain('Deleted reader-back.png');
+      expect(
+        (await tokens('Roles')).find((t) => t.file.filename === 'reader.png')!.back_file
+      ).toBeNull();
+
+      const both = await cli(['component', 'tokens', 'back', 'Roles', 'reader.png']);
+      expect(both.exitCode).toBe(EXIT.usage);
+    });
+
+    it('sets copies and moves a token within the list', async () => {
+      const copies = await cli(['component', 'tokens', 'copies', 'Roles', 'seeker.png', '3']);
+      expect(copies.exitCode, copies.stderr).toBe(0);
+      expect(copies.stdout).toContain('seeker.png: 3 copies');
+
+      const moved = await cli(['component', 'tokens', 'move', 'Roles', 'reader.png', '--top']);
+      expect(moved.exitCode, moved.stderr).toBe(0);
+      expect(moved.stdout).toContain('Moved reader.png to position 1 of 2');
+      expect((await tokens('Roles')).map((t) => [t.file.filename, t.quantity])).toEqual([
+        ['reader.png', 1],
+        ['seeker.png', 3],
+      ]);
+    });
+
+    it('finds a token’s face as a file of the punchboard', async () => {
+      const res = await cli(['file', 'show', 'seeker.png', '--component', 'Roles', '--json']);
+      expect(res.exitCode, res.stderr).toBe(0);
+      expect(res.json<{ component_role: string }>().component_role).toBe('token');
+    });
   });
 });

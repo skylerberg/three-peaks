@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { COMPONENT_KINDS, COMPONENT_KIND_INFO } from '@three-peaks/shared';
+  import { COMPONENT_KINDS, COMPONENT_KIND_INFO, canBuild } from '@three-peaks/shared';
   import Thumbnail from '../Thumbnail.svelte';
   import Spinner from '../ui/Spinner.svelte';
   import { api, assertOk } from '../../api/client.ts';
@@ -28,8 +28,9 @@
       .GET('/api/components', { params: { query: { project_id: id } } })
       .then((result) => {
         // Only the ones that can actually be built; a component still waiting
-        // for its artwork has nothing to put on the table.
-        all = assertOk(result).components.filter((row) => row.missing_roles.length === 0);
+        // for its artwork, or a punchboard with no token to cut, has nothing to
+        // put on the table.
+        all = assertOk(result).components.filter(canBuild);
       })
       .catch((caught) => toasts.error(apiMessage(caught)))
       .finally(() => {

@@ -1,17 +1,19 @@
-import { ExtrudeGeometry, Shape, type BufferGeometry } from 'three';
-import type { PunchboardModelSettings } from '@three-peaks/shared';
-import { boundsOf, outlinesToShapes } from '../shapes/outlines.ts';
+import { ExtrudeGeometry, type BufferGeometry, type Shape } from 'three';
+import {
+  planPunchboard,
+  tokenShape,
+  type PunchboardModelSettings,
+  type PunchboardPlan,
+} from '@three-peaks/shared';
 import { roundedRectShape } from '../shapes/roundedRect.ts';
-import { svgOutlines, svgViewBox } from '../shapes/svg.ts';
-import type { Bounds, Outline, Ring } from '../shapes/types.ts';
 import { MM } from '../units.ts';
 import { bevelledExtrusion } from './extrude.ts';
 import { assignFaceGroups, remapCapUVs } from './faceGroups.ts';
 
-export class EmptyCutSheetError extends Error {
-  constructor() {
-    super('That cut sheet has no closed shapes in it, so there is nothing to punch out.');
-    this.name = 'EmptyCutSheetError';
+export class EmptyPunchboardError extends Error {
+  constructor(message = 'This punchboard has no tokens to cut yet.') {
+    super(message);
+    this.name = 'EmptyPunchboardError';
   }
 }
 
@@ -19,154 +21,98 @@ export class EmptyCutSheetError extends Error {
 // order from the top left and padded to three digits the way a board's panels
 // are: once the bundle is in Blender the numbering is the only thing left
 // saying which token came from where on the sheet.
-const PUNCHBOARD_SHEET_NAME = 'Sheet';
+export const PUNCHBOARD_SHEET_NAME = 'Sheet';
 
-export interface PunchboardPiece {
+// Rounder than a card's corners need: a disc is the commonest token, and its
+// whole outline is corner.
+const CURVE_SEGMENTS = 24;
+
+interface PunchboardPiece {
   name: string;
   // Where it sits in the sheet's plane, in metres.
   center: readonly [number, number, number];
-  // What it measures, in metres. The scene needs this to lay tokens out and
-  // cannot work it out for itself: the die line decides it.
-  size: { width: number; height: number };
-  // The artwork rectangle in this piece's own coordinates, so it samples
-  // exactly the patch of sheet it was cut from.
-  artwork: Bounds;
-  outline: Outline | null;
+  // Which token of the list it is a copy of.
+  token: number;
 }
 
 export interface PunchboardLayout {
-  pieces: PunchboardPiece[];
+  plan: PunchboardPlan;
   width: number;
   height: number;
-  // Every token, in sheet coordinates. The sheet reads these to punch itself
-  // out; a token reads only its own.
-  cuts: Outline[];
+  // One token's size, in metres; every token is cut to it.
+  token: { width: number; height: number; radius: number };
+  pieces: PunchboardPiece[];
 }
 
 /**
- * Reads a die line and works out where everything is, without building any
- * geometry.
+ * Where everything on the sheet is, without building any geometry: the sheet's
+ * own plan in metres, the y axis turned to point up the way the scene's does.
  *
  * Cheap on purpose: the scene exports the sheet and each token as a file of its
  * own, and extruding all of them once per file would be quadratic in the number
  * of tokens on the sheet.
- *
- * The document's viewBox is the whole sheet, not the extent of the shapes in
- * it: a die line with a margin round its tokens is ordinary, and measuring the
- * shapes instead would stretch that margin away and take every token with it.
- * The same mapping decides a token's size and the rectangle of artwork it
- * samples, which is what stops the two from disagreeing -- the property
- * boxNetRegions has for a box wrap.
  */
 export function punchboardLayout(
   settings: PunchboardModelSettings,
-  cutSvg: string
+  quantities: readonly number[]
 ): PunchboardLayout {
-  const outlines = svgOutlines(cutSvg);
-  if (outlines.length === 0) throw new EmptyCutSheetError();
-
-  const frame =
-    svgViewBox(cutSvg) ?? boundsOf(outlines.flatMap((one) => [one.contour, ...one.holes]));
+  const plan = planPunchboard(settings, quantities);
+  const shape = tokenShape(settings);
   const width = settings.width_mm * MM;
   const height = settings.height_mm * MM;
-  const spanX = frame.maxX - frame.minX;
-  const spanY = frame.maxY - frame.minY;
-
-  // y is negated because an SVG counts down the page and the scene counts up.
-  const place = (point: { x: number; y: number }) => ({
-    x: -width / 2 + ((point.x - frame.minX) / spanX) * width,
-    y: height / 2 - ((point.y - frame.minY) / spanY) * height,
-  });
-  const move = (ring: Ring): Ring => ring.map(place);
-
-  const cuts: Outline[] = outlines.map((outline) => ({
-    contour: move(outline.contour),
-    holes: outline.holes.map(move),
-  }));
-
-  const sheetArtwork: Bounds = {
-    minX: -width / 2,
-    minY: -height / 2,
-    maxX: width / 2,
-    maxY: height / 2,
+  const token = {
+    width: shape.width_mm * MM,
+    height: shape.height_mm * MM,
+    radius: shape.corner_radius_mm * MM,
   };
-
-  const shift = (bounds: Bounds, x: number, y: number): Bounds => ({
-    minX: bounds.minX - x,
-    minY: bounds.minY - y,
-    maxX: bounds.maxX - x,
-    maxY: bounds.maxY - y,
-  });
-
-  // Reading order from the top left: rows first, so two tokens side by side are
-  // consecutive.
-  const ordered = cuts
-    .map((outline) => ({ outline, bounds: boundsOf([outline.contour]) }))
-    .sort((a, b) => b.bounds.maxY - a.bounds.maxY || a.bounds.minX - b.bounds.minX);
-
-  const pieces: PunchboardPiece[] = [
-    {
-      name: PUNCHBOARD_SHEET_NAME,
-      center: [0, 0, 0],
-      size: { width, height },
-      artwork: sheetArtwork,
-      outline: null,
-    },
-    ...ordered.map((entry, index) => {
-      const centerX = (entry.bounds.minX + entry.bounds.maxX) / 2;
-      const centerY = (entry.bounds.minY + entry.bounds.maxY) / 2;
-      return {
-        name: `Token.${String(index + 1).padStart(3, '0')}`,
-        center: [centerX, centerY, 0] as const,
-        size: {
-          width: entry.bounds.maxX - entry.bounds.minX,
-          height: entry.bounds.maxY - entry.bounds.minY,
-        },
-        artwork: shift(sheetArtwork, centerX, centerY),
-        outline: {
-          contour: entry.outline.contour.map((p) => ({ x: p.x - centerX, y: p.y - centerY })),
-          holes: entry.outline.holes.map((hole) =>
-            hole.map((p) => ({ x: p.x - centerX, y: p.y - centerY }))
-          ),
-        },
-      };
-    }),
-  ];
-
-  return { pieces, width, height, cuts };
+  const pieces = plan.slots.map((slot, index) => ({
+    name: `Token.${String(index + 1).padStart(3, '0')}`,
+    center: [
+      -width / 2 + slot.x_mm * MM + token.width / 2,
+      height / 2 - slot.y_mm * MM - token.height / 2,
+      0,
+    ] as const,
+    token: slot.token,
+  }));
+  return { plan, width, height, token, pieces };
 }
 
-function shapeFor(
-  layout: PunchboardLayout,
-  piece: PunchboardPiece,
-  settings: PunchboardModelSettings
-): Shape {
-  if (piece.outline !== null) return outlinesToShapes([piece.outline])[0];
-
-  // Square corners: a punchboard is guillotined like a mounted board.
-  const sheet = roundedRectShape(layout.width, layout.height, 0);
-  if (settings.sheet_state === 'punched') {
-    // The tokens as holes: what is left once they have been pushed out.
-    sheet.holes = outlinesToShapes(layout.cuts).map((shape) => {
-      const hole = new Shape();
-      hole.curves = shape.curves;
-      return hole;
-    });
-  }
-  return sheet;
-}
-
-export function buildPunchboardPiece(
-  layout: PunchboardLayout,
-  piece: PunchboardPiece,
-  settings: PunchboardModelSettings
-): BufferGeometry {
-  const geometry = new ExtrudeGeometry(shapeFor(layout, piece, settings), {
+function extrude(shape: Shape, settings: PunchboardModelSettings): BufferGeometry {
+  return new ExtrudeGeometry(shape, {
     ...bevelledExtrusion(settings.thickness_mm * MM, 0),
-    curveSegments: 1,
+    curveSegments: CURVE_SEGMENTS,
   });
+}
+
+/**
+ * One token, centred on the origin, its faces mapped to its own artwork: the
+ * front's image runs edge to edge across the box the token is cut to, and the
+ * back's, seen from behind, the same way round.
+ */
+export function buildTokenGeometry(layout: PunchboardLayout, settings: PunchboardModelSettings) {
+  const { width, height, radius } = layout.token;
+  const geometry = extrude(roundedRectShape(width, height, radius), settings);
   geometry.center();
   assignFaceGroups(geometry);
-  remapCapUVs(geometry, piece.artwork);
+  remapCapUVs(geometry, { minX: -width / 2, minY: -height / 2, maxX: width / 2, maxY: height / 2 });
+  return geometry;
+}
+
+/**
+ * The sheet as the die leaves it: square-cornered, guillotined like a mounted
+ * board, with every token's outline cut through it. Whether the tokens are
+ * still in their holes is a matter of which meshes stand beside it.
+ */
+export function buildSheetGeometry(layout: PunchboardLayout, settings: PunchboardModelSettings) {
+  const sheet = roundedRectShape(layout.width, layout.height, 0);
+  const { width, height, radius } = layout.token;
+  sheet.holes = layout.pieces.map((piece) =>
+    roundedRectShape(width, height, radius, { x: piece.center[0], y: piece.center[1] })
+  );
+  const geometry = extrude(sheet, settings);
+  geometry.center();
+  assignFaceGroups(geometry);
+  const half = { x: layout.width / 2, y: layout.height / 2 };
+  remapCapUVs(geometry, { minX: -half.x, minY: -half.y, maxX: half.x, maxY: half.y });
   return geometry;
 }

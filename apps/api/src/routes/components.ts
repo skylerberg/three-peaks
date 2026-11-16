@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
 import { sql } from 'kysely';
-import { type ComponentKind, defaultSettingsFor } from '@three-peaks/shared';
+import {
+  type ComponentKind,
+  type PunchboardModelSettings,
+  defaultSettingsFor,
+} from '@three-peaks/shared';
 import {
   assertComponentAccess,
   assertProjectAccess,
@@ -11,10 +15,13 @@ import {
   liveComponentOrder,
   listComponents,
   nextComponentPosition,
+  publishComponent,
   readComponent,
 } from '../services/components.ts';
 import { ownedStorageKeys } from '../services/files.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
+import { requestComponentRenders } from '../services/renderRequests.ts';
+import { assertTokenFiles, writeTokens, type TokenInput } from '../services/tokens.ts';
 import { deleteStoredObjectsAfterCommit } from '../services/storage/index.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
 import { AppError, isUniqueViolation } from '../utils/errors.ts';
@@ -26,6 +33,7 @@ import {
   componentSchema,
   createComponentRequestSchema,
   putComponentOrderRequestSchema,
+  putComponentTokensRequestSchema,
   updateComponentRequestSchema,
 } from '../schemas/components.ts';
 import { purgeQuerySchema } from '../schemas/files.ts';
@@ -280,7 +288,7 @@ componentsRouter.patch(
 
     const current = await db
       .selectFrom('component')
-      .select(['component.kind as kind'])
+      .select(['component.kind as kind', 'component.settings as settings'])
       .where('component.id', '=', componentId)
       .executeTakeFirst();
     if (!current) throw new AppError(404, 'Component not found');
@@ -307,6 +315,19 @@ componentsRouter.patch(
         throw new AppError(409, 'A component with that name already exists in this project');
       }
       throw error;
+    }
+
+    // A token is drawn at the size the punchboard cuts it, so a new size asks
+    // for every laid-out token to be drawn again -- where the layout no longer
+    // fits, that is what says so.
+    if (body.settings?.kind === 'punchboard') {
+      const before = current.settings as unknown as Partial<PunchboardModelSettings>;
+      if (
+        before.token_width_mm !== body.settings.token_width_mm ||
+        before.token_height_mm !== body.settings.token_height_mm
+      ) {
+        await requestComponentRenders(c, componentId);
+      }
     }
 
     const updated = await readComponent(c, componentId);
@@ -414,6 +435,8 @@ componentsRouter.post(
         .set({ deleted_at: null, deleted_by: null, updated_at: new Date() })
         .where('component.id', '=', componentId)
         .execute();
+      // Its laid-out tokens may have fallen behind while it was gone.
+      await requestComponentRenders(c, componentId);
     } catch (error) {
       // The name it had may have been taken while it was gone.
       if (isUniqueViolation(error)) {
@@ -431,5 +454,57 @@ componentsRouter.post(
       restored
     );
     return c.json(restored);
+  }
+);
+
+componentsRouter.put(
+  '/:componentId/tokens',
+  describeRoute({
+    tags: ['Components'],
+    summary: 'Replace a punchboard’s tokens',
+    description:
+      'Editors only. The whole ordered list in one request, the way a deck’s cards are replaced: position is the array index, so reordering, changing a count and changing a back are one call. Every front and back has to be an image the punchboard holds, and every live image it holds has to be named as one or the other. A back is null for unprinted board, the front’s own id for the same image on both sides, or an image that is no token’s front; a back a layout draws is its token’s and nobody else’s.',
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'The punchboard as it now stands',
+        content: { 'application/json': { schema: resolver(componentSchema) } },
+      },
+      ...forbiddenErrorResponse,
+      ...validationErrorResponse,
+      ...standardErrors,
+    },
+  }),
+  jsonValidator(putComponentTokensRequestSchema),
+  async (c) => {
+    const componentId = c.req.param('componentId');
+    const access = await assertComponentAccess(c, componentId, 'write');
+    const { tokens } = c.req.valid('json') as { tokens: TokenInput[] };
+    const db = c.get('db');
+
+    const component = await db
+      .selectFrom('component')
+      .select(['component.kind as kind', 'component.deleted_at as deleted_at'])
+      .where('component.id', '=', componentId)
+      .executeTakeFirstOrThrow();
+    if (component.kind !== 'punchboard') {
+      throw new AppError(422, 'Only a punchboard has tokens');
+    }
+    // An arrangement is the contents of the punchboard, and a tombstone
+    // refuses a write to its contents.
+    if (component.deleted_at !== null) {
+      throw new AppError(409, 'That punchboard is deleted. Restore it first');
+    }
+
+    await assertTokenFiles(c, componentId, tokens);
+    await writeTokens(db, componentId, tokens);
+    await db
+      .updateTable('component')
+      .set({ updated_at: new Date() })
+      .where('component.id', '=', componentId)
+      .execute();
+
+    await publishComponent(c, access.projectId, componentId);
+    return c.json(await readComponent(c, componentId));
   }
 );

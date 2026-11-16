@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
-import type { CardFields } from '@three-peaks/shared';
-import { assertDeckAccess, assertFileAccess } from '../services/authorization.ts';
+import type { CardFields, CardSize, PunchboardModelSettings } from '@three-peaks/shared';
+import {
+  assertComponentAccess,
+  assertDeckAccess,
+  assertFileAccess,
+} from '../services/authorization.ts';
 import {
   CONTENT_COLUMNS,
   assertNotDrawnElsewhere,
@@ -11,15 +15,19 @@ import {
 import {
   CardRenderError,
   type CardLayout,
+  type Piece,
+  type PieceHome,
   assertLayoutFits,
-  createCardFile,
-  drawCard,
-  saveCardImage,
+  createPieceFile,
+  drawFaces,
+  readPiece,
+  saveFaces,
 } from '../services/cardImages.ts';
 import { assertRoomForCard } from '../services/decks.ts';
 import { resolveHome } from '../services/fileHome.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
-import { requestDeckRenders } from '../services/renderRequests.ts';
+import { requestComponentRenders, requestDeckRenders } from '../services/renderRequests.ts';
+import { assertRoomForToken } from '../services/tokens.ts';
 import { newId } from '../utils/uuid.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
 import { AppError } from '../utils/errors.ts';
@@ -46,8 +54,24 @@ import type { AppContext, AppHono } from '../types/index.ts';
 // A card's own values for the layout it is drawn from. Addressed by the card's
 // file, the way the 3D settings are: the file is the card, so there is nothing
 // else to name. Saving content draws the card, and its image is a new version
-// of the file whenever it comes out different.
+// of the file whenever it comes out different. A punchboard's token is drawn
+// the same way, addressed by its front, and its layout may draw its back too.
 export const cardContentRouter: AppHono = new Hono();
+
+// Which of a deck or a punchboard a request names. Both are optional in the
+// schema, because a union of objects told apart only by which key is present
+// is one ArkType cannot decide, so exactly one is asked for here.
+function oneHome(body: { deck_id?: string; component_id?: string }) {
+  const named = [body.deck_id, body.component_id].filter((id) => id !== undefined);
+  if (named.length !== 1) {
+    throw new AppError(422, 'Name one deck (deck_id) or one punchboard (component_id)');
+  }
+  return body.deck_id !== undefined
+    ? ({ kind: 'deck', id: body.deck_id } as const)
+    : ({ kind: 'component', id: body.component_id! } as const);
+}
+
+const NOT_A_PIECE = "Only a deck's card or a punchboard's token can be drawn from a layout";
 
 const standardErrors = {
   ...unauthorizedErrorResponse,
@@ -59,9 +83,9 @@ cardContentRouter.get(
   '/',
   describeRoute({
     tags: ['Layouts'],
-    summary: "List the content of a deck's cards",
+    summary: "List the content of a deck's cards, or a punchboard's tokens",
     description:
-      'Every card in the deck that is drawn from a layout, deleted ones included -- a restore brings back the content with the image. Cards that are only artwork have no row.',
+      'Every card in the deck, or token of the punchboard, that is drawn from a layout, deleted ones included -- a restore brings back the content with the image. Pieces that are only artwork have no row.',
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -73,26 +97,27 @@ cardContentRouter.get(
   }),
   queryValidator(cardContentQuerySchema),
   async (c) => {
-    const { deck_id: deckId } = c.req.valid('query') as { deck_id: string };
-    await assertDeckAccess(c, deckId, 'read');
+    const home = oneHome(c.req.valid('query') as { deck_id?: string; component_id?: string });
+    if (home.kind === 'deck') await assertDeckAccess(c, home.id, 'read');
+    else await assertComponentAccess(c, home.id, 'read');
     const rows = await c
       .get('db')
       .selectFrom('card_content')
       .innerJoin('file', 'file.id', 'card_content.file_id')
       .select(CONTENT_COLUMNS)
-      .where('file.deck_id', '=', deckId)
+      .where(home.kind === 'deck' ? 'file.deck_id' : 'file.component_id', '=', home.id)
       .orderBy('card_content.file_id')
       .execute();
     return c.json({ cards: rows.map(serializeContent) });
   }
 );
 
-// The layout a card is drawn from, checked against the deck it is drawn into.
-async function layoutForDeck(
+// The layout a card is drawn from, checked against the piece it is drawn as.
+async function layoutForPiece(
   c: AppContext,
   projectId: string,
   layoutId: string,
-  deck: { width_mm: number; height_mm: number }
+  piece: Pick<Piece, 'kind' | 'size'>
 ): Promise<CardLayout> {
   // Another project's layout gets the sentence a missing one does, so this
   // cannot be used to ask whether an id is real.
@@ -110,7 +135,7 @@ async function layoutForDeck(
     height_mm: Number(row.height_mm),
     spec: row.spec,
   };
-  await refusingUndrawable(() => assertLayoutFits(layout, deck));
+  await refusingUndrawable(() => assertLayoutFits(layout, piece));
   return layout;
 }
 
@@ -150,7 +175,7 @@ cardContentRouter.put(
     tags: ['Layouts'],
     summary: 'Save the content of one card',
     description:
-      "Editors only, and an upsert: one row per card. The file must be one of a deck's images, the layout one of the same project's and the size of the deck, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project, none of them itself a card drawn from a layout. The card is drawn before anything is saved: one that cannot be drawn is refused with 422, and one whose image comes out different gets it as a new version. Allowed on a deleted card, like its 3D settings, which is drawn once it is restored.",
+      "Editors only, and an upsert: one row per card. The file must be one of a deck's cards or the front of a punchboard's token, the layout one of the same project's and the size of the deck's cards or the punchboard's tokens, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project, none of them itself a card drawn from a layout. A layout with a back draws only a token, whose back it draws into a back of the token's own, made if it has none. The card is drawn before anything is saved: one that cannot be drawn is refused with 422, and one whose image comes out different gets it as a new version. Allowed on a deleted card, like its 3D settings, which is drawn once it is restored.",
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -170,34 +195,16 @@ cardContentRouter.put(
     const fields = body.fields as CardFields;
     const db = c.get('db');
 
-    const card = await db
-      .selectFrom('file')
-      .leftJoin('deck', 'deck.id', 'file.deck_id')
-      .select([
-        'file.deck_id as deck_id',
-        'file.checksum as checksum',
-        'file.deleted_at as deleted_at',
-        'deck.deleted_at as deck_deleted_at',
-        'deck.card_width_mm as width_mm',
-        'deck.card_height_mm as height_mm',
-      ])
-      .where('file.id', '=', fileId)
-      .executeTakeFirstOrThrow();
-    if (card.deck_id === null) {
-      throw new AppError(422, "Only a deck's card can be drawn from a layout");
-    }
+    const piece = await readPiece(db, fileId);
+    if (piece === null) throw new AppError(422, NOT_A_PIECE);
 
-    const layout = await layoutForDeck(c, access.projectId, body.layout_id, {
-      width_mm: Number(card.width_mm),
-      height_mm: Number(card.height_mm),
-    });
+    const layout = await layoutForPiece(c, access.projectId, body.layout_id, piece);
     await assertValidCardFields(c, access.projectId, layout.spec, fields);
     await assertNotDrawnElsewhere(c, access.projectId, fileId);
 
     // Drawn first, so a card whose copy cannot be set changes nothing. A
     // deleted card cannot take a version, and is drawn when it comes back.
-    const live = card.deleted_at === null && card.deck_deleted_at === null;
-    const bytes = live ? await refusingUndrawable(() => drawCard(db, layout, fields)) : null;
+    const faces = piece.live ? await refusingUndrawable(() => drawFaces(db, layout, fields)) : null;
 
     const now = new Date();
     await db
@@ -223,13 +230,7 @@ cardContentRouter.put(
       .execute();
 
     const imageVersion =
-      bytes === null
-        ? null
-        : await saveCardImage(
-            c,
-            { fileId, projectId: access.projectId, checksum: card.checksum },
-            bytes
-          );
+      faces === null ? null : await refusingUndrawable(() => saveFaces(c, piece, faces));
     return c.json({ content: await announceContent(c, fileId), image_version: imageVersion });
   }
 );
@@ -240,7 +241,7 @@ cardContentRouter.post(
     tags: ['Layouts'],
     summary: 'Create a card drawn from a layout',
     description:
-      'Editors only. Draws the card and adds the image to the deck as its next card, the way an upload into the deck would, with its content saved beside it. Validated as a save is; the name has to be free in the deck, and the deck must have room.',
+      "Editors only. Draws the card and adds the image to the deck as its next card, the way an upload into the deck would, with its content saved beside it -- or, given a punchboard, adds it as the punchboard's next token, with the back its layout draws as a new image of its own. Validated as a save is; the name has to be free there, and there must be room.",
     security: [{ bearerAuth: [] }],
     responses: {
       201: {
@@ -258,35 +259,54 @@ cardContentRouter.post(
     const body = c.req.valid('json') as typeof createCardRequestSchema.infer;
     const fields = body.fields as CardFields;
     const id = body.id ?? newId();
-    const access = await assertDeckAccess(c, body.deck_id, 'write');
+    const target = oneHome(body);
     const db = c.get('db');
 
-    // The checks an upload into the deck makes: a live deck, with room.
-    await resolveHome(db, access.projectId, { deck_id: body.deck_id });
-    await assertRoomForCard(db, body.deck_id, id);
-    const deck = await db
-      .selectFrom('deck')
-      .select(['deck.card_width_mm as width_mm', 'deck.card_height_mm as height_mm'])
-      .where('deck.id', '=', body.deck_id)
-      .executeTakeFirstOrThrow();
+    // The checks an upload makes: a live home, with room.
+    let home: PieceHome;
+    let size: CardSize;
+    let projectId: string;
+    if (target.kind === 'deck') {
+      projectId = (await assertDeckAccess(c, target.id, 'write')).projectId;
+      await resolveHome(db, projectId, { deck_id: target.id });
+      await assertRoomForCard(db, target.id, id);
+      const deck = await db
+        .selectFrom('deck')
+        .select(['deck.card_width_mm as width_mm', 'deck.card_height_mm as height_mm'])
+        .where('deck.id', '=', target.id)
+        .executeTakeFirstOrThrow();
+      home = { kind: 'deck', deckId: target.id };
+      size = { width_mm: Number(deck.width_mm), height_mm: Number(deck.height_mm) };
+    } else {
+      projectId = (await assertComponentAccess(c, target.id, 'write')).projectId;
+      const resolved = await resolveHome(db, projectId, { component_id: target.id });
+      if (resolved.home.kind !== 'component' || resolved.home.role !== 'token') {
+        throw new AppError(422, NOT_A_PIECE);
+      }
+      await assertRoomForToken(db, target.id, id);
+      const component = await db
+        .selectFrom('component')
+        .select(['component.settings as settings'])
+        .where('component.id', '=', target.id)
+        .executeTakeFirstOrThrow();
+      const settings = component.settings as unknown as PunchboardModelSettings;
+      home = { kind: 'token', componentId: target.id };
+      size = { width_mm: settings.token_width_mm, height_mm: settings.token_height_mm };
+    }
 
-    const layout = await layoutForDeck(c, access.projectId, body.layout_id, {
-      width_mm: Number(deck.width_mm),
-      height_mm: Number(deck.height_mm),
+    const layout = await layoutForPiece(c, projectId, body.layout_id, {
+      kind: home.kind === 'deck' ? 'card' : 'token',
+      size,
     });
-    await assertValidCardFields(c, access.projectId, layout.spec, fields);
-    const bytes = await refusingUndrawable(() => drawCard(db, layout, fields));
+    await assertValidCardFields(c, projectId, layout.spec, fields);
+    const faces = await refusingUndrawable(() => drawFaces(db, layout, fields));
 
-    const file = await createCardFile(
-      c,
-      { id, projectId: access.projectId, deckId: body.deck_id, filename: body.filename },
-      bytes
-    );
+    const file = await createPieceFile(c, { id, projectId, home, filename: body.filename }, faces);
     await db
       .insertInto('card_content')
       .values({
         file_id: id,
-        project_id: access.projectId,
+        project_id: projectId,
         layout_id: body.layout_id,
         fields,
         updated_by: c.get('user').id,
@@ -300,9 +320,9 @@ cardContentRouter.post(
   '/render',
   describeRoute({
     tags: ['Layouts'],
-    summary: "Ask for a deck's laid-out cards to be drawn again",
+    summary: "Ask for a deck's laid-out cards, or a punchboard's tokens, to be drawn again",
     description:
-      "Editors only. Every card of the deck drawn from a layout, or only the ones named, is drawn again in the background, and gets a new version where its image comes out different. The API asks for this itself whenever a layout or a file a card draws changes; this is for anything it cannot see, such as a new release of the renderer. Each card's content says when it is done.",
+      "Editors only. Every card of the deck, or token of the punchboard, drawn from a layout, or only the ones named, is drawn again in the background, and gets a new version where its image comes out different. The API asks for this itself whenever a layout or a file a card draws changes; this is for anything it cannot see, such as a new release of the renderer. Each card's content says when it is done.",
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -317,8 +337,13 @@ cardContentRouter.post(
   jsonValidator(renderCardsRequestSchema),
   async (c) => {
     const body = c.req.valid('json') as typeof renderCardsRequestSchema.infer;
-    await assertDeckAccess(c, body.deck_id, 'write');
-    const requested = await requestDeckRenders(c, body.deck_id, body.file_ids);
+    const home = oneHome(body);
+    if (home.kind === 'deck') await assertDeckAccess(c, home.id, 'write');
+    else await assertComponentAccess(c, home.id, 'write');
+    const requested =
+      home.kind === 'deck'
+        ? await requestDeckRenders(c, home.id, body.file_ids)
+        : await requestComponentRenders(c, home.id, body.file_ids);
     return c.json({ requested });
   }
 );

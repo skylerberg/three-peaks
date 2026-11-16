@@ -13,8 +13,10 @@ import {
   type EdgeValue,
   type LayoutBox,
   type LayoutElement,
+  type LayoutFace,
   type LayoutSpec,
   type Rotation,
+  elementName,
 } from '@three-peaks/shared';
 import { CliError, EXIT } from '../errors.ts';
 
@@ -374,6 +376,7 @@ export function readLayoutDocument(text: string, source: string): LayoutDocument
     'icons',
     'fields',
     'elements',
+    'back',
   ]);
   if (root === null) r.fail();
 
@@ -406,18 +409,25 @@ export function readLayoutDocument(text: string, source: string): LayoutDocument
       { type: r.choice(v, `fields.${key}`, LAYOUT_FIELD_TYPES, 'text') },
     ])
   );
-  const rawElements = root.elements ?? [];
-  if (!Array.isArray(rawElements)) r.errors.push('elements must be a list');
-  const elements = (Array.isArray(rawElements) ? rawElements : [])
-    .map((value, index) => readElement(r, value, `elements[${String(index)}]`))
-    .filter((element): element is LayoutElement => element !== null);
+  const readFace = (raw: unknown, key: 'elements' | 'back') => {
+    if (!Array.isArray(raw)) {
+      r.errors.push(`${key} must be a list`);
+      return [];
+    }
+    return raw
+      .map((value, index) => readElement(r, value, `${key}[${String(index)}]`))
+      .filter((element): element is LayoutElement => element !== null);
+  };
 
   const spec: LayoutSpec = {
     dpi: r.number(root.dpi, 'dpi', DEFAULT_DPI),
     fonts: strings(root.fonts, 'fonts'),
     icons: strings(root.icons, 'icons'),
     fields,
-    elements,
+    elements: readFace(root.elements ?? [], 'elements'),
+    // Absent is a layout that draws one face; a token's back is a list of its
+    // own, written exactly as the front's elements are.
+    back: root.back === undefined || root.back === null ? null : readFace(root.back, 'back'),
   };
   if (r.errors.length > 0) r.fail();
   return { name, width_mm: width, height_mm: height, spec };
@@ -438,26 +448,26 @@ export async function mapLayoutFiles(
         ])
       )
     ) as Record<string, string>;
-  return {
-    ...spec,
-    fonts: await mapRecord(spec.fonts, 'font'),
-    icons: await mapRecord(spec.icons, 'icon'),
-    elements: await Promise.all(
-      spec.elements.map(async (element, index) =>
+  const mapFace = (elements: readonly LayoutElement[], face: LayoutFace) =>
+    Promise.all(
+      elements.map(async (element, index) =>
         element.type === 'image' && element.source.from === 'file'
           ? {
               ...element,
               source: {
                 from: 'file' as const,
-                file_id: await resolve(
-                  element.source.file_id,
-                  `element ${String(index + 1)} (image)`
-                ),
+                file_id: await resolve(element.source.file_id, elementName(element, index, face)),
               },
             }
           : element
       )
-    ),
+    );
+  return {
+    ...spec,
+    fonts: await mapRecord(spec.fonts, 'font'),
+    icons: await mapRecord(spec.icons, 'icon'),
+    elements: await mapFace(spec.elements, 'front'),
+    back: spec.back === null ? null : await mapFace(spec.back, 'back'),
   };
 }
 
@@ -546,22 +556,29 @@ export function writeLayoutDocument(document: LayoutDocument): string {
     );
   }
   out.elements = spec.elements.map(writeElement);
+  if (spec.back !== null) out.back = spec.back.map(writeElement);
   return stringify(out, { lineWidth: 0 });
 }
 
-// A deck's cards as written: an optional layout every card uses unless it
-// names its own, and per card its name, its fields and optionally its copies.
+// A deck's cards or a punchboard's tokens as written: an optional layout every
+// one uses unless it names its own, and per card its name, its fields and
+// optionally its copies. A punchboard's file lists them under `tokens`, which
+// reads exactly as `cards` does.
 export function readCardsDocument(text: string, source: string): CardEntry[] {
   const r: Reader = new Reader(source);
-  const root = r.object(parseYaml(text, source), '', ['layout', 'cards']);
+  const root = r.object(parseYaml(text, source), '', ['layout', 'cards', 'tokens']);
   if (root === null) r.fail();
   const fallback = root.layout === undefined ? null : r.string(root.layout, 'layout');
-  const raw = root.cards ?? [];
-  if (!Array.isArray(raw)) r.errors.push('cards must be a list');
+  if (root.cards !== undefined && root.tokens !== undefined) {
+    r.errors.push('list them under cards or under tokens, not both');
+  }
+  const key = root.tokens === undefined ? 'cards' : 'tokens';
+  const raw = root[key] ?? [];
+  if (!Array.isArray(raw)) r.errors.push(`${key} must be a list`);
 
   const seen = new Set<string>();
   const cards = (Array.isArray(raw) ? raw : []).flatMap((value, index): CardEntry[] => {
-    const path = `cards[${String(index)}]`;
+    const path = `${key}[${String(index)}]`;
     const record = r.object(value, path, ['name', 'layout', 'copies', 'fields']);
     if (record === null) return [];
     const name = r.requiredString(record, 'name', path).trim();
@@ -589,12 +606,15 @@ export function readCardsDocument(text: string, source: string): CardEntry[] {
   return cards;
 }
 
-export function writeCardsDocument(cards: readonly CardEntry[]): string {
+export function writeCardsDocument(
+  cards: readonly CardEntry[],
+  key: 'cards' | 'tokens' = 'cards'
+): string {
   const layouts = new Set(cards.map((card) => card.layout));
   const shared = layouts.size === 1 ? [...layouts][0]! : null;
   const out: Record<string, unknown> = {};
   if (shared !== null) out.layout = shared;
-  out.cards = cards.map((card) => {
+  out[key] = cards.map((card) => {
     const entry: Record<string, unknown> = { name: card.name };
     if (shared === null) entry.layout = card.layout;
     if (card.copies !== null) entry.copies = card.copies;

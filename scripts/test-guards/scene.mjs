@@ -21,7 +21,7 @@ export const guards = [
     file: 'src/lib/scene/assets.ts',
     find:
       '    component.settings,\n' +
-      '    component.front.file_id,\n' +
+      '    component.front?.file_id ?? null,\n' +
       '    component.back?.file_id ?? null,\n',
     replace: '    component.settings,\n',
     tests: ['src/lib/scene/assets.test.ts'],

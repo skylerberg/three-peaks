@@ -5,11 +5,13 @@ export {
   buildModel,
   disposeModel,
   EmptyOutlineError,
-  MissingCutSheetError,
+  MissingArtworkError,
+  PUNCHBOARD_PARTS,
   type BuiltModel,
   type ModelSources,
+  type PunchboardTokenSource,
 } from './build.ts';
-export { EmptyCutSheetError, punchboardLayout } from './geometry/punchboard.ts';
+export { EmptyPunchboardError } from './geometry/punchboard.ts';
 export { exportGlb } from './exportGlb.ts';
 export { loadSource, type SourceImage } from './sources.ts';
 export { ModelViewer } from './viewer.svelte.ts';

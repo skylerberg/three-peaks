@@ -65,6 +65,12 @@ const textElementSchema = type({
   hug: 'boolean',
 });
 
+const face = imageElementSchema
+  .or(rectElementSchema)
+  .or(textElementSchema)
+  .array()
+  .atMostLength(L.max_elements);
+
 export const layoutSpecSchema = type({
   dpi: `${L.dpi[0]} <= number.integer <= ${L.dpi[1]}`,
   // How many of each there may be is counted by layoutReferenceErrors: a
@@ -73,11 +79,9 @@ export const layoutSpecSchema = type({
   fonts: type({ '[string]': uuid }),
   icons: type({ '[string]': uuid }),
   fields: type({ '[string]': { type: "'text' | 'image'" } }),
-  elements: imageElementSchema
-    .or(rectElementSchema)
-    .or(textElementSchema)
-    .array()
-    .atMostLength(L.max_elements),
+  elements: face,
+  // The other side of a piece with backs of its own, or null for one face.
+  back: face.or('null'),
 });
 
 const layoutName = stringWithLength(...L.name);
@@ -98,12 +102,13 @@ export const cardLayoutSchema = type({
 
 export const cardLayoutListSchema = type({ layouts: cardLayoutSchema.array() });
 
-// Which decks hold cards drawn from this layout. Deleted decks and deleted
-// cards are left out: they are not drawn while deleted, and restoring one asks
-// for it to be drawn again.
+// Which decks hold cards drawn from this layout, and which punchboards hold
+// tokens drawn from it. Deleted ones are left out, deleted pieces too: they are
+// not drawn while deleted, and restoring one asks for it to be drawn again.
 export const cardLayoutWithDecksSchema = type({
   layout: cardLayoutSchema,
   decks: type({ id: 'string', name: 'string', card_count: 'number' }).array(),
+  punchboards: type({ id: 'string', name: 'string', token_count: 'number' }).array(),
 });
 
 export const createCardLayoutRequestSchema = type({
@@ -148,17 +153,21 @@ export const savedCardContentSchema = type({
 
 export const cardContentListSchema = type({ cards: cardContentSchema.array() });
 
-export const cardContentQuerySchema = type({ deck_id: uuid });
+// A deck's cards, or a punchboard's tokens: one of the two.
+export const cardContentQuerySchema = type({ 'deck_id?': uuid, 'component_id?': uuid });
 
 export const putCardContentRequestSchema = type({
   layout_id: uuid,
   fields: fieldValues,
 });
 
-// A new card, drawn and added to the deck as its next image.
+// A new card, drawn and added to the deck as its next image -- or a new
+// token, drawn and added to the punchboard as its next, back and all. One of
+// the two homes.
 export const createCardRequestSchema = type({
   'id?': uuid,
-  deck_id: uuid,
+  'deck_id?': uuid,
+  'component_id?': uuid,
   filename: stringWithLength(1, 255),
   layout_id: uuid,
   fields: fieldValues,
@@ -169,20 +178,23 @@ export const createdCardSchema = type({
   content: cardContentSchema,
 });
 
-// Every card of a deck drawn from a layout, or only the ones named.
+// Every card of a deck, or token of a punchboard, drawn from a layout, or
+// only the ones named by their front.
 export const renderCardsRequestSchema = type({
-  deck_id: uuid,
+  'deck_id?': uuid,
+  'component_id?': uuid,
   'file_ids?': uuid.array().atLeastLength(1),
 });
 
 export const renderCardsResultSchema = type({ requested: 'number' });
 
 // A card drawn without saving anything: a layout as it stands in an editor,
-// and one card's values for it.
+// and one card's values for it. `face` is which side, the front unless asked.
 export const previewCardRequestSchema = type({
   project_id: uuid,
   width_mm: range(card.width_mm),
   height_mm: range(card.height_mm),
   spec: layoutSpecSchema,
   fields: fieldValues,
+  'face?': "'front' | 'back'",
 });

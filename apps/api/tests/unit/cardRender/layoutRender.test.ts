@@ -129,6 +129,7 @@ function layout(elements?: LayoutSpec['elements']): CardLayout {
         rect(),
         text(),
       ],
+      back: null,
     },
   };
 }
@@ -383,6 +384,49 @@ describe('CardRenderer', () => {
       ]);
       await expect(renderer().svg(card, {})).rejects.toThrow(
         'element 1 (image): slice 4, 0, 4, 0 leaves nothing of a 8 by 8 image to stretch'
+      );
+    });
+  });
+
+  describe('the back', () => {
+    // A back of its own: the frame again, and a band the front does not have.
+    const twoFaced = (): CardLayout => {
+      const card = layout();
+      return {
+        ...card,
+        spec: {
+          ...card.spec,
+          back: [image(), rect({ box: box(0, 40, 63, 8), fill: '#ff00ff', when: 'rules' })],
+        },
+      };
+    };
+
+    it('draws its own elements, and only the files they name', async () => {
+      fetched = [];
+      const svg = await renderer().svg(twoFaced(), { rules: 'Hi', art: ids.art }, 'back');
+      const r = rasterise(svg, pixelSize(63, DPI));
+      expect(at(r, 2, 2)).toBe('#ff0000');
+      expect(at(r, 30, 44)).toBe('#ff00ff');
+      // The art is the front's: nothing on the back draws it.
+      expect(at(r, 20, 20)).toBe('#ff0000');
+      // Every element of the face, by the same rules as the front's.
+      const blank = rasterise(
+        await renderer().svg(twoFaced(), { rules: '', art: ids.art }, 'back'),
+        pixelSize(63, DPI)
+      );
+      expect(at(blank, 30, 44)).toBe('#ff0000');
+    });
+
+    it('leaves the front as it was', async () => {
+      fetched = [];
+      const fields = { rules: 'Hi', art: ids.art };
+      expect(await renderer().svg(twoFaced(), fields)).toBe(await renderer().svg(layout(), fields));
+    });
+
+    it('refuses the back of a layout that draws one face', async () => {
+      fetched = [];
+      await expect(renderer().svg(layout(), { rules: '', art: '' }, 'back')).rejects.toThrow(
+        new CardRenderError('Hero draws no back')
       );
     });
   });

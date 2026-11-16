@@ -123,6 +123,15 @@ export interface ComponentModel {
   updated_by: string;
 }
 
+export interface ComponentToken {
+  back_file_id: string | null;
+  component_id: string;
+  file_id: string;
+  id: string;
+  position: number;
+  quantity: Generated<number>;
+}
+
 export interface Deck {
   back_file_id: string | null;
   card_height_mm: Numeric;
@@ -309,6 +318,7 @@ export interface DB {
   card_layout: CardLayout;
   component: Component;
   component_model: ComponentModel;
+  component_token: ComponentToken;
   deck: Deck;
   deck_card: DeckCard;
   deck_import: DeckImport;

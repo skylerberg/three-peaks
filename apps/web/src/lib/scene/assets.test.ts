@@ -25,10 +25,10 @@ const image = (id: string) => ({ file_id: id, content_type: 'image/png' });
 // decide whether two picks are the same file.
 const key = (
   settings: ModelSettings,
-  front: ReturnType<typeof image>,
+  front: ReturnType<typeof image> | null,
   back: ReturnType<typeof image> | null,
   extra: Partial<Omit<SceneComponentSelection, 'copies'>> = {}
-) => assetKey({ label: 'x', settings, front, back, cut: null, part: null, ...extra });
+) => assetKey({ label: 'x', settings, front, back, tokens: null, part: null, ...extra });
 
 const card = (patch: Partial<typeof DEFAULT_CARD_SETTINGS> = {}): ModelSettings => ({
   ...DEFAULT_CARD_SETTINGS,
@@ -85,20 +85,35 @@ describe('assetKey', () => {
     expect(key(card(), image('a'), image('one'))).not.toBe(key(card(), image('a'), image('two')));
   });
 
-  // A punchboard is several files out of one component, and the part is the
-  // only thing telling two of them apart.
-  it('separates two parts of one punchboard', () => {
+  // A punchboard is several files out of one component: a sheet built from
+  // every token it cuts, and each token on its own.
+  it('separates a punchboard’s sheet from one of its tokens', () => {
     const settings = { ...DEFAULT_PUNCHBOARD_SETTINGS } as ModelSettings;
-    const cut = image('die-line');
-    expect(key(settings, image('sheet'), null, { cut, part: 'Sheet' })).not.toBe(
-      key(settings, image('sheet'), null, { cut, part: 'Token.001' })
+    const tokens = [{ front: image('a'), back: null, quantity: 1 }];
+    expect(key(settings, null, null, { tokens, part: 'sheet' })).not.toBe(
+      key(settings, image('a'), null, { part: 'token' })
     );
   });
 
-  it('separates one component cut by two different die lines', () => {
+  it('separates two sheets cutting different tokens, or different copies of one', () => {
     const settings = { ...DEFAULT_PUNCHBOARD_SETTINGS } as ModelSettings;
-    expect(key(settings, image('sheet'), null, { cut: image('one'), part: 'Sheet' })).not.toBe(
-      key(settings, image('sheet'), null, { cut: image('two'), part: 'Sheet' })
+    const sheet = (front: string, quantity: number) =>
+      key(settings, null, null, {
+        tokens: [{ front: image(front), back: image('back'), quantity }],
+        part: 'sheet',
+      });
+    expect(sheet('a', 1)).not.toBe(sheet('b', 1));
+    expect(sheet('a', 1)).not.toBe(sheet('a', 2));
+    expect(sheet('a', 2)).toBe(sheet('a', 2));
+  });
+
+  it('makes every copy of one token one file', () => {
+    const settings = { ...DEFAULT_PUNCHBOARD_SETTINGS } as ModelSettings;
+    expect(key(settings, image('a'), image('b'), { part: 'token' })).toBe(
+      key(settings, image('a'), image('b'), { part: 'token' })
+    );
+    expect(key(settings, image('a'), image('b'), { part: 'token' })).not.toBe(
+      key(settings, image('a'), null, { part: 'token' })
     );
   });
 });
@@ -127,11 +142,15 @@ describe('componentFootprint', () => {
       depth_mm: 500,
       height_mm: 2,
     });
-    // The sheet. A token is smaller, and only the die line knows by how much,
-    // so it carries its own measurement rather than being sized from here.
+    // The sheet, and a token the size the sheet cuts it.
     expect(componentFootprint(DEFAULT_PUNCHBOARD_SETTINGS)).toEqual({
       width_mm: 280,
       depth_mm: 210,
+      height_mm: 2,
+    });
+    expect(componentFootprint(DEFAULT_PUNCHBOARD_SETTINGS, 'token')).toEqual({
+      width_mm: 25,
+      depth_mm: 25,
       height_mm: 2,
     });
   });
@@ -174,7 +193,7 @@ describe('planScene', () => {
     // stands on the table is geometry built and bytes shipped for no piece.
     expect(plan.instances).toHaveLength(1);
     expect(plan.assets).toHaveLength(1);
-    expect(plan.builds.map((build) => build.front.file_id)).toEqual(['b']);
+    expect(plan.builds.map((build) => build.front?.file_id)).toEqual(['b']);
   });
 
   it('gives a deck holding no copies of anything no group to aim a shot at', () => {
@@ -268,7 +287,7 @@ describe('planScene', () => {
           label: 'Box',
           front: image('wrap'),
           back: null,
-          cut: null,
+          tokens: null,
           part: null,
           settings: { ...DEFAULT_BOX_SETTINGS, width_mm: 120, height_mm: 90, depth_mm: 60 },
           copies: 1,
@@ -291,7 +310,7 @@ describe('planScene', () => {
           label: 'Board',
           front: image('board'),
           back: null,
-          cut: null,
+          tokens: null,
           part: null,
           settings: DEFAULT_BOARD_SETTINGS,
           copies: 1,
@@ -300,7 +319,7 @@ describe('planScene', () => {
           label: 'Token',
           front: image('token'),
           back: null,
-          cut: null,
+          tokens: null,
           part: null,
           settings: DEFAULT_WOOD_SETTINGS,
           copies: 3,
@@ -326,7 +345,7 @@ describe('planScene', () => {
           label: 'Board',
           front: image('board'),
           back: null,
-          cut: null,
+          tokens: null,
           part: null,
           settings: DEFAULT_BOARD_SETTINGS,
           copies: 1,

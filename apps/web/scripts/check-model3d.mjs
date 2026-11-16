@@ -123,20 +123,10 @@ function positionExtent(json) {
 // Default settings, so what each one measures is DEFAULT_BOX_SETTINGS and
 // DEFAULT_BOARD_SETTINGS read in metres: a 295 mm box, and one panel of a
 // bifold 500 mm board, which is 500 mm on its uncut side.
-// A die line with two closed shapes on a 100x50 sheet: one square and one
-// circle, so the tracing-free path is exercised on a curve as well as on
-// straight edges. The viewBox is what the sheet's millimetres are stretched
-// over, and both shapes sit well inside it.
-const CUT_SHEET = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">
-  <rect x="10" y="10" width="30" height="30" fill="#000" />
-  <circle cx="75" cy="25" r="15" fill="#000" />
-</svg>
-`;
-
 // The kinds the save path above does not reach. A box is one mesh over six
 // material slots, a folded board is a mesh per panel, and a punchboard is the
-// sheet plus one mesh per token the die line cuts -- three shapes the exporter
-// is otherwise never handed. Read off the download rather than saved, because a
+// sheet plus one mesh per token it cuts -- three shapes the exporter is
+// otherwise never handed. Read off the download rather than saved, because a
 // second file of the same name is a different question from whether one exports
 // at all.
 const BUILT_KINDS = [
@@ -163,10 +153,14 @@ const BUILT_KINDS = [
     singular: 'punchboard',
     name: 'Probe punchboard',
     settles: 'Cut edge colour',
-    cut: CUT_SHEET,
-    // The sheet and the two tokens the die line cuts out of it.
+    // Two tokens rather than artwork, each printed on its front and left
+    // unprinted behind.
+    tokens: 2,
+    // The sheet and the two tokens it cuts, each a mesh of its own.
     meshes: 3,
-    materials: 3,
+    // The board both sides of the sheet and behind each token, the cut edge,
+    // and each token's printed front.
+    materials: 4,
     across: 0.28,
   },
 ];
@@ -190,15 +184,19 @@ async function makeComponent(browser, kind, files) {
   await browser.click('button[type="submit"]');
   await browser.page.waitForSelector(`h1:has-text("${kind.name}")`, { timeout: 15_000 });
 
-  await browser.page.setInputFiles('label:has-text("Artwork") input[type="file"]', files.pngPath);
-  if (kind.cut) {
-    const cutPath = join(files.dir, 'cut.svg');
-    writeFileSync(cutPath, kind.cut);
-    await browser.page.waitForSelector('label:has-text("Cut sheet") input[type="file"]', {
+  if (kind.tokens) {
+    const paths = Array.from({ length: kind.tokens }, (_, index) => {
+      const path = join(files.dir, `token-${String(index + 1)}.png`);
+      writeFileSync(path, discPng());
+      return path;
+    });
+    await browser.page.waitForSelector('label:has-text("Upload tokens") input[type="file"]', {
       timeout: 15_000,
     });
-    await browser.page.setInputFiles('label:has-text("Cut sheet") input[type="file"]', cutPath);
+    await browser.page.setInputFiles('label:has-text("Upload tokens") input[type="file"]', paths);
+    return;
   }
+  await browser.page.setInputFiles('label:has-text("Artwork") input[type="file"]', files.pngPath);
 }
 
 // The studio hands the browser bytes it already holds, so this is the download

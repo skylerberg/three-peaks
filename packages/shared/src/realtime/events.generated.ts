@@ -91,12 +91,12 @@ export interface components {
             updated_at: string;
             uploaded_by: string;
           };
-          /** @enum {unknown} */
-          role: 'artwork' | 'cut';
+          /** @constant */
+          role: 'artwork';
         }[];
         id: string;
         kind: string;
-        missing_roles: ('artwork' | 'cut')[];
+        missing_roles: 'artwork'[];
         name: string;
         position: number;
         project_id: string;
@@ -107,10 +107,15 @@ export interface components {
               height_mm: number;
               /** @constant */
               kind: 'punchboard';
+              margin_mm: number;
               seed: number;
               /** @enum {unknown} */
               sheet_state: 'intact' | 'punched';
               thickness_mm: number;
+              token_corner_radius_mm: number;
+              token_gap_mm: number;
+              token_height_mm: number;
+              token_width_mm: number;
               width_mm: number;
             }
           | {
@@ -150,6 +155,50 @@ export interface components {
               thickness_mm: number;
               width_mm: number;
             };
+        tokens: {
+          back_file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          } | null;
+          back_file_id: string | null;
+          file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          };
+          file_id: string;
+          position: number;
+          quantity: number;
+        }[];
         updated_at: string;
       };
     };
@@ -182,12 +231,12 @@ export interface components {
             updated_at: string;
             uploaded_by: string;
           };
-          /** @enum {unknown} */
-          role: 'artwork' | 'cut';
+          /** @constant */
+          role: 'artwork';
         }[];
         id: string;
         kind: string;
-        missing_roles: ('artwork' | 'cut')[];
+        missing_roles: 'artwork'[];
         name: string;
         position: number;
         project_id: string;
@@ -199,10 +248,15 @@ export interface components {
               height_mm: number;
               /** @constant */
               kind: 'punchboard';
+              margin_mm: number;
               seed: number;
               /** @enum {unknown} */
               sheet_state: 'intact' | 'punched';
               thickness_mm: number;
+              token_corner_radius_mm: number;
+              token_gap_mm: number;
+              token_height_mm: number;
+              token_width_mm: number;
               width_mm: number;
             }
           | {
@@ -242,6 +296,50 @@ export interface components {
               thickness_mm: number;
               width_mm: number;
             };
+        tokens: {
+          back_file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          } | null;
+          back_file_id: string | null;
+          file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          };
+          file_id: string;
+          position: number;
+          quantity: number;
+        }[];
         updated_at: string;
       };
     };
@@ -275,12 +373,12 @@ export interface components {
               updated_at: string;
               uploaded_by: string;
             };
-            /** @enum {unknown} */
-            role: 'artwork' | 'cut';
+            /** @constant */
+            role: 'artwork';
           }[];
           id: string;
           kind: string;
-          missing_roles: ('artwork' | 'cut')[];
+          missing_roles: 'artwork'[];
           name: string;
           position: number;
           project_id: string;
@@ -291,10 +389,15 @@ export interface components {
                 height_mm: number;
                 /** @constant */
                 kind: 'punchboard';
+                margin_mm: number;
                 seed: number;
                 /** @enum {unknown} */
                 sheet_state: 'intact' | 'punched';
                 thickness_mm: number;
+                token_corner_radius_mm: number;
+                token_gap_mm: number;
+                token_height_mm: number;
+                token_width_mm: number;
                 width_mm: number;
               }
             | {
@@ -334,6 +437,50 @@ export interface components {
                 thickness_mm: number;
                 width_mm: number;
               };
+          tokens: {
+            back_file: {
+              byte_size: number;
+              checksum: string | null;
+              component_id: string | null;
+              component_role: string | null;
+              content_type: string;
+              created_at: string;
+              deck_id: string | null;
+              deleted_at: string | null;
+              filename: string;
+              folder_id: string | null;
+              id: string;
+              image_height: number | null;
+              image_width: number | null;
+              name_locked: boolean;
+              project_id: string;
+              updated_at: string;
+              uploaded_by: string;
+            } | null;
+            back_file_id: string | null;
+            file: {
+              byte_size: number;
+              checksum: string | null;
+              component_id: string | null;
+              component_role: string | null;
+              content_type: string;
+              created_at: string;
+              deck_id: string | null;
+              deleted_at: string | null;
+              filename: string;
+              folder_id: string | null;
+              id: string;
+              image_height: number | null;
+              image_width: number | null;
+              name_locked: boolean;
+              project_id: string;
+              updated_at: string;
+              uploaded_by: string;
+            };
+            file_id: string;
+            position: number;
+            quantity: number;
+          }[];
           updated_at: string;
         }[];
         kind: string;
@@ -368,12 +515,12 @@ export interface components {
             updated_at: string;
             uploaded_by: string;
           };
-          /** @enum {unknown} */
-          role: 'artwork' | 'cut';
+          /** @constant */
+          role: 'artwork';
         }[];
         id: string;
         kind: string;
-        missing_roles: ('artwork' | 'cut')[];
+        missing_roles: 'artwork'[];
         name: string;
         position: number;
         project_id: string;
@@ -384,10 +531,15 @@ export interface components {
               height_mm: number;
               /** @constant */
               kind: 'punchboard';
+              margin_mm: number;
               seed: number;
               /** @enum {unknown} */
               sheet_state: 'intact' | 'punched';
               thickness_mm: number;
+              token_corner_radius_mm: number;
+              token_gap_mm: number;
+              token_height_mm: number;
+              token_width_mm: number;
               width_mm: number;
             }
           | {
@@ -427,6 +579,50 @@ export interface components {
               thickness_mm: number;
               width_mm: number;
             };
+        tokens: {
+          back_file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          } | null;
+          back_file_id: string | null;
+          file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          };
+          file_id: string;
+          position: number;
+          quantity: number;
+        }[];
         updated_at: string;
       };
     };
@@ -805,10 +1001,15 @@ export interface components {
               height_mm: number;
               /** @constant */
               kind: 'punchboard';
+              margin_mm: number;
               seed: number;
               /** @enum {unknown} */
               sheet_state: 'intact' | 'punched';
               thickness_mm: number;
+              token_corner_radius_mm: number;
+              token_gap_mm: number;
+              token_height_mm: number;
+              token_width_mm: number;
               width_mm: number;
             }
           | {

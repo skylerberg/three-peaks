@@ -30,7 +30,7 @@ export const guards = [
     name: 'a card drawn again that came out the same is reported unchanged',
     root: true,
     file: 'apps/cli/src/layouts.ts',
-    find: "outcome: checksum === target.card.file.checksum ? 'unchanged' : 'versioned',",
+    find: "outcome: now.faces === faces(target.piece) ? 'unchanged' : 'versioned',",
     replace: "outcome: 'versioned',",
     tests: ['../cli/tests/e2e/layout.test.ts'],
     testName: 'says which cards a new version of their art is waiting on',
@@ -81,7 +81,7 @@ export const guards = [
     // prints at the wrong scale; this is the first place that can say so.
     name: "card content is refused for a layout of a different size from the deck's",
     file: 'src/services/cardImages.ts',
-    find: '  if (layout.width_mm !== deck.width_mm || layout.height_mm !== deck.height_mm) {',
+    find: '  if (layout.width_mm !== size.width_mm || layout.height_mm !== size.height_mm) {',
     replace: '  if (false) {',
     tests: ['tests/e2e/cardLayouts.test.ts'],
     testName: 'refuses a layout drawn on a card of another size',
@@ -121,11 +121,32 @@ export const guards = [
     // own check would otherwise be the first to say so, card by card.
     name: 'a layout whose edges are pinned in a circle is refused',
     file: 'src/layouts.ts',
-    find: '  if (cycle !== null)\n    errors.push(',
-    replace: '  if (false)\n    errors.push(',
+    find: '  if (cycle !== null) {\n    errors.push(',
+    replace: '  if (false) {\n    errors.push(',
     tests: ['src/layouts.test.ts'],
     testName: 'names the elements going round a circle of pins',
     runner: 'shared',
+  },
+  {
+    // A deck's cards share the deck's back. A layout drawing one a back of its
+    // own would draw it into nothing a card is printed with.
+    name: 'a layout with a back draws no deck card',
+    file: 'src/services/cardImages.ts',
+    find: "  if (piece.kind === 'card' && faceElements(layout.spec, 'back') !== null) {",
+    replace: '  if (false) {',
+    tests: ['tests/e2e/punchboardTokens.test.ts'],
+    testName: 'keeps a back off a deck’s cards',
+  },
+  {
+    // The back a token's layout draws is drawn into nothing else: an icon or
+    // a frame naming it would be drawn again every time the token was.
+    name: "a token's drawn back counts as drawn from a layout",
+    file: 'src/services/cardLayouts.ts',
+    find: "        .whereRef('component_token.back_file_id', '=', 'file.id')\n        .where(drawsBack)",
+    replace:
+      "        .whereRef('component_token.back_file_id', '=', 'file.id')\n        .where(sql<boolean>`false`)",
+    tests: ['tests/e2e/punchboardTokens.test.ts'],
+    testName: 'will not draw a back a layout draws into another card',
   },
   {
     // `spec.fields.toString` is a function, not undefined, so a card could

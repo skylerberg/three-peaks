@@ -155,8 +155,16 @@
     }
   }
 
-  function artworkOf(component: ApiComponents['schemas']['Component']) {
+  // What a section draws for one: its artwork, or a punchboard's first token.
+  function pictureOf(component: ApiComponents['schemas']['Component']) {
+    if (component.kind === 'punchboard') {
+      return component.tokens.find((token) => token.file.deleted_at === null)?.file ?? null;
+    }
     return component.files.find((entry) => entry.role === 'artwork')?.file ?? null;
+  }
+
+  function tokenCount(component: ApiComponents['schemas']['Component']): number {
+    return component.tokens.filter((token) => token.file.deleted_at === null).length;
   }
 </script>
 
@@ -196,8 +204,9 @@
       <Spinner label="Loading {info.section.toLowerCase()}" />
     {:else if list.length === 0}
       <p class="rounded-md border border-edge p-4 text-sm text-muted">
-        No {info.section.toLowerCase()} yet. Each one is named first, and its artwork is uploaded into
-        it afterwards.
+        No {info.section.toLowerCase()} yet. Each one is named first, and its {kind === 'punchboard'
+          ? 'tokens are'
+          : 'artwork is'} uploaded into it afterwards.
       </p>
     {:else}
       <ul
@@ -215,7 +224,7 @@
         onfinalize={handleFinalize}
       >
         {#each localList as component (component.id)}
-          {@const artwork = artworkOf(component)}
+          {@const artwork = pictureOf(component)}
           {@const inert = isDragPlaceholder(component.id)}
           <li
             animate:flip={{ duration: flipDuration() }}
@@ -230,11 +239,19 @@
                 {#if artwork}
                   <Thumbnail fileId={artwork.id} alt={component.name} />
                 {:else}
-                  <span class="text-xs text-muted">No artwork yet</span>
+                  <span class="text-xs text-muted">
+                    {kind === 'punchboard' ? 'No tokens yet' : 'No artwork yet'}
+                  </span>
                 {/if}
               </div>
               <span class="truncate text-sm font-medium">{component.name}</span>
             </a>
+            {#if kind === 'punchboard' && tokenCount(component) > 0}
+              <p class="text-xs text-muted">
+                {tokenCount(component)}
+                {tokenCount(component) === 1 ? 'token' : 'tokens'}
+              </p>
+            {/if}
             {#if component.missing_roles.length > 0}
               <p class="text-xs text-warning">
                 Waiting for {component.missing_roles.join(' and ')}

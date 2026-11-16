@@ -14,13 +14,15 @@ interface PendingUpload {
 }
 
 // Where an upload lands. A folder id (null for the Assets root), a deck, or a
-// component -- and `role` says which slot it fills: a deck's back rather than
-// one of its cards, a punchboard's cut sheet rather than its artwork.
+// component -- and `role` says what it becomes there: a deck's back rather
+// than one of its cards, or with `back_of` the back of a punchboard's token
+// rather than a token of its own.
 interface UploadTarget {
   folder_id?: string | null;
   deck_id?: string;
   component_id?: string;
-  role?: string;
+  role?: 'card' | 'back' | 'artwork' | 'token';
+  back_of?: string;
 }
 
 class FileStore {
@@ -230,7 +232,7 @@ class FileStore {
           folder_id: to.folder_id ?? null,
           ...(to.deck_id ? { deck_id: to.deck_id } : {}),
           ...(to.component_id ? { component_id: to.component_id } : {}),
-          ...(to.role ? { role: to.role as 'card' | 'back' | 'artwork' | 'cut' } : {}),
+          ...(to.role ? { role: to.role } : {}),
         },
       })
     );

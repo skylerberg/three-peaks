@@ -1,13 +1,14 @@
 import { Option, type Command } from 'commander';
 import { basename } from 'node:path';
 import {
-  COMPONENT_FILE_ROLES,
   COMPONENT_KINDS,
   COMPONENT_KIND_INFO,
   defaultSettingsFor,
   formatBytes,
-  type ComponentFileRole,
+  isLiveCard,
+  planPunchboard,
   type ComponentKind,
+  type ComponentSlotRole,
 } from '@three-peaks/shared';
 import { collect, group, inProject, leaf, optList, optString, withCtx, type Opts } from '../kit.ts';
 import { ApiError, CliError, EXIT, assertDone, assertOk } from '../errors.ts';
@@ -28,96 +29,36 @@ import { confirmOrAbort } from '../prompt.ts';
 import { day, shortId } from '../output.ts';
 import { placementFromOpts, reorder, sameOrder } from '../placement.ts';
 import { restoreDeleted } from '../tombstones.ts';
+import { fetchComponent, kindOf, label, locate, restoreHint, singular } from '../components.ts';
+import { registerTokens, tokenLines } from './tokens.ts';
 import type { CliDeps, RuntimeContext } from '../context.ts';
 
 type ComponentSettings = Component['settings'];
 
-function kindOf(component: Component): ComponentKind {
-  return component.kind as ComponentKind;
-}
-
-function singular(component: Component): string {
-  return COMPONENT_KIND_INFO[kindOf(component)].singular;
-}
-
-function label(component: Component): string {
-  return `${singular(component)} "${component.name}"`;
-}
-
-async function fetchComponent(ctx: RuntimeContext, componentId: string): Promise<Component> {
-  return assertOk(
-    await ctx.api.GET('/api/components/{componentId}', { params: { path: { componentId } } })
-  );
-}
-
-function restoreHint(component: Component): string {
-  return `threepeaks component restore ${component.id}`;
-}
-
-// The live listing is where a name is looked up, because two components can
-// share a name when one of them is deleted. `deleted` says whether a tombstone
-// may answer instead: reading one, saving its settings and purging it are all
-// allowed, and anything that changes its contents is not.
-async function locate(
-  ctx: RuntimeContext,
-  opts: Opts,
-  ref: string,
-  deleted: 'allow' | 'refuse'
-): Promise<Component> {
-  let found: Component | null;
-  if (UUID_RE.test(ref)) {
-    found = await fetchComponent(ctx, ref);
-  } else {
-    const project = await projectFromOpts(ctx, opts);
-    found = matchRefOrNull(
-      ref,
-      await listComponents(ctx, project.id),
-      'component',
-      (c) => c.id,
-      (c) => c.name
-    );
-    if (found === null) {
-      const tombstone = matchRefOrNull(
-        ref,
-        (await listDeleted(ctx, project.id)).filter((entry) => entry.kind === 'component'),
-        'deleted component',
-        (e) => e.id,
-        (e) => e.name
-      );
-      if (tombstone === null) {
-        throw new CliError(`No component matching "${ref}" in "${project.name}"`, EXIT.notFound);
-      }
-      found = await fetchComponent(ctx, tombstone.id);
-    }
-  }
-  if (deleted === 'refuse' && found.deleted_at !== null) {
+// The one image a kind is made from. A punchboard has none: it holds tokens,
+// which `component tokens` uploads.
+function slotOf(component: Component): ComponentSlotRole {
+  const role = COMPONENT_KIND_INFO[kindOf(component)].roles[0];
+  if (role === undefined) {
     throw new CliError(
-      `${label(found)} is deleted; restore it first with: ${restoreHint(found)}`,
-      EXIT.conflict
-    );
-  }
-  return found;
-}
-
-function roleArgument(component: Component, requested: string | undefined): ComponentFileRole {
-  const roles = COMPONENT_KIND_INFO[kindOf(component)].roles;
-  const role = (requested ?? component.missing_roles[0] ?? 'artwork') as ComponentFileRole;
-  if (!roles.includes(role)) {
-    throw new CliError(
-      `A ${singular(component)} has no ${role} file; it takes: ${roles.join(', ')}`,
+      `A ${singular(component)} has no artwork of its own; its tokens are uploaded with: threepeaks component tokens upload ${shortId(component.id)} <paths...>`,
       EXIT.usage
     );
   }
   return role;
 }
 
-function fileFor(component: Component, role: ComponentFileRole): FileRow | null {
+function fileFor(component: Component, role: ComponentSlotRole): FileRow | null {
   return component.files.find((entry) => entry.role === role)?.file ?? null;
 }
 
 // One cell per role the kind takes, so a component still waiting for its
-// artwork reads as waiting rather than as a blank.
+// artwork reads as waiting rather than as a blank; a punchboard's tokens.
 function filesSummary(component: Component): string {
+  if (component.kind === 'punchboard') {
+    const live = component.tokens.filter(isLiveCard).length;
+    return `${String(live)} ${live === 1 ? 'token' : 'tokens'}`;
+  }
   return COMPONENT_KIND_INFO[kindOf(component)].roles
     .map((role) => {
       const file = fileFor(component, role);
@@ -156,6 +97,21 @@ function printComponent(ctx: RuntimeContext, component: Component): void {
         : `${role.padEnd(8)} ${file.filename}  ${formatBytes(file.byte_size)}  ${shortId(file.id)}` +
             (file.deleted_at === null ? '' : '  (deleted)')
     );
+  }
+  if (component.settings.kind === 'punchboard') {
+    const live = component.tokens.filter(isLiveCard);
+    const plan = planPunchboard(
+      component.settings,
+      live.map((token) => token.quantity)
+    );
+    const cut = plan.slots.length;
+    ctx.out.line(
+      `sheet    ${String(cut)} of ${String(plan.capacity)} places cut` +
+        (plan.overflow > 0 ? ` — ${String(plan.overflow)} more do not fit` : '')
+    );
+    ctx.out.line('tokens');
+    if (component.tokens.length === 0) ctx.out.line('  none yet');
+    for (const line of tokenLines(component.tokens)) ctx.out.line(`  ${line}`);
   }
   ctx.out.line('settings');
   for (const line of formatSettings(component.settings)) {
@@ -205,7 +161,13 @@ export function registerComponent(program: Command, deps: CliDeps): void {
           ctx.out.data(kinds, () =>
             ctx.out.table(
               ['KIND', 'SECTION', 'FILES'],
-              kinds.map((row) => [row.kind, row.section, row.roles.join(', ')])
+              kinds.map((row) => [
+                row.kind,
+                row.section,
+                row.kind === 'punchboard'
+                  ? 'tokens, each a front and a back'
+                  : row.roles.join(', '),
+              ])
             )
           );
         })
@@ -290,7 +252,11 @@ export function registerComponent(program: Command, deps: CliDeps): void {
         );
         ctx.out.data(created, () => {
           ctx.out.line(`Created ${label(created)} (${shortId(created.id)})`);
-          if (created.missing_roles.length > 0) {
+          if (created.kind === 'punchboard') {
+            ctx.out.line(
+              `Upload its tokens with: threepeaks component tokens upload ${shortId(created.id)} <paths...>`
+            );
+          } else if (created.missing_roles.length > 0) {
             ctx.out.line(
               `Upload its ${created.missing_roles.join(' and ')} with: threepeaks component upload ${shortId(created.id)} <path>`
             );
@@ -369,19 +335,13 @@ export function registerComponent(program: Command, deps: CliDeps): void {
   component.addCommand(
     inProject(
       leaf('upload')
-        .description('Upload a component’s artwork or cut sheet; a filled slot gains a new version')
+        .description('Upload a component’s artwork; a filled slot gains a new version')
         .argument('<component>', 'component id or name')
         .argument('<path>', 'the local file')
-        .addOption(
-          new Option(
-            '--role <role>',
-            'which file this is (default: the first one it is missing, else artwork)'
-          ).choices([...COMPONENT_FILE_ROLES])
-        )
     ).action(
       withCtx(deps, async (ctx, opts, ref, path) => {
         const found = await locate(ctx, opts, ref, 'refuse');
-        const role = roleArgument(found, optString(opts, 'role'));
+        const role = slotOf(found);
         const slot = fileFor(found, role);
 
         if (slot === null) {
@@ -446,19 +406,14 @@ export function registerComponent(program: Command, deps: CliDeps): void {
   component.addCommand(
     inProject(
       leaf('download')
-        .description('Download a component’s artwork or cut sheet')
+        .description('Download a component’s artwork')
         .argument('<component>', 'component id or name; a deleted one is found too')
-        .addOption(
-          new Option('--role <role>', 'which file (default: artwork)').choices([
-            ...COMPONENT_FILE_ROLES,
-          ])
-        )
         .option('-o, --output <path>', 'where to write it: a file, a directory, or "-" for stdout')
         .option('--force', 'overwrite a file that already exists')
     ).action(
       withCtx(deps, async (ctx, opts, ref) => {
         const found = await locate(ctx, opts, ref, 'allow');
-        const role = roleArgument(found, optString(opts, 'role') ?? 'artwork');
+        const role = slotOf(found);
         const file = fileFor(found, role);
         if (file === null) {
           throw new CliError(`${label(found)} has no ${role} yet`, EXIT.notFound);
@@ -633,5 +588,6 @@ export function registerComponent(program: Command, deps: CliDeps): void {
     )
   );
 
+  registerTokens(component, deps);
   program.addCommand(component);
 }

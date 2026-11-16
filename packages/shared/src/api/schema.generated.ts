@@ -670,6 +670,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/components/{componentId}/tokens': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Replace a punchboard’s tokens
+     * @description Editors only. The whole ordered list in one request, the way a deck’s cards are replaced: position is the array index, so reordering, changing a count and changing a back are one call. Every front and back has to be an image the punchboard holds, and every live image it holds has to be named as one or the other. A back is null for unprinted board, the front’s own id for the same image on both sides, or an image that is no token’s front; a back a layout draws is its token’s and nobody else’s.
+     */
+    put: operations['putApiComponentsByComponentIdTokens'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/models/{fileId}': {
     parameters: {
       query?: never;
@@ -1042,7 +1062,7 @@ export interface paths {
     put?: never;
     /**
      * Draw a card without saving anything
-     * @description Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG. A card that cannot be drawn is a 422 saying why.
+     * @description Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG -- its front, or with `face` its back. A card that cannot be drawn is a 422 saying why, and so is the back of a layout that has none.
      */
     post: operations['postApiLayoutsPreview'];
     delete?: never;
@@ -1059,8 +1079,8 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Get a card layout and the decks drawn from it
-     * @description The decks are the live ones holding at least one live card whose content names this layout, with how many such cards each holds -- exactly what has to be re-rendered after the layout changes.
+     * Get a card layout and the decks and punchboards drawn from it
+     * @description The decks are the live ones holding at least one live card whose content names this layout, with how many such cards each holds, and the punchboards the same for their tokens -- exactly what has to be re-rendered after the layout changes.
      */
     get: operations['getApiLayoutsByLayoutId'];
     /**
@@ -1087,14 +1107,14 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List the content of a deck's cards
-     * @description Every card in the deck that is drawn from a layout, deleted ones included -- a restore brings back the content with the image. Cards that are only artwork have no row.
+     * List the content of a deck's cards, or a punchboard's tokens
+     * @description Every card in the deck, or token of the punchboard, that is drawn from a layout, deleted ones included -- a restore brings back the content with the image. Pieces that are only artwork have no row.
      */
     get: operations['getApiCardContent'];
     put?: never;
     /**
      * Create a card drawn from a layout
-     * @description Editors only. Draws the card and adds the image to the deck as its next card, the way an upload into the deck would, with its content saved beside it. Validated as a save is; the name has to be free in the deck, and the deck must have room.
+     * @description Editors only. Draws the card and adds the image to the deck as its next card, the way an upload into the deck would, with its content saved beside it -- or, given a punchboard, adds it as the punchboard's next token, with the back its layout draws as a new image of its own. Validated as a save is; the name has to be free there, and there must be room.
      */
     post: operations['postApiCardContent'];
     delete?: never;
@@ -1113,7 +1133,7 @@ export interface paths {
     get?: never;
     /**
      * Save the content of one card
-     * @description Editors only, and an upsert: one row per card. The file must be one of a deck's images, the layout one of the same project's and the size of the deck, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project, none of them itself a card drawn from a layout. The card is drawn before anything is saved: one that cannot be drawn is refused with 422, and one whose image comes out different gets it as a new version. Allowed on a deleted card, like its 3D settings, which is drawn once it is restored.
+     * @description Editors only, and an upsert: one row per card. The file must be one of a deck's cards or the front of a punchboard's token, the layout one of the same project's and the size of the deck's cards or the punchboard's tokens, and the fields the layout's own -- text whose icons the layout declares, and images that are live pictures in the project, none of them itself a card drawn from a layout. A layout with a back draws only a token, whose back it draws into a back of the token's own, made if it has none. The card is drawn before anything is saved: one that cannot be drawn is refused with 422, and one whose image comes out different gets it as a new version. Allowed on a deleted card, like its 3D settings, which is drawn once it is restored.
      */
     put: operations['putApiCardContentByFileId'];
     post?: never;
@@ -1137,8 +1157,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Ask for a deck's laid-out cards to be drawn again
-     * @description Editors only. Every card of the deck drawn from a layout, or only the ones named, is drawn again in the background, and gets a new version where its image comes out different. The API asks for this itself whenever a layout or a file a card draws changes; this is for anything it cannot see, such as a new release of the renderer. Each card's content says when it is done.
+     * Ask for a deck's laid-out cards, or a punchboard's tokens, to be drawn again
+     * @description Editors only. Every card of the deck, or token of the punchboard, drawn from a layout, or only the ones named, is drawn again in the background, and gets a new version where its image comes out different. The API asks for this itself whenever a layout or a file a card draws changes; this is for anything it cannot see, such as a new release of the renderer. Each card's content says when it is done.
      */
     post: operations['postApiCardContentRender'];
     delete?: never;
@@ -1326,6 +1346,174 @@ export interface components {
       name: string;
       project_id: string;
       spec: {
+        back:
+          | (
+              | {
+                  /** @enum {unknown} */
+                  align: 'center' | 'left' | 'right';
+                  bold_font: string | null;
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  color: string;
+                  font: string;
+                  hug: boolean;
+                  id: string | null;
+                  line_height: number;
+                  min_size_pt: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  size_pt: number;
+                  text: string;
+                  /** @constant */
+                  type: 'text';
+                  /** @enum {unknown} */
+                  valign: 'bottom' | 'middle' | 'top';
+                  when: string | null;
+                }
+              | {
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  fill: string | null;
+                  id: string | null;
+                  opacity: number;
+                  radius_mm: number;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  stroke: string | null;
+                  stroke_mm: number;
+                  /** @constant */
+                  type: 'rect';
+                  when: string | null;
+                }
+              | {
+                  box: {
+                    bottom:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    left:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    right:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                    top:
+                      | number
+                      | {
+                          /** @enum {unknown} */
+                          edge: 'bottom' | 'left' | 'right' | 'top';
+                          element: string;
+                          offset_mm: number;
+                        };
+                  };
+                  /** @enum {unknown} */
+                  fit: 'contain' | 'cover' | 'fill';
+                  id: string | null;
+                  /** @enum {unknown} */
+                  rotate: 0 | 180 | 270 | 90;
+                  slice: [number, number, number, number] | null;
+                  source:
+                    | {
+                        field: string;
+                        /** @constant */
+                        from: 'field';
+                      }
+                    | {
+                        /**
+                         * Format: uuid
+                         * @description a UUID
+                         */
+                        file_id:
+                          | string
+                          | '00000000-0000-0000-0000-000000000000'
+                          | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                        /** @constant */
+                        from: 'file';
+                      };
+                  /** @constant */
+                  type: 'image';
+                  when: string | null;
+                }
+            )[]
+          | null;
         dpi: number;
         elements: (
           | {
@@ -1525,6 +1713,174 @@ export interface components {
         name: string;
         project_id: string;
         spec: {
+          back:
+            | (
+                | {
+                    /** @enum {unknown} */
+                    align: 'center' | 'left' | 'right';
+                    bold_font: string | null;
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    color: string;
+                    font: string;
+                    hug: boolean;
+                    id: string | null;
+                    line_height: number;
+                    min_size_pt: number;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    size_pt: number;
+                    text: string;
+                    /** @constant */
+                    type: 'text';
+                    /** @enum {unknown} */
+                    valign: 'bottom' | 'middle' | 'top';
+                    when: string | null;
+                  }
+                | {
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    fill: string | null;
+                    id: string | null;
+                    opacity: number;
+                    radius_mm: number;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    stroke: string | null;
+                    stroke_mm: number;
+                    /** @constant */
+                    type: 'rect';
+                    when: string | null;
+                  }
+                | {
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    /** @enum {unknown} */
+                    fit: 'contain' | 'cover' | 'fill';
+                    id: string | null;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    slice: [number, number, number, number] | null;
+                    source:
+                      | {
+                          field: string;
+                          /** @constant */
+                          from: 'field';
+                        }
+                      | {
+                          /**
+                           * Format: uuid
+                           * @description a UUID
+                           */
+                          file_id:
+                            | string
+                            | '00000000-0000-0000-0000-000000000000'
+                            | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                          /** @constant */
+                          from: 'file';
+                        };
+                    /** @constant */
+                    type: 'image';
+                    when: string | null;
+                  }
+              )[]
+            | null;
           dpi: number;
           elements: (
             | {
@@ -1730,6 +2086,174 @@ export interface components {
         name: string;
         project_id: string;
         spec: {
+          back:
+            | (
+                | {
+                    /** @enum {unknown} */
+                    align: 'center' | 'left' | 'right';
+                    bold_font: string | null;
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    color: string;
+                    font: string;
+                    hug: boolean;
+                    id: string | null;
+                    line_height: number;
+                    min_size_pt: number;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    size_pt: number;
+                    text: string;
+                    /** @constant */
+                    type: 'text';
+                    /** @enum {unknown} */
+                    valign: 'bottom' | 'middle' | 'top';
+                    when: string | null;
+                  }
+                | {
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    fill: string | null;
+                    id: string | null;
+                    opacity: number;
+                    radius_mm: number;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    stroke: string | null;
+                    stroke_mm: number;
+                    /** @constant */
+                    type: 'rect';
+                    when: string | null;
+                  }
+                | {
+                    box: {
+                      bottom:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      left:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      right:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                      top:
+                        | number
+                        | {
+                            /** @enum {unknown} */
+                            edge: 'bottom' | 'left' | 'right' | 'top';
+                            element: string;
+                            offset_mm: number;
+                          };
+                    };
+                    /** @enum {unknown} */
+                    fit: 'contain' | 'cover' | 'fill';
+                    id: string | null;
+                    /** @enum {unknown} */
+                    rotate: 0 | 180 | 270 | 90;
+                    slice: [number, number, number, number] | null;
+                    source:
+                      | {
+                          field: string;
+                          /** @constant */
+                          from: 'field';
+                        }
+                      | {
+                          /**
+                           * Format: uuid
+                           * @description a UUID
+                           */
+                          file_id:
+                            | string
+                            | '00000000-0000-0000-0000-000000000000'
+                            | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+                          /** @constant */
+                          from: 'file';
+                        };
+                    /** @constant */
+                    type: 'image';
+                    when: string | null;
+                  }
+              )[]
+            | null;
           dpi: number;
           elements: (
             | {
@@ -1920,6 +2444,11 @@ export interface components {
         updated_by: string | null;
         width_mm: number;
       };
+      punchboards: {
+        id: string;
+        name: string;
+        token_count: number;
+      }[];
     };
     Component: {
       created_at: string;
@@ -1945,12 +2474,12 @@ export interface components {
           updated_at: string;
           uploaded_by: string;
         };
-        /** @enum {unknown} */
-        role: 'artwork' | 'cut';
+        /** @constant */
+        role: 'artwork';
       }[];
       id: string;
       kind: string;
-      missing_roles: ('artwork' | 'cut')[];
+      missing_roles: 'artwork'[];
       name: string;
       position: number;
       project_id: string;
@@ -1961,10 +2490,15 @@ export interface components {
             height_mm: number;
             /** @constant */
             kind: 'punchboard';
+            margin_mm: number;
             seed: number;
             /** @enum {unknown} */
             sheet_state: 'intact' | 'punched';
             thickness_mm: number;
+            token_corner_radius_mm: number;
+            token_gap_mm: number;
+            token_height_mm: number;
+            token_width_mm: number;
             width_mm: number;
           }
         | {
@@ -2004,6 +2538,50 @@ export interface components {
             thickness_mm: number;
             width_mm: number;
           };
+      tokens: {
+        back_file: {
+          byte_size: number;
+          checksum: string | null;
+          component_id: string | null;
+          component_role: string | null;
+          content_type: string;
+          created_at: string;
+          deck_id: string | null;
+          deleted_at: string | null;
+          filename: string;
+          folder_id: string | null;
+          id: string;
+          image_height: number | null;
+          image_width: number | null;
+          name_locked: boolean;
+          project_id: string;
+          updated_at: string;
+          uploaded_by: string;
+        } | null;
+        back_file_id: string | null;
+        file: {
+          byte_size: number;
+          checksum: string | null;
+          component_id: string | null;
+          component_role: string | null;
+          content_type: string;
+          created_at: string;
+          deck_id: string | null;
+          deleted_at: string | null;
+          filename: string;
+          folder_id: string | null;
+          id: string;
+          image_height: number | null;
+          image_width: number | null;
+          name_locked: boolean;
+          project_id: string;
+          updated_at: string;
+          uploaded_by: string;
+        };
+        file_id: string;
+        position: number;
+        quantity: number;
+      }[];
       updated_at: string;
     };
     ComponentList: {
@@ -2031,12 +2609,12 @@ export interface components {
             updated_at: string;
             uploaded_by: string;
           };
-          /** @enum {unknown} */
-          role: 'artwork' | 'cut';
+          /** @constant */
+          role: 'artwork';
         }[];
         id: string;
         kind: string;
-        missing_roles: ('artwork' | 'cut')[];
+        missing_roles: 'artwork'[];
         name: string;
         position: number;
         project_id: string;
@@ -2047,10 +2625,15 @@ export interface components {
               height_mm: number;
               /** @constant */
               kind: 'punchboard';
+              margin_mm: number;
               seed: number;
               /** @enum {unknown} */
               sheet_state: 'intact' | 'punched';
               thickness_mm: number;
+              token_corner_radius_mm: number;
+              token_gap_mm: number;
+              token_height_mm: number;
+              token_width_mm: number;
               width_mm: number;
             }
           | {
@@ -2090,6 +2673,50 @@ export interface components {
               thickness_mm: number;
               width_mm: number;
             };
+        tokens: {
+          back_file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          } | null;
+          back_file_id: string | null;
+          file: {
+            byte_size: number;
+            checksum: string | null;
+            component_id: string | null;
+            component_role: string | null;
+            content_type: string;
+            created_at: string;
+            deck_id: string | null;
+            deleted_at: string | null;
+            filename: string;
+            folder_id: string | null;
+            id: string;
+            image_height: number | null;
+            image_width: number | null;
+            name_locked: boolean;
+            project_id: string;
+            updated_at: string;
+            uploaded_by: string;
+          };
+          file_id: string;
+          position: number;
+          quantity: number;
+        }[];
         updated_at: string;
       }[];
     };
@@ -2120,10 +2747,15 @@ export interface components {
             height_mm: number;
             /** @constant */
             kind: 'punchboard';
+            margin_mm: number;
             seed: number;
             /** @enum {unknown} */
             sheet_state: 'intact' | 'punched';
             thickness_mm: number;
+            token_corner_radius_mm: number;
+            token_gap_mm: number;
+            token_height_mm: number;
+            token_width_mm: number;
             width_mm: number;
           }
         | {
@@ -4374,6 +5006,9 @@ export interface operations {
         project_id:
           string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
         /** @description a UUID */
+        back_of?:
+          string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+        /** @description a UUID */
         component_id?:
           string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
         /** @description a UUID */
@@ -4385,7 +5020,7 @@ export interface operations {
         /** @description a UUID */
         id?:
           string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
-        role?: 'artwork' | 'back' | 'card' | 'cut';
+        role?: 'artwork' | 'back' | 'card' | 'token';
       };
       header?: never;
       path?: never;
@@ -5043,7 +5678,7 @@ export interface operations {
             | 'ffffffff-ffff-ffff-ffff-ffffffffffff'
             | null;
           /** @enum {unknown} */
-          role?: 'artwork' | 'back' | 'card' | 'cut';
+          role?: 'artwork' | 'back' | 'card' | 'token';
         };
       };
     };
@@ -5288,10 +5923,15 @@ export interface operations {
                 height_mm: number;
                 /** @constant */
                 kind: 'punchboard';
+                margin_mm: number;
                 seed: number;
                 /** @enum {unknown} */
                 sheet_state: 'intact' | 'punched';
                 thickness_mm: number;
+                token_corner_radius_mm: number;
+                token_gap_mm: number;
+                token_height_mm: number;
+                token_width_mm: number;
                 width_mm: number;
               }
             | {
@@ -5645,10 +6285,15 @@ export interface operations {
                 height_mm: number;
                 /** @constant */
                 kind: 'punchboard';
+                margin_mm: number;
                 seed: number;
                 /** @enum {unknown} */
                 sheet_state: 'intact' | 'punched';
                 thickness_mm: number;
+                token_corner_radius_mm: number;
+                token_gap_mm: number;
+                token_height_mm: number;
+                token_width_mm: number;
                 width_mm: number;
               }
             | {
@@ -5850,6 +6495,101 @@ export interface operations {
       };
     };
   };
+  putApiComponentsByComponentIdTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        componentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          tokens: {
+            back_file_id:
+              | string
+              | '00000000-0000-0000-0000-000000000000'
+              | 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+              | null;
+            file_id: components['schemas']['Uuid'];
+            quantity: number;
+          }[];
+        };
+      };
+    };
+    responses: {
+      /** @description The punchboard as it now stands */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Component'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            details: {
+              message: string;
+              path: string;
+            }[];
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+          };
+        };
+      };
+    };
+  };
   getApiModelsByFileId: {
     parameters: {
       query?: never;
@@ -5941,10 +6681,15 @@ export interface operations {
                 height_mm: number;
                 /** @constant */
                 kind: 'punchboard';
+                margin_mm: number;
                 seed: number;
                 /** @enum {unknown} */
                 sheet_state: 'intact' | 'punched';
                 thickness_mm: number;
+                token_corner_radius_mm: number;
+                token_gap_mm: number;
+                token_height_mm: number;
+                token_width_mm: number;
                 width_mm: number;
               }
             | {
@@ -7589,6 +8334,167 @@ export interface operations {
           name: string;
           project_id: components['schemas']['Uuid'];
           spec: {
+            back:
+              | (
+                  | {
+                      /** @enum {unknown} */
+                      align: 'center' | 'left' | 'right';
+                      bold_font: string | null;
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      color: string;
+                      font: string;
+                      hug: boolean;
+                      id: string | null;
+                      line_height: number;
+                      min_size_pt: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      size_pt: number;
+                      text: string;
+                      /** @constant */
+                      type: 'text';
+                      /** @enum {unknown} */
+                      valign: 'bottom' | 'middle' | 'top';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      fill: string | null;
+                      id: string | null;
+                      opacity: number;
+                      radius_mm: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      stroke: string | null;
+                      stroke_mm: number;
+                      /** @constant */
+                      type: 'rect';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      /** @enum {unknown} */
+                      fit: 'contain' | 'cover' | 'fill';
+                      id: string | null;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      slice: [number, number, number, number] | null;
+                      source:
+                        | {
+                            field: string;
+                            /** @constant */
+                            from: 'field';
+                          }
+                        | {
+                            file_id: components['schemas']['Uuid'];
+                            /** @constant */
+                            from: 'file';
+                          };
+                      /** @constant */
+                      type: 'image';
+                      when: string | null;
+                    }
+                )[]
+              | null;
             dpi: number;
             elements: (
               | {
@@ -7865,6 +8771,167 @@ export interface operations {
           height_mm: number;
           project_id: components['schemas']['Uuid'];
           spec: {
+            back:
+              | (
+                  | {
+                      /** @enum {unknown} */
+                      align: 'center' | 'left' | 'right';
+                      bold_font: string | null;
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      color: string;
+                      font: string;
+                      hug: boolean;
+                      id: string | null;
+                      line_height: number;
+                      min_size_pt: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      size_pt: number;
+                      text: string;
+                      /** @constant */
+                      type: 'text';
+                      /** @enum {unknown} */
+                      valign: 'bottom' | 'middle' | 'top';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      fill: string | null;
+                      id: string | null;
+                      opacity: number;
+                      radius_mm: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      stroke: string | null;
+                      stroke_mm: number;
+                      /** @constant */
+                      type: 'rect';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      /** @enum {unknown} */
+                      fit: 'contain' | 'cover' | 'fill';
+                      id: string | null;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      slice: [number, number, number, number] | null;
+                      source:
+                        | {
+                            field: string;
+                            /** @constant */
+                            from: 'field';
+                          }
+                        | {
+                            file_id: components['schemas']['Uuid'];
+                            /** @constant */
+                            from: 'file';
+                          };
+                      /** @constant */
+                      type: 'image';
+                      when: string | null;
+                    }
+                )[]
+              | null;
             dpi: number;
             elements: (
               | {
@@ -8039,6 +9106,8 @@ export interface operations {
             };
           };
           width_mm: number;
+          /** @enum {unknown} */
+          face?: 'back' | 'front';
         };
       };
     };
@@ -8170,6 +9239,167 @@ export interface operations {
           height_mm: number;
           name: string;
           spec: {
+            back:
+              | (
+                  | {
+                      /** @enum {unknown} */
+                      align: 'center' | 'left' | 'right';
+                      bold_font: string | null;
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      color: string;
+                      font: string;
+                      hug: boolean;
+                      id: string | null;
+                      line_height: number;
+                      min_size_pt: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      size_pt: number;
+                      text: string;
+                      /** @constant */
+                      type: 'text';
+                      /** @enum {unknown} */
+                      valign: 'bottom' | 'middle' | 'top';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      fill: string | null;
+                      id: string | null;
+                      opacity: number;
+                      radius_mm: number;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      stroke: string | null;
+                      stroke_mm: number;
+                      /** @constant */
+                      type: 'rect';
+                      when: string | null;
+                    }
+                  | {
+                      box: {
+                        bottom:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        left:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        right:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                        top:
+                          | number
+                          | {
+                              /** @enum {unknown} */
+                              edge: 'bottom' | 'left' | 'right' | 'top';
+                              element: string;
+                              offset_mm: number;
+                            };
+                      };
+                      /** @enum {unknown} */
+                      fit: 'contain' | 'cover' | 'fill';
+                      id: string | null;
+                      /** @enum {unknown} */
+                      rotate: 0 | 180 | 270 | 90;
+                      slice: [number, number, number, number] | null;
+                      source:
+                        | {
+                            field: string;
+                            /** @constant */
+                            from: 'field';
+                          }
+                        | {
+                            file_id: components['schemas']['Uuid'];
+                            /** @constant */
+                            from: 'file';
+                          };
+                      /** @constant */
+                      type: 'image';
+                      when: string | null;
+                    }
+                )[]
+              | null;
             dpi: number;
             elements: (
               | {
@@ -8506,9 +9736,12 @@ export interface operations {
   };
   getApiCardContent: {
     parameters: {
-      query: {
+      query?: {
         /** @description a UUID */
-        deck_id:
+        component_id?:
+          string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+        /** @description a UUID */
+        deck_id?:
           string | '00000000-0000-0000-0000-000000000000' | 'ffffffff-ffff-ffff-ffff-ffffffffffff';
       };
       header?: never;
@@ -8571,12 +9804,13 @@ export interface operations {
     requestBody: {
       content: {
         'application/json': {
-          deck_id: components['schemas']['Uuid'];
           fields: {
             [key: string]: string;
           };
           filename: string;
           layout_id: components['schemas']['Uuid'];
+          component_id?: components['schemas']['Uuid'];
+          deck_id?: components['schemas']['Uuid'];
           id?: components['schemas']['Uuid'];
         };
       };
@@ -8827,7 +10061,8 @@ export interface operations {
     requestBody: {
       content: {
         'application/json': {
-          deck_id: components['schemas']['Uuid'];
+          component_id?: components['schemas']['Uuid'];
+          deck_id?: components['schemas']['Uuid'];
           file_ids?: components['schemas']['Uuid'][];
         };
       };

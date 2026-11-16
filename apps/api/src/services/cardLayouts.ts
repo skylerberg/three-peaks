@@ -7,7 +7,8 @@ import {
   isLayoutImageType,
   layoutReferenceErrors,
 } from '@three-peaks/shared';
-import { sql } from 'kysely';
+import { type ExpressionBuilder, type ExpressionWrapper, type SqlBool, sql } from 'kysely';
+import type { DB } from '../db/types.ts';
 import { AppError } from '../utils/errors.ts';
 import { isValidUuid } from '../utils/uuid.ts';
 import type { AppContext } from '../types/index.ts';
@@ -119,6 +120,50 @@ function invalid(error: string, path: string, messages: readonly string[]): AppE
   });
 }
 
+// Whether a file is the back a token's layout draws: the token is drawn from a
+// layout, that layout has a back, and this is the file it draws it into. A
+// token printing its front on both sides draws nothing there of its own.
+export function drawsBack(eb: ExpressionBuilder<DB, 'component_token'>) {
+  return eb.and([
+    eb('component_token.back_file_id', 'is not', null),
+    eb('component_token.back_file_id', '<>', eb.ref('component_token.file_id')),
+    eb.exists(
+      eb
+        .selectFrom('card_content')
+        .innerJoin('card_layout', 'card_layout.id', 'card_content.layout_id')
+        .select('card_content.file_id')
+        .whereRef('card_content.file_id', '=', 'component_token.file_id')
+        .where(sql<boolean>`jsonb_typeof(card_layout.spec -> 'back') = 'array'`)
+    ),
+  ]);
+}
+
+/**
+ * Whether `file.id` is drawn from a layout at all: a laid-out card or token
+ * front, or the back a token's layout draws. Anything a layout draws can be
+ * drawn into nothing else, because it would be drawn again every time the
+ * piece it belongs to is.
+ */
+function drawnFromLayout(
+  eb: ExpressionBuilder<DB, 'file'>
+): ExpressionWrapper<DB, 'file', SqlBool> {
+  return eb.or([
+    eb.exists(
+      eb
+        .selectFrom('card_content')
+        .select('card_content.file_id')
+        .whereRef('card_content.file_id', '=', 'file.id')
+    ),
+    eb.exists(
+      eb
+        .selectFrom('component_token')
+        .select('component_token.id')
+        .whereRef('component_token.back_file_id', '=', 'file.id')
+        .where(drawsBack)
+    ),
+  ]);
+}
+
 interface ReferencedFile {
   id: string;
   filename: string;
@@ -141,16 +186,7 @@ async function filesInProject(
       'file.filename as filename',
       'file.content_type as content_type',
       'file.deleted_at as deleted_at',
-      (eb) =>
-        eb
-          .exists(
-            eb
-              .selectFrom('card_content')
-              .select('card_content.file_id')
-              .whereRef('card_content.file_id', '=', 'file.id')
-          )
-          .$castTo<boolean>()
-          .as('drawn'),
+      (eb) => drawnFromLayout(eb).$castTo<boolean>().as('drawn'),
     ])
     .where('file.id', 'in', [...new Set(ids)])
     .where('file.project_id', '=', projectId)

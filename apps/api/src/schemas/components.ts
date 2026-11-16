@@ -1,5 +1,9 @@
 import { type } from 'arktype';
-import { COMPONENT_NAME_LIMITS } from '@three-peaks/shared';
+import {
+  COMPONENT_NAME_LIMITS,
+  DECK_QUANTITY_LIMITS,
+  MAX_PUNCHBOARD_TOKENS,
+} from '@three-peaks/shared';
 import { stringWithLength, uuid } from './common.ts';
 import { fileSchema } from './files.ts';
 import {
@@ -29,9 +33,24 @@ export const componentSettingsSchema = woodModelSettingsSchema
 // colours and does not narrow to the four component kinds.
 export type ComponentSettings = typeof componentSettingsSchema.infer;
 
+// A slot: the one image a wooden piece, a box or a board is made from.
 export const componentFileSchema = type({
-  role: "'artwork' | 'cut'",
+  role: "'artwork'",
   file: fileSchema,
+});
+
+// One of a punchboard's tokens: its front, what is printed behind it, how many
+// are cut, and where it comes in the list. The two files are the whole rows,
+// for the reason a deck's cards carry theirs: a screen draws both faces.
+export const componentTokenSchema = type({
+  file_id: 'string',
+  // Null leaves the board unprinted behind it, and the front's own id prints
+  // the same image on both sides.
+  back_file_id: 'string | null',
+  quantity: 'number',
+  position: 'number',
+  file: fileSchema,
+  back_file: fileSchema.or('null'),
 });
 
 export const componentSchema = type({
@@ -47,13 +66,15 @@ export const componentSchema = type({
   created_at: 'string',
   updated_at: 'string',
   deleted_at: 'string | null',
-  // Its own artwork, and for a punchboard its cut sheet. The section draws a
-  // thumbnail per component, so a listing that left these out would be one
-  // request per row.
+  // Its own artwork. The section draws a thumbnail per component, so a
+  // listing that left these out would be one request per row.
   files: componentFileSchema.array(),
   // Which of the roles its kind needs are still missing, so a screen can say
   // what a half-built component is waiting for without knowing the rule.
-  missing_roles: type("'artwork' | 'cut'").array(),
+  missing_roles: type("'artwork'").array(),
+  // A punchboard's tokens in order, deleted ones included, so a save can send
+  // the list back whole; empty for every other kind.
+  tokens: componentTokenSchema.array(),
 });
 
 export const componentListSchema = type({ components: componentSchema.array() });
@@ -86,4 +107,19 @@ export const putComponentOrderRequestSchema = type({
 export const componentQuerySchema = type({
   project_id: uuid,
   'kind?': componentKind,
+});
+
+const [minQuantity, maxQuantity] = DECK_QUANTITY_LIMITS;
+
+// A punchboard's whole token list in one request, the way a deck's cards are
+// replaced: position is the array index, so adding, removing, reordering and
+// changing a back or a count are one call and cannot interleave.
+export const putComponentTokensRequestSchema = type({
+  tokens: type({
+    file_id: uuid,
+    back_file_id: 'string.uuid | null',
+    quantity: `${minQuantity} <= number.integer <= ${maxQuantity}`,
+  })
+    .array()
+    .atMostLength(MAX_PUNCHBOARD_TOKENS),
 });

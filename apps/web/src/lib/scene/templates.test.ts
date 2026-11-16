@@ -26,7 +26,7 @@ function selection(cards: number, decks = 1): SceneSelection {
         label: 'Token',
         front: image('token'),
         back: null,
-        cut: null,
+        tokens: null,
         part: null,
         settings: { ...DEFAULT_CARD_SETTINGS },
         copies: 1,

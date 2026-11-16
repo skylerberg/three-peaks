@@ -25,6 +25,7 @@ function piece(n: number, position: number): ProjectComponent {
     deleted_at: null,
     files: [],
     missing_roles: ['artwork'],
+    tokens: [],
   } as unknown as ProjectComponent;
 }
 
