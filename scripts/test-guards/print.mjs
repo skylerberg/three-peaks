@@ -97,11 +97,22 @@ export const guards = [
     // of the printer disagree, with nothing on the row to say which is right.
     name: 'a part-ticked deck reports itself as mixed',
     file: 'src/routes/Print.svelte',
-    find: '                      indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
+    find: '          indeterminate={choice.chosen > 0 && choice.chosen < choice.total}\n',
     replace: '',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'reports the deck as mixed while only some of its cards are ticked',
     runner: 'web',
+  },
+  {
+    // A punchboard's token prints behind its own back. Read as its set's, every
+    // token would print with no back at all, since a punchboard gives none.
+    name: 'a card naming its own back prints behind it',
+    file: 'src/print.ts',
+    find: '          back_file_id: card.back_file_id === undefined ? source.back_file_id : card.back_file_id,',
+    replace: '          back_file_id: source.back_file_id,',
+    tests: ['src/print.test.ts'],
+    testName: 'prints a back a card names for itself in place of its set’s',
+    runner: 'shared',
   },
   {
     // The deck's copy count is what a card starts at and nothing more. Dropping
@@ -110,8 +121,8 @@ export const guards = [
     // ledger recording them, and the one thing on screen saying otherwise.
     name: 'a count somebody typed is the count that prints',
     file: 'src/routes/Print.svelte',
-    find: '    return copies[key(deckId, card.file_id)] ?? startingCopies(deckId, card);',
-    replace: '    return startingCopies(deckId, card);',
+    find: '    return copies[key(setId, piece.file_id)] ?? startingCopies(setId, piece);',
+    replace: '    return startingCopies(setId, piece);',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'prints the count somebody typed rather than the deck’s',
     runner: 'web',
@@ -122,8 +133,8 @@ export const guards = [
     // nothing of to print.
     name: 'the print screen does not list a deleted card',
     file: 'src/routes/Print.svelte',
-    find: '        loaded = full.map((entry) => ({ ...entry, cards: entry.cards.filter(isLiveCard) }));',
-    replace: '        loaded = full;',
+    find: '            pieces: cards.filter(isLiveCard).map((card) => ({',
+    replace: '            pieces: cards.map((card) => ({',
     tests: ['src/routes/Print.svelte.test.ts'],
     testName: 'is neither listed nor counted towards its deck',
     runner: 'web',

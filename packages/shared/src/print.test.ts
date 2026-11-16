@@ -343,6 +343,30 @@ describe('planRuns', () => {
     expect(runs[0].items.map((item) => item.back_file_id)).toEqual(['back-a', 'back-b']);
   });
 
+  // A punchboard's tokens each carry their own back: another image, their
+  // front again, or nothing at all.
+  it('prints a back a card names for itself in place of its set’s', () => {
+    const token = { width_mm: 30, height_mm: 30 };
+    const runs = planRuns([
+      {
+        card: token,
+        back_file_id: null,
+        cards: [
+          { file_id: 'challenge', copies: 1, back_file_id: 'challenge-back' },
+          { file_id: 'seeker', copies: 1, back_file_id: 'seeker' },
+          { file_id: 'blank', copies: 1, back_file_id: null },
+          { file_id: 'plain', copies: 1 },
+        ],
+      },
+    ]);
+    expect(runs[0].items.map((item) => item.back_file_id)).toEqual([
+      'challenge-back',
+      'seeker',
+      null,
+      null,
+    ]);
+  });
+
   it('starts a separate run for a different card size', () => {
     const runs = planRuns([
       { card: poker, back_file_id: null, cards: [{ file_id: 'a', copies: 1 }] },

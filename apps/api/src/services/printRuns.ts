@@ -1,9 +1,14 @@
+import type { ExpressionBuilder } from 'kysely';
 import type { PrintReason } from '@three-peaks/shared';
+import type { DB } from '../db/types.ts';
 import { AppError } from '../utils/errors.ts';
 import { newId } from '../utils/uuid.ts';
 import type { AppContext, Connection } from '../types/index.ts';
 
-// What a deck still owes the printer, and the ledger that answers it.
+// What a deck, or a punchboard, still owes the printer, and the ledger that
+// answers it. A punchboard's tokens are printed onto sheets the way a deck's
+// cards are, and owe the same way; the one difference is that a token's
+// reverse is its own rather than its set's.
 //
 // One rule decides everything this file reports, and every reason a card is
 // listed for is a consequence of it rather than a separate test:
@@ -22,7 +27,6 @@ import type { AppContext, Connection } from '../types/index.ts';
 // same shortfall for ever.
 
 interface CardRow {
-  deck_id: string;
   file_id: string;
   quantity: number;
 }
@@ -44,6 +48,9 @@ interface OutstandingCard {
   file_id: string;
   version_number: number;
   quantity: number;
+  // The reverse it is printed with now: its deck's back, or a token's own.
+  back_file_id: string | null;
+  back_version_number: number | null;
   printed_copies: number;
   owed_copies: number;
   printed_version_number: number | null;
@@ -51,7 +58,7 @@ interface OutstandingCard {
   reason: PrintReason | null;
 }
 
-export interface OutstandingDeck {
+interface OutstandingDeck {
   deck_id: string;
   back_file_id: string | null;
   back_version_number: number | null;
@@ -59,14 +66,32 @@ export interface OutstandingDeck {
   cards: OutstandingCard[];
 }
 
+interface OutstandingPunchboard {
+  component_id: string;
+  last_printed_at: string | null;
+  tokens: OutstandingCard[];
+}
+
+export interface Outstanding {
+  decks: OutstandingDeck[];
+  punchboards: OutstandingPunchboard[];
+}
+
+// What a print run can put on paper: a deck's image, or a face of a
+// punchboard's token.
+function printable(eb: ExpressionBuilder<DB, 'file'>) {
+  return eb.or([eb('file.deck_id', 'is not', null), eb('file.component_role', '=', 'token')]);
+}
+
 // A file with no version rows at all was uploaded before that table existed;
 // every read path presents its mirror as version 1, and so does this one.
 const FIRST_VERSION = 1;
 
-// Every card file and every back in the project, with the number the newest
-// version carries. Scoped by project rather than by a list of ids: a deck of
-// five hundred cards would otherwise be five hundred parameters, and a file
-// owned by a deck is exactly the set this needs.
+// Every card file and every back in the project, a token's faces included,
+// with the number the newest version carries. Scoped by project rather than by
+// a list of ids: a deck of five hundred cards would otherwise be five hundred
+// parameters, and a file a deck or a punchboard's token owns is exactly the set
+// this needs.
 async function currentVersions(db: Connection, projectId: string): Promise<Map<string, number>> {
   const rows = await db
     .selectFrom('file_version')
@@ -76,7 +101,7 @@ async function currentVersions(db: Connection, projectId: string): Promise<Map<s
       eb.fn.max<number>('file_version.version_number').as('version_number'),
     ])
     .where('file.project_id', '=', projectId)
-    .where('file.deck_id', 'is not', null)
+    .where(printable)
     .groupBy('file_version.file_id')
     .execute();
 
@@ -181,6 +206,8 @@ function outstandingCard(
     file_id: card.file_id,
     version_number: version,
     quantity: card.quantity,
+    back_file_id: backFileId,
+    back_version_number: backVersion,
     printed_copies: printed,
     owed_copies: owed,
     printed_version_number: printedVersion,
@@ -189,29 +216,49 @@ function outstandingCard(
   };
 }
 
+function latest(rows: readonly OutstandingCard[]): string | null {
+  return rows.reduce<string | null>((newest, row) => {
+    if (row.last_printed_at === null) return newest;
+    return newest === null || row.last_printed_at > newest ? row.last_printed_at : newest;
+  }, null);
+}
+
 /**
- * Every live card of every live deck in a project, with what it still owes.
+ * Every live card of every live deck in a project, and every live token of
+ * every live punchboard, with what it still owes.
  *
  * Deleted cards and deleted decks are left out rather than reported as up to
  * date: a tombstone has no bytes to put on paper, and the print screen does not
- * list one.
+ * list one. The same goes for a token, and a back of its own that is deleted
+ * puts nothing on its reverse.
  */
 export async function readOutstanding(
   c: Pick<AppContext, 'get'>,
   projectId: string
-): Promise<OutstandingDeck[]> {
+): Promise<Outstanding> {
   const db = c.get('db');
 
-  const decks = await db
-    .selectFrom('deck')
-    .select(['deck.id as id', 'deck.back_file_id as back_file_id'])
-    .where('deck.project_id', '=', projectId)
-    .where('deck.deleted_at', 'is', null)
-    .orderBy('deck.name', 'asc')
-    .execute();
-  if (decks.length === 0) return [];
+  const [decks, punchboards] = await Promise.all([
+    db
+      .selectFrom('deck')
+      .select(['deck.id as id', 'deck.back_file_id as back_file_id'])
+      .where('deck.project_id', '=', projectId)
+      .where('deck.deleted_at', 'is', null)
+      .orderBy('deck.name', 'asc')
+      .execute(),
+    db
+      .selectFrom('component')
+      .select(['component.id as id'])
+      .where('component.project_id', '=', projectId)
+      .where('component.kind', '=', 'punchboard')
+      .where('component.deleted_at', 'is', null)
+      .orderBy('component.position', 'asc')
+      .orderBy('component.name', 'asc')
+      .execute(),
+  ]);
+  if (decks.length === 0 && punchboards.length === 0) return { decks: [], punchboards: [] };
 
-  const [cards, versions, printed] = await Promise.all([
+  const [cards, tokens, versions, printed] = await Promise.all([
     db
       .selectFrom('deck_card')
       .innerJoin('deck', 'deck.id', 'deck_card.deck_id')
@@ -227,44 +274,60 @@ export async function readOutstanding(
       .orderBy('deck_card.position', 'asc')
       .orderBy('deck_card.id', 'asc')
       .execute(),
+    db
+      .selectFrom('component_token')
+      .innerJoin('component', 'component.id', 'component_token.component_id')
+      .innerJoin('file', 'file.id', 'component_token.file_id')
+      .leftJoin('file as back', 'back.id', 'component_token.back_file_id')
+      .select([
+        'component_token.component_id as component_id',
+        'component_token.file_id as file_id',
+        'component_token.quantity as quantity',
+        'component_token.back_file_id as back_file_id',
+        'back.deleted_at as back_deleted_at',
+      ])
+      .where('component.project_id', '=', projectId)
+      .where('component.deleted_at', 'is', null)
+      .where('file.deleted_at', 'is', null)
+      .orderBy('component_token.position', 'asc')
+      .orderBy('component_token.id', 'asc')
+      .execute(),
     currentVersions(db, projectId),
     printedGroups(db, projectId),
   ]);
 
-  const byDeck = new Map<string, CardRow[]>();
-  for (const card of cards) {
-    const held = byDeck.get(card.deck_id);
-    if (held) held.push(card);
-    else byDeck.set(card.deck_id, [card]);
-  }
-
-  return decks.map((deck) => {
-    const backVersion =
-      deck.back_file_id === null ? null : (versions.get(deck.back_file_id) ?? FIRST_VERSION);
-
-    const rows = (byDeck.get(deck.id) ?? []).map((card) =>
-      outstandingCard(
-        card,
-        versions.get(card.file_id) ?? FIRST_VERSION,
-        deck.back_file_id,
-        backVersion,
-        printed.get(card.file_id) ?? []
-      )
+  const versionOf = (fileId: string) => versions.get(fileId) ?? FIRST_VERSION;
+  const outstanding = (card: CardRow, backFileId: string | null) =>
+    outstandingCard(
+      card,
+      versionOf(card.file_id),
+      backFileId,
+      backFileId === null ? null : versionOf(backFileId),
+      printed.get(card.file_id) ?? []
     );
 
-    const lastPrinted = rows.reduce<string | null>((latest, row) => {
-      if (row.last_printed_at === null) return latest;
-      return latest === null || row.last_printed_at > latest ? row.last_printed_at : latest;
-    }, null);
-
-    return {
-      deck_id: deck.id,
-      back_file_id: deck.back_file_id,
-      back_version_number: backVersion,
-      last_printed_at: lastPrinted,
-      cards: rows,
-    };
-  });
+  return {
+    decks: decks.map((deck) => {
+      const rows = cards
+        .filter((card) => card.deck_id === deck.id)
+        .map((card) => outstanding(card, deck.back_file_id));
+      return {
+        deck_id: deck.id,
+        back_file_id: deck.back_file_id,
+        back_version_number: deck.back_file_id === null ? null : versionOf(deck.back_file_id),
+        last_printed_at: latest(rows),
+        cards: rows,
+      };
+    }),
+    punchboards: punchboards.map((punchboard) => {
+      const rows = tokens
+        .filter((token) => token.component_id === punchboard.id)
+        .map((token) =>
+          outstanding(token, token.back_deleted_at === null ? token.back_file_id : null)
+        );
+      return { component_id: punchboard.id, last_printed_at: latest(rows), tokens: rows };
+    }),
+  };
 }
 
 export interface PrintRunCardInput {
@@ -303,7 +366,7 @@ async function assertPrintable(
     .selectFrom('file')
     .select(['file.id as id'])
     .where('file.project_id', '=', projectId)
-    .where('file.deck_id', 'is not', null)
+    .where(printable)
     .where('file.deleted_at', 'is', null)
     .where('file.id', 'in', [
       ...new Set([
@@ -321,7 +384,7 @@ async function assertPrintable(
     if (!known(card.file_id, card.version_number)) {
       throw new AppError(
         422,
-        'Every card in a print run has to be a live card of a deck in this project, at a version it actually has'
+        'Every card in a print run has to be a live card of a deck or token of a punchboard in this project, at a version it actually has'
       );
     }
     if (
@@ -330,7 +393,7 @@ async function assertPrintable(
     ) {
       throw new AppError(
         422,
-        'The back a card was printed with has to be a live image of a deck in this project, at a version it actually has'
+        "The back a card was printed with has to be a live image of a deck or a punchboard's token in this project, at a version it actually has"
       );
     }
   }

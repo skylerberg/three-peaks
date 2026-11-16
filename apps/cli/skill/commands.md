@@ -118,7 +118,7 @@ card, a component's artwork or a punchboard token's face instead of an Assets pa
 
 ## Printing, Canva, links
 
-- `threepeaks print outstanding [--deck <deck>] [--all]` — what each card still owes, and why
+- `threepeaks print outstanding [--deck <deck> | --punchboard <punchboard>] [--all]` — what each card and token still owes, and why
 - `threepeaks canva pair <code>`
 - `threepeaks canva links`
 - `threepeaks canva unlink <link> [--force]`

@@ -17,11 +17,14 @@ import {
 
 export type { ArtworkFit, PrintBoard, PrintOptions } from './pdf.ts';
 
+// A deck's cards or a punchboard's tokens: one size, the back every one of
+// them prints with, and the cards -- each of which may name a back of its own
+// instead, as a token does.
 export interface PrintJobDeck {
   name: string;
   card: CardSize;
   back_file_id: string | null;
-  cards: readonly { file_id: string; copies: number }[];
+  cards: readonly { file_id: string; copies: number; back_file_id?: string | null }[];
 }
 
 export interface PrintJob {

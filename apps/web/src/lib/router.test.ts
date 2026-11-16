@@ -36,13 +36,16 @@ describe('matchRoute', () => {
   it('reads what the print screen opens on from its query', () => {
     expect(matchRoute(`/projects/${UUID}/print`)).toEqual({
       name: 'print',
-      params: { projectId: UUID, deckId: null, boardId: null },
+      params: { projectId: UUID, deckId: null, boardId: null, punchboardId: null },
     });
     expect(matchRoute(`/projects/${UUID}/print`, 'deck=abc')).toMatchObject({
       params: { deckId: 'abc', boardId: null },
     });
     expect(matchRoute(`/projects/${UUID}/print`, 'board=def')).toMatchObject({
       params: { deckId: null, boardId: 'def' },
+    });
+    expect(matchRoute(`/projects/${UUID}/print`, 'punchboard=ghi')).toMatchObject({
+      params: { deckId: null, punchboardId: 'ghi' },
     });
   });
 

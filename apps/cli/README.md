@@ -462,13 +462,16 @@ them before anything happens.
 ## Printing
 
 ```sh
-threepeaks print outstanding                 # per deck: cards not yet on paper, and why
+threepeaks print outstanding                 # per deck and punchboard: what is not yet on paper, and why
 threepeaks print outstanding --deck Heroes --all
+threepeaks print outstanding --punchboard Tokens
 ```
 
-The reasons are "never printed", "new artwork", "new back" and "N more".
-Sheets are built, and runs recorded or undone, on the web app's print screen:
-the PDF is made in the browser, so the CLI can neither build nor record one.
+The reasons are "never printed", "new artwork", "new back" and "N more"; a
+token's back is its own, so a new back is owed for that token alone. Sheets are
+built, and runs recorded or undone, on the web app's print screen, which packs
+a punchboard's tokens onto ordinary paper the way it packs cards: the PDF is
+made in the browser, so the CLI can neither build nor record one.
 
 ## The Canva app
 

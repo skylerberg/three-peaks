@@ -32,6 +32,8 @@ interface OutstandingCard {
   file_id: string;
   version_number: number;
   quantity: number;
+  back_file_id: string | null;
+  back_version_number: number | null;
   printed_copies: number;
   owed_copies: number;
   printed_version_number: number | null;
@@ -133,6 +135,8 @@ describe('print runs', () => {
         file_id: fileId,
         version_number: 1,
         quantity: 3,
+        back_file_id: null,
+        back_version_number: null,
         printed_copies: 0,
         owed_copies: 3,
         printed_version_number: null,
@@ -356,5 +360,101 @@ describe('print runs', () => {
       404
     );
     expect((await stranger.api.delete(`/api/print/runs/${mine.body.id}`)).status).toBe(404);
+  });
+  // A punchboard's tokens owe the printer the way a deck's cards do; the one
+  // difference is that each token's reverse is its own.
+  describe('a punchboard’s tokens', () => {
+    let board: string;
+    let challenge: string;
+    let challengeBack: string;
+    let seeker: string;
+
+    async function upload(filename: string, seed: number, into: Record<string, string>) {
+      const query = new URLSearchParams({ project_id: projectId, filename, ...into });
+      const res = await owner.api.postBytes(
+        `/api/files/upload?${query}`,
+        png(seed) as unknown as BodyInit,
+        'image/png'
+      );
+      return (await res.json()).id as string;
+    }
+
+    async function tokens(): Promise<OutstandingCard[]> {
+      const body = await (
+        await owner.api.get(`/api/print/outstanding?project_id=${projectId}`)
+      ).json();
+      return body.punchboards.find(
+        (entry: { component_id: string }) => entry.component_id === board
+      ).tokens;
+    }
+
+    beforeAll(async () => {
+      board = (
+        await (
+          await owner.api.post('/api/components', {
+            project_id: projectId,
+            kind: 'punchboard',
+            name: 'Tokens',
+          })
+        ).json()
+      ).id;
+      challenge = await upload('two.png', 40, { component_id: board });
+      challengeBack = await upload('two back.png', 41, {
+        component_id: board,
+        role: 'back',
+        back_of: challenge,
+      });
+      seeker = await upload('seeker.png', 42, { component_id: board });
+      await owner.api.put(`/api/components/${board}/tokens`, {
+        tokens: [
+          { file_id: challenge, back_file_id: challengeBack, quantity: 1 },
+          { file_id: seeker, back_file_id: seeker, quantity: 2 },
+        ],
+      });
+    });
+
+    it('owes every copy of each token, each behind its own back', async () => {
+      expect(await tokens()).toMatchObject([
+        {
+          file_id: challenge,
+          quantity: 1,
+          owed_copies: 1,
+          back_file_id: challengeBack,
+          reason: 'never',
+        },
+        { file_id: seeker, quantity: 2, owed_copies: 2, back_file_id: seeker, reason: 'never' },
+      ]);
+    });
+
+    it('records tokens as printed, and owes one again when its own back changes', async () => {
+      const recorded = await record([
+        {
+          file_id: challenge,
+          version_number: 1,
+          copies: 1,
+          back_file_id: challengeBack,
+          back_version_number: 1,
+        },
+        {
+          file_id: seeker,
+          version_number: 1,
+          copies: 2,
+          back_file_id: seeker,
+          back_version_number: 1,
+        },
+      ]);
+      expect(recorded.status).toBe(201);
+      expect((await tokens()).map((token) => token.owed_copies)).toEqual([0, 0]);
+
+      expect(await newVersion(challengeBack, 43)).toBe(2);
+      const [first, second] = await tokens();
+      expect(first).toMatchObject({ owed_copies: 1, back_version_number: 2, reason: 'back' });
+      expect(second!.owed_copies).toBe(0);
+    });
+
+    it('leaves a back that is deleted off its token', async () => {
+      expect((await owner.api.delete(`/api/files/${challengeBack}`)).status).toBe(204);
+      expect((await tokens())[0]).toMatchObject({ back_file_id: null, back_version_number: null });
+    });
   });
 });

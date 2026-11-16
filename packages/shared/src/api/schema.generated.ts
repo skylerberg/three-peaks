@@ -978,8 +978,8 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * What each card still owes the printer
-     * @description Every live card of every live deck in the project, with how many copies are already on paper at its current artwork and current back, and how many are not. A card owes copies because nothing has printed it, because its artwork has been re-imported since, because the deck was given a new back, or because its copy count went up — four situations and one subtraction, and `reason` says which.
+     * What each card and token still owes the printer
+     * @description Every live card of every live deck in the project, and every live token of every live punchboard, with how many copies are already on paper at its current artwork and current back, and how many are not. A card's back is its deck's and a token's is its own. A card owes copies because nothing has printed it, because its artwork has been re-imported since, because it was given a new back, or because its copy count went up — four situations and one subtraction, and `reason` says which.
      */
     get: operations['getApiPrintOutstanding'];
     put?: never;
@@ -3165,6 +3165,8 @@ export interface components {
         back_file_id: string | null;
         back_version_number: number | null;
         cards: {
+          back_file_id: string | null;
+          back_version_number: number | null;
           file_id: string;
           last_printed_at: string | null;
           owed_copies: number;
@@ -3176,6 +3178,22 @@ export interface components {
         }[];
         deck_id: string;
         last_printed_at: string | null;
+      }[];
+      punchboards: {
+        component_id: string;
+        last_printed_at: string | null;
+        tokens: {
+          back_file_id: string | null;
+          back_version_number: number | null;
+          file_id: string;
+          last_printed_at: string | null;
+          owed_copies: number;
+          printed_copies: number;
+          printed_version_number: number | null;
+          quantity: number;
+          reason: 'artwork' | 'back' | 'copies' | 'never' | null;
+          version_number: number;
+        }[];
       }[];
     };
     PrintRun: {

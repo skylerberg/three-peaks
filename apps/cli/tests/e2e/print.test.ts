@@ -93,4 +93,36 @@ describe('print outstanding', () => {
     const res = await cli(['print', 'outstanding', '--deck', 'Starter']);
     expect(res.stdout).toMatch(/hero\.png\s+2\s+1\s+3\s+v1\s+2 more/);
   });
+  it('lists a punchboard’s tokens beside the decks, and narrows to one punchboard', async () => {
+    const board = (
+      await (
+        await owner.api.post('/api/components', {
+          project_id: projectId,
+          kind: 'punchboard',
+          name: 'Tokens',
+        })
+      ).json()
+    ).id as string;
+    seed += 1;
+    const query = new URLSearchParams({
+      project_id: projectId,
+      filename: 'seeker.png',
+      component_id: board,
+    });
+    await owner.api.postBytes(
+      `/api/files/upload?${query}`,
+      pngBytes(seed) as unknown as BodyInit,
+      'image/png'
+    );
+
+    const all = await cli(['print', 'outstanding']);
+    expect(all.stdout).toContain('Tokens — 1 copy owed (never printed)');
+    expect(all.stdout).toMatch(/TOKEN\s+OWED/);
+    expect(all.stdout).toMatch(/seeker\.png\s+1\s+0\s+1\s+v1\s+never printed/);
+
+    const one = await cli(['print', 'outstanding', '--punchboard', 'Tokens', '--json']);
+    const payload = one.json<PrintOutstanding>();
+    expect(payload.decks).toEqual([]);
+    expect(payload.punchboards.map((entry) => entry.component_id)).toEqual([board]);
+  });
 });
