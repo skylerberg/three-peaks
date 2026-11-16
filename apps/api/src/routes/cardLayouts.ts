@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { describeRoute, resolver } from 'hono-openapi';
-import type { CardFields, LayoutSpec } from '@three-peaks/shared';
+import { type CardFields, type LayoutSpec, faceElements } from '@three-peaks/shared';
 import {
   assertLayoutAccess,
   assertProjectAccess,
@@ -135,7 +135,7 @@ cardLayoutsRouter.post(
     tags: ['Layouts'],
     summary: 'Draw a card without saving anything',
     description:
-      "Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG. A card that cannot be drawn is a 422 saying why.",
+      "Anyone who can read the project. A layout as it stands in an editor, validated as a save would be, drawn with one card's values for it and answered as the PNG -- its front, or with `face` its back. A card that cannot be drawn is a 422 saying why, and so is the back of a layout that has none.",
     security: [{ bearerAuth: [] }],
     responses: {
       200: { description: 'The card, as a PNG' },
@@ -156,7 +156,8 @@ cardLayoutsRouter.post(
       bytes = await drawCard(
         c.get('db'),
         { name: 'The layout', width_mm: body.width_mm, height_mm: body.height_mm, spec },
-        fields
+        fields,
+        body.face ?? 'front'
       );
     } catch (error) {
       if (error instanceof CardRenderError) throw new AppError(422, error.message);
@@ -170,9 +171,9 @@ cardLayoutsRouter.get(
   '/:layoutId',
   describeRoute({
     tags: ['Layouts'],
-    summary: 'Get a card layout and the decks drawn from it',
+    summary: 'Get a card layout and the decks and punchboards drawn from it',
     description:
-      'The decks are the live ones holding at least one live card whose content names this layout, with how many such cards each holds -- exactly what has to be re-rendered after the layout changes.',
+      'The decks are the live ones holding at least one live card whose content names this layout, with how many such cards each holds, and the punchboards the same for their tokens -- exactly what has to be re-rendered after the layout changes.',
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -185,7 +186,7 @@ cardLayoutsRouter.get(
   async (c) => {
     const layoutId = c.req.param('layoutId');
     await assertLayoutAccess(c, layoutId, 'read');
-    const [layout, decks] = await Promise.all([
+    const [layout, decks, punchboards] = await Promise.all([
       readLayout(c, layoutId),
       c
         .get('db')
@@ -200,10 +201,28 @@ cardLayoutsRouter.get(
         .groupBy(['deck.id', 'deck.name'])
         .orderBy(sql`lower(deck.name)`)
         .execute(),
+      c
+        .get('db')
+        .selectFrom('card_content')
+        .innerJoin('component_token', 'component_token.file_id', 'card_content.file_id')
+        .innerJoin('file', 'file.id', 'card_content.file_id')
+        .innerJoin('component', 'component.id', 'component_token.component_id')
+        .select(['component.id as id', 'component.name as name'])
+        .select((eb) => eb.fn.countAll<string>().as('token_count'))
+        .where('card_content.layout_id', '=', layoutId)
+        .where('file.deleted_at', 'is', null)
+        .where('component.deleted_at', 'is', null)
+        .groupBy(['component.id', 'component.name'])
+        .orderBy(sql`lower(component.name)`)
+        .execute(),
     ]);
     return c.json({
       layout,
       decks: decks.map((deck) => ({ ...deck, card_count: Number(deck.card_count) })),
+      punchboards: punchboards.map((board) => ({
+        ...board,
+        token_count: Number(board.token_count),
+      })),
     });
   }
 );
@@ -234,6 +253,27 @@ cardLayoutsRouter.put(
     const body = c.req.valid('json') as typeof putCardLayoutRequestSchema.infer;
     const spec = body.spec as LayoutSpec;
     await assertValidLayout(c, access.projectId, spec);
+
+    // A deck's cards share the deck's back, so a layout drawing them cannot
+    // gain one of its own; deleted cards count, since restoring one would
+    // bring back a card that could not be drawn.
+    if (faceElements(spec, 'back') !== null) {
+      const { count } = await c
+        .get('db')
+        .selectFrom('card_content')
+        .innerJoin('file', 'file.id', 'card_content.file_id')
+        .select((eb) => eb.fn.countAll<string>().as('count'))
+        .where('card_content.layout_id', '=', layoutId)
+        .where('file.deck_id', 'is not', null)
+        .executeTakeFirstOrThrow();
+      const cards = Number(count);
+      if (cards > 0) {
+        throw new AppError(
+          422,
+          `${cards === 1 ? "A deck's card is" : `${String(cards)} deck cards are`} drawn from this layout, and a deck's cards share the deck's back, so it cannot draw a back of its own`
+        );
+      }
+    }
 
     // Compared in Postgres: jsonb equality ignores the order keys arrive in,
     // which a comparison of the JSON text would not.

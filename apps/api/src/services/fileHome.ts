@@ -148,15 +148,26 @@ export interface HomeRequest {
   deck_id?: string | null;
   component_id?: string | null;
   role?: string;
+  back_of?: string;
 }
 
 export interface ResolvedHome {
   home: FileHome;
   deckRole: DeckFileRole;
+  // Into a punchboard, the token (by its front) this file becomes the back of;
+  // null makes it a token of its own.
+  backOf: string | null;
 }
 
 function roleError(role: string, where: string): AppError {
   return new AppError(422, `"${role}" is not a role a ${where} has`);
+}
+
+function backOfError(): AppError {
+  return new AppError(
+    422,
+    'back_of names a token, and only the back of a punchboard’s token has one'
+  );
 }
 
 /**
@@ -190,7 +201,8 @@ export async function resolveHome(
     if (!row || row.deleted_at !== null) throw new AppError(404, 'Deck not found');
     const role = input.role ?? 'card';
     if (role !== 'card' && role !== 'back') throw roleError(role, 'deck');
-    return { home: { kind: 'deck', deckId: row.id }, deckRole: role };
+    if (input.back_of !== undefined) throw backOfError();
+    return { home: { kind: 'deck', deckId: row.id }, deckRole: role, backOf: null };
   }
 
   if (input.component_id !== undefined && input.component_id !== null) {
@@ -206,10 +218,32 @@ export async function resolveHome(
       .executeTakeFirst();
     if (!row || row.deleted_at !== null) throw new AppError(404, 'Component not found');
 
-    const role = (input.role ?? 'artwork') as ComponentFileRole;
-    const allowed = COMPONENT_KIND_INFO[row.kind as ComponentKind]?.roles ?? [];
+    // A punchboard holds tokens: a file arriving is a new token's front, or
+    // with `back` the back of one it already has. Either way its role is a
+    // token face, and the token list says which.
+    if (row.kind === 'punchboard') {
+      const role = input.role ?? 'token';
+      const home: FileHome = { kind: 'component', componentId: row.id, role: 'token' };
+      if (role === 'token') {
+        if (input.back_of !== undefined) throw backOfError();
+        return { home, deckRole: 'card', backOf: null };
+      }
+      if (role !== 'back') throw roleError(role, row.kind);
+      if (input.back_of === undefined) {
+        throw new AppError(422, 'A back names the token it is the back of, as back_of');
+      }
+      return { home, deckRole: 'card', backOf: input.back_of };
+    }
+
+    const role = input.role ?? 'artwork';
+    const allowed: readonly string[] = COMPONENT_KIND_INFO[row.kind as ComponentKind]?.roles ?? [];
     if (!allowed.includes(role)) throw roleError(role, row.kind);
-    return { home: { kind: 'component', componentId: row.id, role }, deckRole: 'card' };
+    if (input.back_of !== undefined) throw backOfError();
+    return {
+      home: { kind: 'component', componentId: row.id, role: role as ComponentFileRole },
+      deckRole: 'card',
+      backOf: null,
+    };
   }
 
   const folderId = input.folder_id ?? null;
@@ -225,5 +259,6 @@ export async function resolveHome(
       throw new AppError(404, 'Folder not found');
     }
   }
-  return { home: { kind: 'folder', folderId }, deckRole: 'card' };
+  if (input.back_of !== undefined) throw backOfError();
+  return { home: { kind: 'folder', folderId }, deckRole: 'card', backOf: null };
 }

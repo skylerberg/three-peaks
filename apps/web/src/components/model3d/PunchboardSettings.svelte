@@ -2,6 +2,7 @@
   import {
     MODEL_LIMITS,
     PUNCHBOARD_SHEET_STATES,
+    planPunchboard,
     type PunchboardModelSettings,
     type PunchboardSheetState,
   } from '@three-peaks/shared';
@@ -10,15 +11,17 @@
 
   interface Props {
     settings: PunchboardModelSettings;
-    // How many tokens the die line cut out, or null while it is being read.
-    // Drawn here because it is the one number that says whether the cut sheet
-    // was understood at all.
-    tokens: number | null;
+    // How many of each live token the sheet is asked to cut, in order.
+    quantities: readonly number[];
     disabled: boolean;
     onchange: (patch: Partial<PunchboardModelSettings>) => void;
   }
 
-  let { settings, tokens, disabled, onchange }: Props = $props();
+  let { settings, quantities, disabled, onchange }: Props = $props();
+
+  // The one place the sheet's arithmetic is said out loud: how many tokens it
+  // holds at this size, and how many asked for do not fit.
+  const plan = $derived(planPunchboard(settings, quantities));
 
   const STATE_LABELS: Record<PunchboardSheetState, string> = {
     intact: 'Whole, before anything is punched out',
@@ -60,6 +63,60 @@
     {disabled}
     onchange={(thickness_mm) => onchange({ thickness_mm })}
   />
+  <NumberField
+    label="Token width"
+    suffix=" mm"
+    value={settings.token_width_mm}
+    min={limits.token_width_mm[0]}
+    max={limits.token_width_mm[1]}
+    step={0.5}
+    {disabled}
+    onchange={(token_width_mm) => onchange({ token_width_mm })}
+  />
+  <NumberField
+    label="Token height"
+    suffix=" mm"
+    value={settings.token_height_mm}
+    min={limits.token_height_mm[0]}
+    max={limits.token_height_mm[1]}
+    step={0.5}
+    {disabled}
+    onchange={(token_height_mm) => onchange({ token_height_mm })}
+  />
+  <NumberField
+    label="Token corner radius"
+    suffix=" mm"
+    value={settings.token_corner_radius_mm}
+    min={limits.token_corner_radius_mm[0]}
+    max={limits.token_corner_radius_mm[1]}
+    step={0.5}
+    {disabled}
+    onchange={(token_corner_radius_mm) => onchange({ token_corner_radius_mm })}
+  />
+  <p class="text-xs text-muted">
+    Half the width and height cuts a disc. A layout drawing these tokens has to be drawn at this
+    size.
+  </p>
+  <NumberField
+    label="Gap between tokens"
+    suffix=" mm"
+    value={settings.token_gap_mm}
+    min={limits.token_gap_mm[0]}
+    max={limits.token_gap_mm[1]}
+    step={0.5}
+    {disabled}
+    onchange={(token_gap_mm) => onchange({ token_gap_mm })}
+  />
+  <NumberField
+    label="Margin"
+    suffix=" mm"
+    value={settings.margin_mm}
+    min={limits.margin_mm[0]}
+    max={limits.margin_mm[1]}
+    step={0.5}
+    {disabled}
+    onchange={(margin_mm) => onchange({ margin_mm })}
+  />
 
   <div class="flex flex-col gap-1">
     <label class="text-sm" for={stateId}>Sheet</label>
@@ -81,13 +138,11 @@
     </p>
   </div>
 
-  <p class="text-xs text-muted">
-    {#if tokens === null}
-      The cut sheet decides where the tokens are. Its viewBox is stretched over the sheet size
-      above, so both are measured the same way.
-    {:else}
-      The cut sheet cuts {tokens}
-      {tokens === 1 ? 'token' : 'tokens'} out of this sheet.
+  <p class="text-xs text-muted" role="status">
+    The sheet cuts {plan.slots.length} of the {plan.capacity}
+    {plan.capacity === 1 ? 'token' : 'tokens'} it has room for.
+    {#if plan.overflow > 0}
+      {plan.overflow} more {plan.overflow === 1 ? 'does' : 'do'} not fit.
     {/if}
   </p>
 

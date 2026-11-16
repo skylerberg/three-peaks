@@ -3,6 +3,7 @@ import { cardPreset, type LayoutSpec } from '@three-peaks/shared';
 import { sql } from 'kysely';
 import { db } from '../../src/db/index.ts';
 import { down, up } from '../../src/db/migrations/0020_layout_geometry.ts';
+import * as backFaces from '../../src/db/migrations/0022_layout_back_faces.ts';
 import { drainRenders } from '../../src/services/renderWorker.ts';
 import { subscribeToBus } from '../../src/services/realtime/bus.ts';
 import type { RealtimeEnvelope } from '../../src/services/realtime/payloads.ts';
@@ -92,6 +93,7 @@ describe('card layouts and card content', () => {
           hug: false,
         },
       ],
+      back: null,
       ...overrides,
     };
   }
@@ -158,7 +160,14 @@ describe('card layouts and card content', () => {
           name: 'Theirs',
           width_mm: poker.width_mm,
           height_mm: poker.height_mm,
-          spec: { dpi: 300, fonts: { body: foreignFont }, icons: {}, fields: {}, elements: [] },
+          spec: {
+            dpi: 300,
+            fonts: { body: foreignFont },
+            icons: {},
+            fields: {},
+            elements: [],
+            back: null,
+          },
         })
       ).json()
     ).id;
@@ -316,6 +325,22 @@ describe('card layouts and card content', () => {
       expect(again.elements[2]).toEqual(current.elements[2]);
     });
 
+    it('spells out a back on every layout stored before backs, and takes it off again', async () => {
+      const { body } = await createLayout('One face');
+      const stored = async () =>
+        (
+          await sql<{ spec: Record<string, unknown> }>`
+            select spec from card_layout where id = ${body.id}
+          `.execute(db)
+        ).rows[0]!.spec;
+      expect(await stored()).toHaveProperty('back', null);
+
+      await backFaces.down(db as never);
+      expect(await stored()).not.toHaveProperty('back');
+      await backFaces.up(db as never);
+      expect(await stored()).toHaveProperty('back', null);
+    });
+
     it('replaces a layout whole', async () => {
       const { body } = await createLayout('Replaced');
       const next = spec({ dpi: 600 });
@@ -404,7 +429,9 @@ describe('card layouts and card content', () => {
     it("refuses a file that is not a deck's card", async () => {
       const res = await put(assetCardId, { layout_id: layoutId, fields });
       expect(res.status).toBe(422);
-      expect((await res.json()).error).toBe("Only a deck's card can be drawn from a layout");
+      expect((await res.json()).error).toBe(
+        "Only a deck's card or a punchboard's token can be drawn from a layout"
+      );
     });
 
     it("refuses another project's layout as if it did not exist", async () => {
@@ -734,7 +761,14 @@ describe('card layouts and card content', () => {
           name: 'Gone',
           width_mm: poker.width_mm,
           height_mm: poker.height_mm,
-          spec: { dpi: 300, fonts: { body: font }, icons: {}, fields: {}, elements: [] },
+          spec: {
+            dpi: 300,
+            fonts: { body: font },
+            icons: {},
+            fields: {},
+            elements: [],
+            back: null,
+          },
         })
       ).json()
     ).id;

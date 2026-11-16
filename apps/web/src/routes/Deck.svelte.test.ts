@@ -1093,6 +1093,7 @@ describe('Deck editor', () => {
             hug: false,
           },
         ],
+        back: null,
       },
       created_by: null,
       updated_by: null,

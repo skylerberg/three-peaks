@@ -310,6 +310,18 @@ export async function fetchFile(ctx: RuntimeContext, fileId: string): Promise<Fi
   return assertOk(await ctx.api.GET('/api/files/{id}', { params: { path: { id: fileId } } }));
 }
 
+// Every file a component holds: its artwork, and each face of each token, a
+// back several tokens share listed once.
+function componentFiles(component: Component): FileRow[] {
+  const seen = new Map<string, FileRow>();
+  for (const entry of component.files) seen.set(entry.file.id, entry.file);
+  for (const token of component.tokens) {
+    seen.set(token.file.id, token.file);
+    if (token.back_file !== null) seen.set(token.back_file.id, token.back_file);
+  }
+  return [...seen.values()];
+}
+
 export interface FileScope {
   deck?: string;
   component?: string;
@@ -347,7 +359,7 @@ export async function resolveFileRef(
     if (byRole !== undefined) return byRole.file;
     return matchRef(
       ref,
-      component.files.map((entry) => entry.file),
+      componentFiles(component),
       `file in "${component.name}"`,
       (f) => f.id,
       (f) => f.filename

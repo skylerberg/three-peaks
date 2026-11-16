@@ -44,7 +44,7 @@ type FileVersionResult = components['schemas']['FileVersionResult'];
 const DECK_SCOPE = ['--deck <deck>', 'look the file up among this deck’s cards'] as const;
 const COMPONENT_SCOPE = [
   '--component <component>',
-  'look the file up among this component’s files (by role or name)',
+  'look the file up among this component’s files (by role or name, or a token face by name)',
 ] as const;
 const FILE_ARG = [
   '<file>',
@@ -320,8 +320,10 @@ function fileGroup(deps: CliDeps): Command {
       .option('--to <folder>', 'an Assets folder path or id; / is the root')
       .option('--to-deck <deck>', 'make it a card of this deck')
       .option('--back', 'with --to-deck: make it the deck’s back rather than a card')
-      .option('--to-component <component>', 'give it to this component')
-      .option('--role <role>', 'with --to-component: artwork or cut (default artwork)')
+      .option(
+        '--to-component <component>',
+        'give it to this component: its artwork, or a new token of a punchboard'
+      )
       .option(...DECK_SCOPE)
       .option(...COMPONENT_SCOPE)
       .action(
@@ -329,19 +331,12 @@ function fileGroup(deps: CliDeps): Command {
           const to = optString(opts, 'to');
           const toDeck = optString(opts, 'toDeck');
           const toComponent = optString(opts, 'toComponent');
-          const role = optString(opts, 'role');
           const chosen = [to, toDeck, toComponent].filter((v) => v !== undefined);
           if (chosen.length !== 1) {
             throw new CliError('Pass exactly one of --to, --to-deck or --to-component', EXIT.usage);
           }
           if (opts.back === true && toDeck === undefined) {
             throw new CliError('--back applies only with --to-deck', EXIT.usage);
-          }
-          if (role !== undefined && toComponent === undefined) {
-            throw new CliError('--role applies only with --to-component', EXIT.usage);
-          }
-          if (role !== undefined && role !== 'artwork' && role !== 'cut') {
-            throw new CliError(`--role is artwork or cut, not "${role}"`, EXIT.usage);
           }
 
           const row = await resolveFile(ctx, opts, ref);
@@ -383,13 +378,17 @@ function fileGroup(deps: CliDeps): Command {
               })
             );
           } else {
+            // What it becomes is the component's kind to say: the artwork, or
+            // a punchboard's new token.
             const component = await resolveComponent(ctx, row.project_id, toComponent as string);
-            const asRole = (role ?? 'artwork') as 'artwork' | 'cut';
-            where = `component "${component.name}" as its ${asRole}`;
+            where =
+              component.kind === 'punchboard'
+                ? `punchboard "${component.name}" as a token`
+                : `component "${component.name}" as its artwork`;
             moved = assertOk(
               await ctx.api.POST('/api/files/{id}/move', {
                 params: { path: { id: row.id } },
-                body: { component_id: component.id, role: asRole },
+                body: { component_id: component.id },
               })
             );
           }

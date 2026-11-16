@@ -77,26 +77,32 @@ export interface BoardModelSettings {
 export const PUNCHBOARD_SHEET_STATES = ['intact', 'punched'] as const;
 export type PunchboardSheetState = (typeof PUNCHBOARD_SHEET_STATES)[number];
 
-// A punchboard is one printed sheet plus an SVG cut sheet, and the cut sheet is
-// the token layout: each closed path in it is one token. There is no file id
-// here because ownership already says which file is which -- the component's
-// `cut` file is the die line, and its `artwork` file is what gets printed.
-//
-// The sheet's own size is given rather than measured, and the cut file's
-// viewBox is mapped onto it. That is what makes a token's size and the part of
-// the artwork it samples the same arithmetic, the way boxNetRegions does for a
-// box: a die line drawn to other proportions cuts the wrong rectangles rather
-// than failing, and nothing here can disagree with the guide the studio draws.
+// A punchboard is a sheet of greyboard and the tokens die-cut from it. The
+// tokens are its own (`component_token`), each a front and a back, and the
+// sheet is laid out from them: every token is cut to the one shape below, and
+// `planPunchboard` packs the copies onto the sheet in their order. Nothing
+// about the sheet is uploaded or stored, so the printed sides and the die line
+// are worked out from the tokens wherever they are needed and cannot fall
+// behind them.
 export interface PunchboardModelSettings {
   kind: 'punchboard';
   width_mm: number;
   height_mm: number;
   thickness_mm: number;
+  // The box every token is cut to, and how round its corners are: a token is a
+  // disc when the radius is half of both sides.
+  token_width_mm: number;
+  token_height_mm: number;
+  token_corner_radius_mm: number;
+  // Board left between two tokens, and between the sheet's edge and the
+  // nearest of them -- the frame a die needs to hold the sheet together.
+  token_gap_mm: number;
+  margin_mm: number;
   // Whether the sheet mesh still holds its tokens, or has had them pushed out
   // and is the frame that is left.
   sheet_state: PunchboardSheetState;
-  // Unprinted board: the reverse of every token and the sheet, and the edges
-  // the die cut leaves.
+  // Unprinted board: the reverse of a token with no back, the frame round the
+  // tokens, and the edges the die cut leaves.
   back_color: string;
   edge_color: string;
   seed: number;
@@ -175,12 +181,17 @@ export const DEFAULT_BOARD_SETTINGS: BoardModelSettings = {
 };
 
 // A retail punchboard: the sheet a sprue of tokens is die-cut from, at the
-// 2 mm greyboard most of them are made of.
+// 2 mm greyboard most of them are made of, cutting inch-wide discs.
 export const DEFAULT_PUNCHBOARD_SETTINGS: PunchboardModelSettings = {
   kind: 'punchboard',
   width_mm: 280,
   height_mm: 210,
   thickness_mm: 2,
+  token_width_mm: 25,
+  token_height_mm: 25,
+  token_corner_radius_mm: 12.5,
+  token_gap_mm: 3,
+  margin_mm: 10,
   sheet_state: 'intact',
   back_color: '#b9ac93',
   edge_color: '#8d8069',
@@ -244,6 +255,12 @@ export const MODEL_LIMITS = {
     width_mm: [50, 700],
     height_mm: [50, 700],
     thickness_mm: [0.5, 6],
+    // The sizes a layout can be drawn at, so any token can be laid out.
+    token_width_mm: [10, 300],
+    token_height_mm: [10, 300],
+    token_corner_radius_mm: [0, 150],
+    token_gap_mm: [0, 50],
+    margin_mm: [0, 100],
   },
 } as const satisfies Record<ModelKind, Record<string, readonly [number, number]>>;
 

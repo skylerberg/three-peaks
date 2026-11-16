@@ -74,6 +74,28 @@ export function requestDeckRenders(
   );
 }
 
+// Every token of a punchboard drawn from a layout, or only the ones named by
+// their front.
+export function requestComponentRenders(
+  c: Pick<AppContext, 'get'>,
+  componentId: string,
+  fileIds?: readonly string[]
+) {
+  return request(c, (eb) =>
+    eb.and([
+      eb(
+        'card_content.file_id',
+        'in',
+        eb
+          .selectFrom('component_token')
+          .select('component_token.file_id')
+          .where('component_token.component_id', '=', componentId)
+      ),
+      ...(fileIds === undefined ? [] : [eb('card_content.file_id', 'in', fileIds)]),
+    ])
+  );
+}
+
 export function requestCardRender(c: Pick<AppContext, 'get'>, fileId: string) {
   return request(c, (eb) => eb('card_content.file_id', '=', fileId));
 }

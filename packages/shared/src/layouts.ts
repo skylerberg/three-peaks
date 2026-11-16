@@ -156,7 +156,38 @@ export interface LayoutSpec {
   fonts: Record<string, string>;
   icons: Record<string, string>;
   fields: Record<string, LayoutField>;
+  // The face of the piece, which is the whole of a card: a deck's cards share
+  // the deck's back.
   elements: LayoutElement[];
+  // The other face, for a piece printed on both with backs of its own -- a
+  // punchboard's token, whose back says what it scores. Null draws one face.
+  // Each face is laid out on its own, so an id names an element of its face
+  // and a pin reaches only as far as the elements beside it.
+  back: LayoutElement[] | null;
+}
+
+export const LAYOUT_FACES = ['front', 'back'] as const;
+export type LayoutFace = (typeof LAYOUT_FACES)[number];
+
+// The elements one face draws, or null for a back the layout does not have.
+export function faceElements(
+  spec: Pick<LayoutSpec, 'elements' | 'back'>,
+  face: LayoutFace
+): LayoutElement[] | null {
+  // `?? null` for a layout a pod of the previous release saved during the
+  // rollout, which is stored without the key.
+  return face === 'front' ? spec.elements : (spec.back ?? null);
+}
+
+// Every element on both faces, front first.
+function allElements(spec: Pick<LayoutSpec, 'elements' | 'back'>): LayoutElement[] {
+  return [...spec.elements, ...(faceElements(spec, 'back') ?? [])];
+}
+
+// How an element is named in a message: the front's by number alone, as they
+// always have been, and the back's with the face in front.
+export function elementName(element: LayoutElement, index: number, face: LayoutFace): string {
+  return `${face === 'back' ? 'back ' : ''}element ${String(index + 1)} (${element.type})`;
 }
 
 // A card's own values, by field key: text for a text field, a file id for an
@@ -191,12 +222,14 @@ export function hasValue(fields: CardFields, key: string): boolean {
 // A layout's fields in the order its elements first use them, which is the
 // order to ask for them in: the stored layout keeps no order of its own. A
 // field no element uses comes last, alphabetically.
-export function fieldsInDrawingOrder(spec: Pick<LayoutSpec, 'fields' | 'elements'>): string[] {
+export function fieldsInDrawingOrder(
+  spec: Pick<LayoutSpec, 'fields' | 'elements' | 'back'>
+): string[] {
   const order: string[] = [];
   const use = (key: string) => {
     if (Object.hasOwn(spec.fields, key) && !order.includes(key)) order.push(key);
   };
-  for (const element of spec.elements) {
+  for (const element of allElements(spec)) {
     if (element.when !== null) use(element.when);
     if (element.type === 'image' && element.source.from === 'field') use(element.source.field);
     if (element.type === 'text') templateFields(element.text).forEach(use);
@@ -293,8 +326,6 @@ export function markupErrors(source: string, iconKeys: Iterable<string>): string
 // agree with one another, which a schema of one field at a time cannot.
 export function layoutReferenceErrors(spec: LayoutSpec): string[] {
   const errors: string[] = [];
-  const fields = spec.fields;
-  const declared = (key: string) => Object.hasOwn(fields, key);
 
   const caps = {
     fields: LAYOUT_LIMITS.max_fields,
@@ -317,10 +348,25 @@ export function layoutReferenceErrors(spec: LayoutSpec): string[] {
     }
   }
 
+  for (const face of LAYOUT_FACES) {
+    const elements = faceElements(spec, face);
+    if (elements !== null) errors.push(...faceErrors(spec, elements, face));
+  }
+  return errors;
+}
+
+// Everything wrong with one face's elements: their ids and pins among
+// themselves, and every key they use against what the layout declares.
+function faceErrors(spec: LayoutSpec, elements: readonly LayoutElement[], face: LayoutFace) {
+  const errors: string[] = [];
+  const fields = spec.fields;
+  const declared = (key: string) => Object.hasOwn(fields, key);
+  const label = face === 'back' ? 'back element' : 'element';
+
   const ids = new Map<string, number>();
-  spec.elements.forEach((element, index) => {
+  elements.forEach((element, index) => {
     if (element.id === null) return;
-    const where = `element ${String(index + 1)} (${element.type})`;
+    const where = elementName(element, index, face);
     if (!LAYOUT_KEY_PATTERN.test(element.id)) {
       errors.push(
         `${where}: id "${element.id}" must be lower-case letters, digits, - or _, starting with a letter`
@@ -328,11 +374,11 @@ export function layoutReferenceErrors(spec: LayoutSpec): string[] {
     }
     const first = ids.get(element.id);
     if (first === undefined) ids.set(element.id, index);
-    else errors.push(`${where}: id "${element.id}" is also element ${String(first + 1)}'s`);
+    else errors.push(`${where}: id "${element.id}" is also ${label} ${String(first + 1)}'s`);
   });
 
-  spec.elements.forEach((element, index) => {
-    const where = `element ${String(index + 1)} (${element.type})`;
+  elements.forEach((element, index) => {
+    const where = elementName(element, index, face);
     if (element.when !== null && !declared(element.when)) {
       errors.push(`${where}: when names "${element.when}", which is not a field`);
     }
@@ -390,9 +436,12 @@ export function layoutReferenceErrors(spec: LayoutSpec): string[] {
     }
   });
 
-  const cycle = pinCycle(spec.elements);
-  if (cycle !== null)
-    errors.push(`elements are pinned to each other in a circle: ${cycle.join(' → ')}`);
+  const cycle = pinCycle(elements);
+  if (cycle !== null) {
+    errors.push(
+      `${face === 'back' ? 'back elements' : 'elements'} are pinned to each other in a circle: ${cycle.join(' → ')}`
+    );
+  }
   return errors;
 }
 
@@ -444,7 +493,7 @@ function pinCycle(elements: readonly LayoutElement[]): string[] | null {
 // Every file a layout itself names: its fonts, its icons, and its fixed images.
 export function layoutFileIds(spec: LayoutSpec): string[] {
   const ids = [...Object.values(spec.fonts), ...Object.values(spec.icons)];
-  for (const element of spec.elements) {
+  for (const element of allElements(spec)) {
     if (element.type === 'image' && element.source.from === 'file')
       ids.push(element.source.file_id);
   }

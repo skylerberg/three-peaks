@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { Command } from 'commander';
 import {
   cardFieldErrors,
@@ -12,7 +11,13 @@ import { collect, group, inProject, leaf, optList, optString, withCtx } from '..
 import { CliError, EXIT, assertDone, assertOk } from '../errors.ts';
 import { confirmOrAbort } from '../prompt.ts';
 import { shortId } from '../output.ts';
-import { fetchDeck, matchCard, projectFromOpts, resolveDeck, type Project } from '../resolve.ts';
+import {
+  fetchDeck,
+  projectFromOpts,
+  resolveComponent,
+  resolveDeck,
+  type Project,
+} from '../resolve.ts';
 import { assertAbsent } from '../transfer.ts';
 import {
   mapLayoutFiles,
@@ -27,28 +32,34 @@ import {
   cardFilename,
   cardName,
   checkRenders,
+  deckPieces,
   eachCard,
   fetchLayout,
+  fetchPieces,
   fileNamer,
   fileResolver,
   listCardContent,
   listLayouts,
   mapImageFields,
   matchLayout,
-  previewCard,
+  matchPiece,
+  pieceNoun,
+  punchboardPieces,
   pushCards,
   readSource,
   renderStoredCards,
   resolveLayout,
   storedTargets,
+  writeFaces,
   writeStoredCards,
   type CardResult,
   type Layout,
+  type PieceSet,
   type PlannedCard,
 } from '../layouts.ts';
 import type { CliDeps, RuntimeContext } from '../context.ts';
 
-function sizeText(layout: Pick<Layout, 'width_mm' | 'height_mm'>): string {
+function sizeText(layout: { width_mm: number; height_mm: number }): string {
   const preset = matchingCardPreset(layout);
   const mm = `${String(layout.width_mm)} × ${String(layout.height_mm)} mm`;
   return preset === undefined ? mm : `${preset.id} (${mm})`;
@@ -114,31 +125,35 @@ async function loadCardsFile(
   return planned;
 }
 
-// The cards of every deck drawn from this layout, as they were before a save
-// asked for them to be drawn again -- what the wait afterwards measures "new"
-// against.
+// The cards of every deck and the tokens of every punchboard drawn from this
+// layout, as they were before a save asked for them to be drawn again -- what
+// the wait afterwards measures "new" against.
 async function dependants(ctx: RuntimeContext, layoutId: string) {
-  const { decks } = await fetchLayout(ctx, layoutId);
+  const { decks, punchboards } = await fetchLayout(ctx, layoutId);
+  const sets = await Promise.all([
+    ...decks.map((deck) => fetchPieces(ctx, { kind: 'deck', id: deck.id })),
+    ...punchboards.map((board) => fetchPieces(ctx, { kind: 'punchboard', id: board.id })),
+  ]);
   return Promise.all(
-    decks.map(async (deck) => {
-      const full = await fetchDeck(ctx, deck.id);
-      return {
-        full,
-        targets: storedTargets(full, await listCardContent(ctx, deck.id), { layoutId }),
-      };
-    })
+    sets.map(async (set) => ({
+      set,
+      targets: storedTargets(set, await listCardContent(ctx, set), { layoutId }),
+    }))
   );
 }
 
-// Waits for the API to draw each deck's cards again. One deck that fails does
-// not stop the next; the first failure is what the command ends on.
-async function awaitDependants(ctx: RuntimeContext, decks: Awaited<ReturnType<typeof dependants>>) {
+// Waits for the API to draw each deck's cards and punchboard's tokens again.
+// One that fails does not stop the next; the first failure is what the command
+// ends on.
+async function awaitDependants(ctx: RuntimeContext, sets: Awaited<ReturnType<typeof dependants>>) {
   const rendered: { deck: string; results: CardResult[] }[] = [];
   let error: CliError | null = null;
-  for (const { full, targets } of decks) {
-    if (!ctx.out.json) ctx.out.line(`${full.deck.name}: ${String(targets.length)} cards`);
-    const run = await awaitRenders(ctx, full.deck, targets);
-    rendered.push({ deck: full.deck.name, results: run.results });
+  for (const { set, targets } of sets) {
+    if (!ctx.out.json) {
+      ctx.out.line(`${set.name}: ${String(targets.length)} ${pieceNoun(set, true)}`);
+    }
+    const run = await awaitRenders(ctx, set, targets);
+    rendered.push({ deck: set.name, results: run.results });
     error ??= run.error;
   }
   return { rendered, error };
@@ -178,7 +193,9 @@ export function registerLayout(program: Command, deps: CliDeps): void {
 
   layoutCmd.addCommand(
     inProject(leaf('show'))
-      .description('Show a layout: its size, fields, files, and the decks drawn from it')
+      .description(
+        'Show a layout: its size, fields, files, and the decks and punchboards drawn from it'
+      )
       .argument('<layout>', 'layout id or name')
       .action(
         withCtx(deps, async (ctx, opts, ref) => {
@@ -204,11 +221,21 @@ export function registerLayout(program: Command, deps: CliDeps): void {
             ctx.out.line(`Fields: ${fields.length === 0 ? 'none' : fields.join(', ')}`);
             ctx.out.line(`Fonts: ${fonts.length === 0 ? 'none' : fonts.join(', ')}`);
             ctx.out.line(`Icons: ${icons.length === 0 ? 'none' : icons.join(', ')}`);
-            ctx.out.line(`Elements: ${String(layout.spec.elements.length)}`);
             ctx.out.line(
-              detail.decks.length === 0
-                ? 'No live cards are drawn from it'
-                : `Drawn from by: ${detail.decks.map((deck) => `${deck.name} (${String(deck.card_count)})`).join(', ')}`
+              layout.spec.back === null
+                ? `Elements: ${String(layout.spec.elements.length)}`
+                : `Elements: ${String(layout.spec.elements.length)} on the front, ${String(layout.spec.back.length)} on the back`
+            );
+            const users = [
+              ...detail.decks.map((deck) => `${deck.name} (${String(deck.card_count)})`),
+              ...detail.punchboards.map(
+                (board) => `${board.name} (${String(board.token_count)} tokens)`
+              ),
+            ];
+            ctx.out.line(
+              users.length === 0
+                ? 'No live cards or tokens are drawn from it'
+                : `Drawn from by: ${users.join(', ')}`
             );
           });
         })
@@ -298,6 +325,10 @@ export function registerLayout(program: Command, deps: CliDeps): void {
       .argument('<path>', 'the layout file')
       .argument('[cards-file]', 'a cards file; its cards naming this layout are drawn')
       .option('--deck <deck>', "draw this deck's stored cards that use a layout of the same name")
+      .option(
+        '--punchboard <punchboard>',
+        "draw this punchboard's stored tokens that use a layout of the same name"
+      )
       .option('--card <name>', 'only this card (repeatable)', collect)
       .requiredOption('-o, --output <dir>', 'directory to write the PNGs into')
       .action(
@@ -305,8 +336,13 @@ export function registerLayout(program: Command, deps: CliDeps): void {
           const project = await projectFromOpts(ctx, opts);
           const document = await loadLayoutFile(ctx, project, path);
           const deckRef = optString(opts, 'deck');
-          if ((cardsPath === undefined) === (deckRef === undefined)) {
-            throw new CliError('Pass a cards file or --deck, one of the two', EXIT.usage);
+          const boardRef = optString(opts, 'punchboard');
+          const sources = [cardsPath, deckRef, boardRef].filter((source) => source !== undefined);
+          if (sources.length !== 1) {
+            throw new CliError(
+              'Pass a cards file, --deck or --punchboard, one of the three',
+              EXIT.usage
+            );
           }
           const preview: Layout = {
             ...document,
@@ -326,21 +362,20 @@ export function registerLayout(program: Command, deps: CliDeps): void {
             );
             cards = planned.map((card) => ({ name: card.filename, fields: card.fields }));
           } else {
-            const deck = await resolveDeck(ctx, project.id, deckRef!);
-            const full = await fetchDeck(ctx, deck.id);
-            if (
-              preview.width_mm !== full.deck.card_width_mm ||
-              preview.height_mm !== full.deck.card_height_mm
-            ) {
+            const set =
+              deckRef !== undefined
+                ? deckPieces(await fetchDeck(ctx, (await resolveDeck(ctx, project.id, deckRef)).id))
+                : punchboardPieces(await resolveComponent(ctx, project.id, boardRef!));
+            if (preview.width_mm !== set.width_mm || preview.height_mm !== set.height_mm) {
               throw new CliError(
-                `${preview.name} is drawn on a ${sizeText(preview)} card and ${full.deck.name}'s cards are ${sizeText({ width_mm: full.deck.card_width_mm, height_mm: full.deck.card_height_mm })}`,
+                `${preview.name} is drawn on a ${sizeText(preview)} card and ${set.name}'s ${pieceNoun(set, true)} are ${sizeText(set)}`,
                 EXIT.invalid
               );
             }
             const layouts = new Map((await listLayouts(ctx, project.id)).map((l) => [l.id, l]));
-            cards = storedTargets(full, await listCardContent(ctx, deck.id))
+            cards = storedTargets(set, await listCardContent(ctx, set))
               .filter(({ content }) => sameName(layouts.get(content.layout_id)?.name ?? ''))
-              .map(({ card, content }) => ({ name: card.file.filename, fields: content.fields }));
+              .map(({ piece, content }) => ({ name: piece.file.filename, fields: content.fields }));
           }
           const only = optList(opts, 'card').map((name) => cardFilename(name).toLowerCase());
           if (only.length > 0)
@@ -356,8 +391,14 @@ export function registerLayout(program: Command, deps: CliDeps): void {
             cards,
             (card) => card.name,
             async (card) => {
-              const target = join(output, card.name);
-              await writeFile(target, await previewCard(ctx, project.id, preview, card.fields));
+              const [target] = await writeFaces(
+                ctx,
+                project.id,
+                preview,
+                card.fields,
+                output,
+                card.name
+              );
               return { card: card.name, file_id: null, outcome: 'written', path: target };
             }
           );
@@ -392,6 +433,119 @@ export function registerLayout(program: Command, deps: CliDeps): void {
   program.addCommand(layoutCmd);
 }
 
+// Pulling, pushing and drawing again, for a deck's cards or a punchboard's
+// tokens alike: both are pieces drawn from layouts, and a cards file names a
+// token the way it names a card.
+
+export async function pullPieces(
+  ctx: RuntimeContext,
+  project: Project,
+  set: PieceSet,
+  output: string | undefined,
+  force: boolean
+): Promise<void> {
+  const [contents, layouts] = await Promise.all([
+    listCardContent(ctx, set),
+    listLayouts(ctx, project.id),
+  ]);
+  const byId = new Map(layouts.map((layout) => [layout.id, layout]));
+  const targets = storedTargets(set, contents);
+  if (ctx.out.json) {
+    ctx.out.line(
+      JSON.stringify(
+        targets.map(({ content }) => content),
+        null,
+        2
+      )
+    );
+    return;
+  }
+  const name = fileNamer(ctx);
+  const entries = await Promise.all(
+    targets.map(async ({ piece, content }) => {
+      const layout = byId.get(content.layout_id)!;
+      return {
+        name: cardName(piece.file.filename),
+        layout: layout.name,
+        copies: piece.quantity,
+        fields: await mapImageFields(layout, content.fields, (id) => name(id)),
+      };
+    })
+  );
+  await emit(
+    ctx,
+    writeCardsDocument(entries, set.kind === 'deck' ? 'cards' : 'tokens'),
+    output,
+    force
+  );
+}
+
+export async function pushPieces(
+  ctx: RuntimeContext,
+  project: Project,
+  set: PieceSet,
+  path: string,
+  dryRun: boolean,
+  deleteHint: string
+): Promise<void> {
+  const layouts = await listLayouts(ctx, project.id);
+  const planned = await loadCardsFile(ctx, project, path, (entry) =>
+    matchLayout(entry.layout, layouts)
+  );
+  const run = await pushCards(ctx, set, planned, { dryRun });
+
+  // Nothing is removed, but a piece this file has stopped naming is worth a
+  // line: it is still there and still prints.
+  const named = new Set(planned.map((card) => card.filename.toLowerCase()));
+  const left = storedTargets(set, await listCardContent(ctx, set))
+    .map(({ piece }) => piece.file.filename)
+    .filter((filename) => !named.has(filename.toLowerCase()));
+  if (ctx.out.json) {
+    ctx.out.line(JSON.stringify({ cards: run.results, not_in_file: left }, null, 2));
+  } else if (left.length > 0) {
+    ctx.out.line();
+    ctx.out.line(`Not in ${path}, and left as they are: ${left.join(', ')}`);
+    ctx.out.line(`Delete one with: ${deleteHint}`);
+  }
+  if (run.error !== null) throw run.error;
+}
+
+export async function renderPieces(
+  ctx: RuntimeContext,
+  set: PieceSet,
+  refs: readonly string[],
+  options: { check: boolean; output: string | undefined; hint: string }
+): Promise<void> {
+  if (options.check && options.output !== undefined) {
+    throw new CliError('Pass --check or --output, not both', EXIT.usage);
+  }
+  const noun = pieceNoun(set);
+  const pieces = refs.length === 0 ? undefined : refs.map((ref) => matchPiece(set, ref));
+  for (const piece of pieces ?? []) {
+    if (!isLiveCard(piece)) {
+      throw new CliError(`${piece.file.filename}'s image is deleted; restore it first`, EXIT.usage);
+    }
+  }
+  const targets = storedTargets(set, await listCardContent(ctx, set), { pieces });
+  if (targets.length === 0) {
+    ctx.out.data([], () =>
+      ctx.out.line(
+        pieces === undefined
+          ? `No ${noun} in ${set.name} is drawn from a layout. Add some with: ${options.hint}`
+          : `None of those ${pieceNoun(set, true)} is drawn from a layout`
+      )
+    );
+    return;
+  }
+  const run = options.check
+    ? await checkRenders(ctx, targets)
+    : options.output !== undefined
+      ? await writeStoredCards(ctx, set, targets, options.output)
+      : await renderStoredCards(ctx, set, targets);
+  if (ctx.out.json) ctx.out.line(JSON.stringify(run.results, null, 2));
+  if (run.error !== null) throw run.error;
+}
+
 // The deck half: a deck's cards as a file, that file pushed back, and the
 // stored cards re-rendered. Registered by the deck group so they read as what
 // they act on.
@@ -408,41 +562,8 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
         withCtx(deps, async (ctx, opts, deckRef) => {
           const project = await projectFromOpts(ctx, opts);
           const deck = await resolveDeck(ctx, project.id, deckRef);
-          const [full, contents, layouts] = await Promise.all([
-            fetchDeck(ctx, deck.id),
-            listCardContent(ctx, deck.id),
-            listLayouts(ctx, project.id),
-          ]);
-          const byId = new Map(layouts.map((layout) => [layout.id, layout]));
-          const targets = storedTargets(full, contents);
-          if (ctx.out.json) {
-            ctx.out.line(
-              JSON.stringify(
-                targets.map(({ content }) => content),
-                null,
-                2
-              )
-            );
-            return;
-          }
-          const name = fileNamer(ctx);
-          const entries = await Promise.all(
-            targets.map(async ({ card, content }) => {
-              const layout = byId.get(content.layout_id)!;
-              return {
-                name: cardName(card.file.filename),
-                layout: layout.name,
-                copies: card.quantity,
-                fields: await mapImageFields(layout, content.fields, (id) => name(id)),
-              };
-            })
-          );
-          await emit(
-            ctx,
-            writeCardsDocument(entries),
-            optString(opts, 'output'),
-            opts.force === true
-          );
+          const set = deckPieces(await fetchDeck(ctx, deck.id));
+          await pullPieces(ctx, project, set, optString(opts, 'output'), opts.force === true);
         })
       )
   );
@@ -459,31 +580,15 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
         withCtx(deps, async (ctx, opts, deckRef, path) => {
           const project = await projectFromOpts(ctx, opts);
           const deck = await resolveDeck(ctx, project.id, deckRef);
-          const layouts = await listLayouts(ctx, project.id);
-          const planned = await loadCardsFile(ctx, project, path, (entry) =>
-            matchLayout(entry.layout, layouts)
+          const set = deckPieces(await fetchDeck(ctx, deck.id));
+          await pushPieces(
+            ctx,
+            project,
+            set,
+            path,
+            opts.dryRun === true,
+            `threepeaks file delete <card> --deck "${set.name}"`
           );
-          const full = await fetchDeck(ctx, deck.id);
-          const run = await pushCards(ctx, full, planned, {
-            dryRun: opts.dryRun === true,
-          });
-
-          // Nothing is removed, but a card this file has stopped naming is
-          // worth a line: it is still in the deck and still prints.
-          const named = new Set(planned.map((card) => card.filename.toLowerCase()));
-          const left = storedTargets(full, await listCardContent(ctx, deck.id))
-            .map(({ card }) => card.file.filename)
-            .filter((filename) => !named.has(filename.toLowerCase()));
-          if (ctx.out.json) {
-            ctx.out.line(JSON.stringify({ cards: run.results, not_in_file: left }, null, 2));
-          } else if (left.length > 0) {
-            ctx.out.line();
-            ctx.out.line(`Not in ${path}, and left as they are: ${left.join(', ')}`);
-            ctx.out.line(
-              `Delete one with: threepeaks file delete <card> --deck "${full.deck.name}"`
-            );
-          }
-          if (run.error !== null) throw run.error;
         })
       )
   );
@@ -504,42 +609,14 @@ export function registerDeckCards(deckCmd: Command, deps: CliDeps): void {
       .option('-o, --output <dir>', 'draw the PNGs into a directory, saving nothing')
       .action(
         withCtx(deps, async (ctx, opts, deckRef, cardsArg) => {
-          const refs = cardsArg as unknown as string[];
-          const output = optString(opts, 'output');
-          if (opts.check === true && output !== undefined) {
-            throw new CliError('Pass --check or --output, not both', EXIT.usage);
-          }
           const project = await projectFromOpts(ctx, opts);
           const deck = await resolveDeck(ctx, project.id, deckRef);
-          const full = await fetchDeck(ctx, deck.id);
-          const cards = refs.length === 0 ? undefined : refs.map((ref) => matchCard(full, ref));
-          for (const card of cards ?? []) {
-            if (!isLiveCard(card)) {
-              throw new CliError(
-                `${card.file.filename}'s image is deleted; restore it first`,
-                EXIT.usage
-              );
-            }
-          }
-          const targets = storedTargets(full, await listCardContent(ctx, deck.id), { cards });
-          if (targets.length === 0) {
-            ctx.out.data([], () =>
-              ctx.out.line(
-                cards === undefined
-                  ? `No card in ${full.deck.name} is drawn from a layout. Add some with: threepeaks deck cards push`
-                  : 'None of those cards is drawn from a layout'
-              )
-            );
-            return;
-          }
-          const run =
-            opts.check === true
-              ? await checkRenders(ctx, targets)
-              : output !== undefined
-                ? await writeStoredCards(ctx, full.deck, targets, output)
-                : await renderStoredCards(ctx, full.deck, targets);
-          if (ctx.out.json) ctx.out.line(JSON.stringify(run.results, null, 2));
-          if (run.error !== null) throw run.error;
+          const set = deckPieces(await fetchDeck(ctx, deck.id));
+          await renderPieces(ctx, set, cardsArg as unknown as string[], {
+            check: opts.check === true,
+            output: optString(opts, 'output'),
+            hint: 'threepeaks deck cards push',
+          });
         })
       )
   );

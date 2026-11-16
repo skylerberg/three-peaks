@@ -112,7 +112,7 @@
     const project = projectId;
     const id = deckId;
     editing = null;
-    void cardContent.load(project, id).catch(() => {});
+    void cardContent.load(project, { deck_id: id }).catch(() => {});
     return () => cardContent.close();
   });
 
@@ -639,7 +639,7 @@
         {#key editing}
           <CardEditor
             {projectId}
-            {deckId}
+            home={{ deck_id: deckId }}
             layouts={cardContent.layouts}
             card={editingCard}
             oncreated={() => void decks.refreshDeck().catch(() => {})}

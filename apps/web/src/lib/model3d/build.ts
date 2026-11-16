@@ -12,12 +12,18 @@ import {
 import { buildBoardPanels } from './geometry/board.ts';
 import { buildBoxGeometry } from './geometry/box.ts';
 import { buildCardGeometry } from './geometry/card.ts';
-import { buildPunchboardPiece, punchboardLayout } from './geometry/punchboard.ts';
+import {
+  EmptyPunchboardError,
+  PUNCHBOARD_SHEET_NAME,
+  buildSheetGeometry,
+  buildTokenGeometry,
+  punchboardLayout,
+} from './geometry/punchboard.ts';
 import { buildWoodGeometry } from './geometry/wood.ts';
 import { boardMaterials } from './materials/board.ts';
 import { boxMaterials } from './materials/box.ts';
 import { cardMaterials } from './materials/cardStock.ts';
-import { punchboardMaterials } from './materials/punchboard.ts';
+import { punchboardMaterials, type TokenFaces } from './materials/punchboard.ts';
 import { woodMaterials } from './materials/wood.ts';
 import {
   normalizeOutlines,
@@ -48,25 +54,33 @@ const GROUP_NAMES: Record<ModelKind, string> = {
   punchboard: 'Punchboard',
 };
 
-export class MissingCutSheetError extends Error {
+export class MissingArtworkError extends Error {
   constructor() {
-    super('A punchboard needs an SVG cut sheet: it is what says where the tokens are.');
-    this.name = 'MissingCutSheetError';
+    super('There is no artwork to build this from yet.');
+    this.name = 'MissingArtworkError';
   }
+}
+
+// One of a punchboard's tokens, as the studio and the scene read it: both faces'
+// images, and how many of it the sheet cuts.
+export interface PunchboardTokenSource {
+  front: SourceImage;
+  back: SourceImage | null;
+  quantity: number;
 }
 
 /**
  * The images a component is built from.
  *
- * Two of them at most, and which second one depends on the kind: a card takes
- * the artwork for its reverse, a punchboard takes the die line that says where
- * its tokens are. Named rather than positional because the two are nothing
- * alike, and a builder handed the wrong one would extrude a card back.
+ * One image for most kinds, and a card takes a second for its reverse; a
+ * punchboard has no image of its own and is built from its tokens instead.
+ * Named rather than positional because they are nothing alike, and a builder
+ * handed the wrong one would extrude a card back.
  */
 export interface ModelSources {
-  artwork: SourceImage;
+  artwork?: SourceImage | null;
   back?: SourceImage | null;
-  cut?: SourceImage | null;
+  tokens?: readonly PunchboardTokenSource[];
 }
 
 // One kind may be several meshes -- a folded board is one per panel -- and they
@@ -145,32 +159,65 @@ function buildBox(settings: BoxModelSettings, source: SourceImage): BuiltParts {
   return { meshes: [new Mesh(geometry, slots)], materials: slots };
 }
 
-// A punchboard is several meshes and the scene wants them as separate files, so
-// this builds the one it is asked for. `null` is all of them, which is what the
-// studio previews.
+// What a punchboard part is called: its sheet, or one token on its own.
+export const PUNCHBOARD_PARTS = { sheet: 'sheet', token: 'token' } as const;
+
+/**
+ * A punchboard is several meshes and the scene wants them as separate files, so
+ * this builds the part it is asked for. `null` is the whole sheet with every
+ * token in its hole, which is what the studio previews; `sheet` is the sheet
+ * as its state says -- still holding its tokens, or the frame left after
+ * punching; `token` is the one token it is handed, standing at the origin.
+ */
 function buildPunchboard(
   settings: PunchboardModelSettings,
-  source: SourceImage,
-  cut: SourceImage | null,
+  tokens: readonly PunchboardTokenSource[],
   part: string | null
 ): BuiltParts {
-  if (!cut || cut.svgText === null) throw new MissingCutSheetError();
+  if (part === PUNCHBOARD_PARTS.token) {
+    const [only] = tokens;
+    if (only === undefined) throw new EmptyPunchboardError();
+    const layout = punchboardLayout(settings, []);
+    const materials = punchboardMaterials(settings, [faces(only)]);
+    const mesh = new Mesh(buildTokenGeometry(layout, settings), materials.tokens[0]);
+    mesh.name = 'Token';
+    return { meshes: [mesh], materials: materials.all };
+  }
 
-  const layout = punchboardLayout(settings, cut.svgText);
-  const materials = punchboardMaterials(settings, sourceTexture(source));
-  const slots = [materials.face, materials.back, materials.edge];
+  const layout = punchboardLayout(
+    settings,
+    tokens.map((token) => token.quantity)
+  );
+  if (layout.pieces.length === 0) {
+    throw new EmptyPunchboardError(
+      tokens.length === 0
+        ? undefined
+        : 'Not one token fits on this sheet. Make the sheet larger, or the tokens or the margin smaller.'
+    );
+  }
+  const materials = punchboardMaterials(settings, tokens.map(faces));
+  const sheet = new Mesh(buildSheetGeometry(layout, settings), materials.sheet);
+  sheet.name = PUNCHBOARD_SHEET_NAME;
+  const meshes = [sheet];
+  if (part === null || settings.sheet_state === 'intact') {
+    // Every copy of a token is the same piece of board, so one geometry serves
+    // them all.
+    const geometry = buildTokenGeometry(layout, settings);
+    for (const piece of layout.pieces) {
+      const mesh = new Mesh(geometry, materials.tokens[piece.token]);
+      mesh.name = piece.name;
+      mesh.position.set(...piece.center);
+      meshes.push(mesh);
+    }
+  }
+  return { meshes, materials: materials.all };
+}
 
-  const wanted = part === null ? layout.pieces : layout.pieces.filter((one) => one.name === part);
-  const meshes = wanted.map((piece) => {
-    const mesh = new Mesh(buildPunchboardPiece(layout, piece, settings), slots);
-    mesh.name = piece.name;
-    // A piece asked for by name is exported on its own, so it stands at the
-    // origin rather than where it sat on the sheet it came out of.
-    if (part === null) mesh.position.set(...piece.center);
-    return mesh;
-  });
-
-  return { meshes, materials: slots };
+function faces(token: PunchboardTokenSource): TokenFaces {
+  return {
+    front: sourceTexture(token.front),
+    back: token.back === null ? null : sourceTexture(token.back),
+  };
 }
 
 function buildBoard(settings: BoardModelSettings, source: SourceImage): BuiltParts {
@@ -193,24 +240,25 @@ export interface BuiltModel {
 }
 
 function partsFor(settings: ModelSettings, sources: ModelSources, part: string | null): BuiltParts {
+  if (settings.kind === 'punchboard') return buildPunchboard(settings, sources.tokens ?? [], part);
+  const artwork = sources.artwork;
+  if (!artwork) throw new MissingArtworkError();
   switch (settings.kind) {
     case 'card':
-      return buildCard(settings, sources.artwork, sources.back ?? null);
+      return buildCard(settings, artwork, sources.back ?? null);
     case 'wood':
-      return buildWood(settings, sources.artwork);
+      return buildWood(settings, artwork);
     case 'box':
-      return buildBox(settings, sources.artwork);
+      return buildBox(settings, artwork);
     case 'board':
-      return buildBoard(settings, sources.artwork);
-    case 'punchboard':
-      return buildPunchboard(settings, sources.artwork, sources.cut ?? null, part);
+      return buildBoard(settings, artwork);
   }
 }
 
 /**
- * `part` names one mesh of a component that has several -- a punchboard's sheet
- * or one of its tokens. Null builds the whole thing, which is what the studio
- * previews and what every other kind is regardless.
+ * `part` names one piece of a component that has several -- a punchboard's
+ * sheet or one of its tokens. Null builds the whole thing, which is what the
+ * studio previews and what every other kind is regardless.
  */
 export function buildModel(
   settings: ModelSettings,
@@ -234,10 +282,11 @@ export function buildModel(
 // released by dropping the reference to it -- both hold GPU memory until they
 // are told to let go.
 export function disposeModel(model: BuiltModel): void {
-  for (const geometry of model.geometries) geometry.dispose();
+  for (const geometry of new Set(model.geometries)) geometry.dispose();
 
-  // A Set because the same material sits at two slots on a printed piece, and
-  // the same texture at two slots on a material.
+  // A Set because the same material sits at two slots on a printed piece, the
+  // same texture at two slots on a material, and one geometry under every copy
+  // of a token.
   const seen = new Set<{ dispose(): void }>();
   for (const material of model.materials) {
     for (const value of Object.values(material)) {

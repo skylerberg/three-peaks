@@ -1,6 +1,8 @@
-import { type ComponentFileRole, type ComponentKind, missingRoles } from '@three-peaks/shared';
+import { type ComponentKind, type ComponentSlotRole, missingRoles } from '@three-peaks/shared';
 import { AppError } from '../utils/errors.ts';
 import { FILE_COLUMNS, type FileRow, serializeFile } from './files.ts';
+import { publishAfterCommit } from './realtime/index.ts';
+import { type TokenEntry, tokensFor } from './tokens.ts';
 import type { ComponentSettings } from '../schemas/components.ts';
 import type { AppContext, Connection } from '../types/index.ts';
 
@@ -35,11 +37,11 @@ const COMPONENT_COLUMNS = [
 ] as const;
 
 export interface ComponentFile {
-  role: ComponentFileRole;
+  role: ComponentSlotRole;
   file: ReturnType<typeof serializeFile>;
 }
 
-function serializeComponent(row: ComponentRow, files: ComponentFile[]) {
+function serializeComponent(row: ComponentRow, files: ComponentFile[], tokens: TokenEntry[]) {
   const kind = row.kind as ComponentKind;
   return {
     id: row.id,
@@ -57,27 +59,27 @@ function serializeComponent(row: ComponentRow, files: ComponentFile[]) {
       kind,
       files.map((entry) => entry.role)
     ),
+    tokens,
   };
 }
 
 // A tombstoned file stays on the component that owns it, the way a deleted card
 // stays in its deck: it is what someone deciding whether to restore it reads.
+// Only the slots: a token's faces are its token's, in the list beside them.
 async function filesFor(db: Connection, componentIds: readonly string[]) {
   if (componentIds.length === 0) return new Map<string, ComponentFile[]>();
   const rows = await db
     .selectFrom('file')
     .select(FILE_COLUMNS)
     .where('file.component_id', 'in', componentIds)
+    .where('file.component_role', '=', 'artwork')
     .orderBy('file.component_role', 'asc')
     .execute();
 
   const byComponent = new Map<string, ComponentFile[]>();
   for (const row of rows as FileRow[]) {
     const list = byComponent.get(row.component_id ?? '') ?? [];
-    list.push({
-      role: (row.component_role ?? 'artwork') as ComponentFileRole,
-      file: serializeFile(row),
-    });
+    list.push({ role: 'artwork', file: serializeFile(row) });
     byComponent.set(row.component_id ?? '', list);
   }
   return byComponent;
@@ -102,11 +104,11 @@ export async function listComponents(
     .orderBy('component.name', 'asc')
     .execute();
 
-  const files = await filesFor(
-    db,
-    rows.map((row) => row.id)
+  const ids = rows.map((row) => row.id);
+  const [files, tokens] = await Promise.all([filesFor(db, ids), tokensFor(db, ids)]);
+  return rows.map((row) =>
+    serializeComponent(row, files.get(row.id) ?? [], tokens.get(row.id) ?? [])
   );
-  return rows.map((row) => serializeComponent(row, files.get(row.id) ?? []));
 }
 
 export async function readComponent(c: Pick<AppContext, 'get'>, componentId: string) {
@@ -118,8 +120,27 @@ export async function readComponent(c: Pick<AppContext, 'get'>, componentId: str
     .executeTakeFirst();
   if (!row) throw new AppError(404, 'Component not found');
 
-  const files = await filesFor(db, [componentId]);
-  return serializeComponent(row, files.get(componentId) ?? []);
+  const [files, tokens] = await Promise.all([
+    filesFor(db, [componentId]),
+    tokensFor(db, [componentId]),
+  ]);
+  return serializeComponent(row, files.get(componentId) ?? [], tokens.get(componentId) ?? []);
+}
+
+// The component as it now stands, to every screen showing it: a change to its
+// tokens is a change to the row they are carried on.
+export async function publishComponent(
+  c: Pick<AppContext, 'get'>,
+  projectId: string,
+  componentId: string
+): Promise<void> {
+  publishAfterCommit(
+    c.get('postCommitHooks'),
+    c.get('user').id,
+    'component_updated',
+    projectId,
+    await readComponent(c, componentId)
+  );
 }
 
 // Where a component created now belongs: after everything its section already

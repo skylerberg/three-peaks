@@ -4,7 +4,9 @@ import opentype, { type Font } from 'opentype.js';
 import { initWasm, Resvg } from '@resvg/resvg-wasm';
 import {
   type CardFields,
+  type LayoutFace,
   cardImageIds,
+  faceElements,
   isFontType,
   isLayoutImageType,
   pixelSize,
@@ -24,8 +26,8 @@ export function ensureWasm(): Promise<void> {
   return wasmReady;
 }
 
-function fixedImageIds(spec: CardLayout['spec']): string[] {
-  return spec.elements.flatMap((element) =>
+function fixedImageIds(spec: CardLayout['spec'], face: LayoutFace): string[] {
+  return (faceElements(spec, face) ?? []).flatMap((element) =>
     element.type === 'image' && element.source.from === 'file' ? [element.source.file_id] : []
   );
 }
@@ -77,8 +79,9 @@ export class CardRenderer {
     return pending;
   }
 
-  // The card as an SVG document, every asset it draws already fetched.
-  async svg(layout: CardLayout, fields: CardFields): Promise<string> {
+  // One face of the card as an SVG document, every asset it draws already
+  // fetched.
+  async svg(layout: CardLayout, fields: CardFields, face: LayoutFace = 'front'): Promise<string> {
     const { spec } = layout;
     const fonts = new Map<string, Font>();
     const icons = new Map<string, LoadedImage>();
@@ -90,16 +93,20 @@ export class CardRenderer {
       ...Object.entries(spec.icons).map(async ([key, id]) => {
         icons.set(key, await this.image(id, `icon "${key}"`));
       }),
-      ...[...fixedImageIds(spec), ...cardImageIds(spec, fields)].map(async (id) => {
+      ...[...fixedImageIds(spec, face), ...cardImageIds(spec, fields)].map(async (id) => {
         images.set(id, await this.image(id, `image ${id}`));
       }),
     ]);
-    return buildCardSvg(layout, fields, { fonts, icons, images });
+    return buildCardSvg(layout, fields, { fonts, icons, images }, face);
   }
 
-  // The card as PNG bytes at the layout's resolution.
-  async render(layout: CardLayout, fields: CardFields): Promise<Uint8Array> {
-    const [svg] = await Promise.all([this.svg(layout, fields), ensureWasm()]);
+  // One face of the card as PNG bytes at the layout's resolution.
+  async render(
+    layout: CardLayout,
+    fields: CardFields,
+    face: LayoutFace = 'front'
+  ): Promise<Uint8Array> {
+    const [svg] = await Promise.all([this.svg(layout, fields, face), ensureWasm()]);
     const resvg = new Resvg(svg, {
       fitTo: { mode: 'width', value: pixelSize(layout.width_mm, layout.spec.dpi) },
       // The document carries no text, only paths; system fonts would be one

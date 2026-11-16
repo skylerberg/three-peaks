@@ -26,8 +26,8 @@
     backChoices?: components['schemas']['File'][];
     // Wood only: whether the source is an SVG, whose paths are the outline.
     vector?: boolean;
-    // Punchboard only: how many tokens its die line found.
-    tokens?: number | null;
+    // Punchboard only: how many of each live token the sheet is asked to cut.
+    quantities?: readonly number[];
     // What a downloaded .glb is called, without the extension.
     exportName: string;
     // Absent on a screen with nowhere in the project to put the file.
@@ -41,7 +41,7 @@
     onchange,
     backChoices = [],
     vector = false,
-    tokens = null,
+    quantities = [],
     exportName,
     onsave,
   }: Props = $props();
@@ -94,7 +94,7 @@
     {:else if settings.kind === 'board'}
       <BoardSettings {settings} disabled={!canEdit} {onchange} />
     {:else}
-      <PunchboardSettings {settings} {tokens} disabled={!canEdit} {onchange} />
+      <PunchboardSettings {settings} {quantities} disabled={!canEdit} {onchange} />
     {/if}
   </div>
 </div>

@@ -42,7 +42,7 @@ fails when this list and the program disagree about which commands exist.
 - `threepeaks download <file> [--output <path>|-] [--version <n>] [--force] [--deck <deck>] [--component <component>]`
 - `threepeaks file show <file>` — where it lives, type, size, version
 - `threepeaks file rename <file> <name>`
-- `threepeaks file move <file> (--to <folder> | --to-deck <deck> [--back] | --to-component <component> [--role artwork|cut])`
+- `threepeaks file move <file> (--to <folder> | --to-deck <deck> [--back] | --to-component <component>)` — into a punchboard it is a new token
 - `threepeaks file delete <file> [--purge] [--force]` — soft unless `--purge`
 - `threepeaks file restore <entry> [--name <filename>]`
 - `threepeaks file versions <file>`
@@ -54,7 +54,7 @@ fails when this list and the program disagree about which commands exist.
 - `threepeaks folder restore <entry> [--name <name>]`
 
 `file` commands also take `--deck <deck>` or `--component <component>` to name a
-card or a component's file instead of an Assets path.
+card, a component's artwork or a punchboard token's face instead of an Assets path.
 
 ## Trash
 
@@ -89,10 +89,10 @@ card or a component's file instead of an Assets path.
 ## Card layouts
 
 - `threepeaks layout list`
-- `threepeaks layout show <layout>` — fields, files, and the decks drawn from it
+- `threepeaks layout show <layout>` — fields, files, and the decks and punchboards drawn from it
 - `threepeaks layout pull <layout> [--output <path>] [--force]` — YAML naming files by Assets path
 - `threepeaks layout push <path> [--layout <layout>] [--no-wait]` — create or replace by name, and wait for its cards to be drawn again
-- `threepeaks layout preview <path> [cards-file] [--deck <deck>] [--card <name>]... --output <dir>` — writes PNGs, changes nothing
+- `threepeaks layout preview <path> [cards-file] [--deck <deck> | --punchboard <punchboard>] [--card <name>]... --output <dir>` — writes PNGs, a back beside each front, changes nothing
 - `threepeaks layout delete <layout> [--force]` — refused while a card is drawn from it
 
 ## Components
@@ -103,11 +103,18 @@ card or a component's file instead of an Assets path.
 - `threepeaks component create <name> --kind <kind> [--set <key=value>]... [--file <path>|-]`
 - `threepeaks component rename <component> <name>`
 - `threepeaks component settings <component> [--set <key=value>]... [--file <path>|-] [--reset]`
-- `threepeaks component upload <component> <path> [--role artwork|cut]` — a filled slot gains a version
-- `threepeaks component download <component> [--role artwork|cut] [--output <path>|-] [--force]`
+- `threepeaks component upload <component> <path>` — its artwork; a filled slot gains a version
+- `threepeaks component download <component> [--output <path>|-] [--force]`
 - `threepeaks component move <component> (--top | --bottom | --before <component> | --after <component> | --position <n>)`
 - `threepeaks component delete <component> [--purge] [--force]`
 - `threepeaks component restore <component> [--name <name>]`
+- `threepeaks component tokens upload <punchboard> <paths...> [--same-back] [--replace]` — each image a token
+- `threepeaks component tokens back <punchboard> <token> (<path> | --same | --none)`
+- `threepeaks component tokens copies <punchboard> <token> <count>` — 0 keeps the token, cuts none
+- `threepeaks component tokens move <punchboard> <token> (--top | --bottom | --before <token> | --after <token> | --position <n>)`
+- `threepeaks component tokens pull <punchboard> [--output <path>] [--force]` — laid-out tokens as YAML
+- `threepeaks component tokens push <punchboard> <path> [--dry-run]` — like `deck cards push`; a layout with a back draws each token's back too
+- `threepeaks component tokens render <punchboard> [token...] [--check | --output <dir>]`
 
 ## Printing, Canva, links
 

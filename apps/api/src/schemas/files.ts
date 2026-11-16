@@ -79,7 +79,10 @@ export const uploadQuerySchema = type({
   'folder_id?': 'string.uuid',
   'deck_id?': 'string.uuid',
   'component_id?': 'string.uuid',
-  'role?': "'card' | 'back' | 'artwork' | 'cut'",
+  'role?': "'card' | 'back' | 'artwork' | 'token'",
+  // With role `back` into a punchboard: the token, named by its front, this
+  // file becomes the back of.
+  'back_of?': 'string.uuid',
   'id?': uuid,
 });
 
@@ -166,12 +169,12 @@ export const deletedListingSchema = type({
 });
 
 // Where a file is being moved to. Exactly one destination: a folder (null for
-// the Assets root), a deck, or a component. `role` says which slot it fills --
-// a deck's back rather than one of its cards, a punchboard's cut sheet rather
-// than its artwork.
+// the Assets root), a deck, or a component. `role` says what it becomes there
+// -- a deck's back rather than one of its cards; into a punchboard it is always
+// a new token's front, and whose back it is instead is the token list's to say.
 export const moveFileRequestSchema = type({
   'folder_id?': 'string.uuid | null',
   'deck_id?': 'string.uuid | null',
   'component_id?': 'string.uuid | null',
-  'role?': "'card' | 'back' | 'artwork' | 'cut'",
+  'role?': "'card' | 'back' | 'artwork' | 'token'",
 });

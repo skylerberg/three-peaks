@@ -43,6 +43,16 @@ import {
   unowned,
 } from '../services/fileHome.ts';
 import { assertRoomForCard, ensureDeckCard, placeInDeck, publishDeck } from '../services/decks.ts';
+import { publishComponent } from '../services/components.ts';
+import {
+  assertRoomForToken,
+  assertTakesBack,
+  backsGoingWith,
+  ensureToken,
+  leavePunchboard,
+  rejoinPunchboard,
+  setBack,
+} from '../services/tokens.ts';
 import { deleteStoredObjectsAfterCommit, reclaim, storage } from '../services/storage/index.ts';
 import { publishAfterCommit } from '../services/realtime/index.ts';
 import { jsonValidator, queryValidator } from '../middleware/validators.ts';
@@ -978,6 +988,7 @@ filesRouter.post(
       deck_id?: string;
       component_id?: string;
       role?: string;
+      back_of?: string;
       id?: string;
     };
     const projectId = query.project_id;
@@ -989,13 +1000,18 @@ filesRouter.post(
 
     // Naming no destination is the Assets root, which is what a client on the
     // previous release sends and what it has always meant.
-    const { home, deckRole } = await resolveHome(db, projectId, query);
+    const { home, deckRole, backOf } = await resolveHome(db, projectId, query);
+    const token = home.kind === 'component' && home.role === 'token' ? home.componentId : null;
 
     // Before the transfer, like the quota below and for the same kind of reason:
     // a deck past the cap is one the deck editor can never save again, and
     // finding that out after the bytes have gone up costs the upload as well.
     if (home.kind === 'deck' && deckRole === 'card') {
       await assertRoomForCard(db, home.deckId, id);
+    }
+    if (token !== null) {
+      if (backOf === null) await assertRoomForToken(db, token, id);
+      else await assertTakesBack(db, token, backOf);
     }
 
     // Checked before the transfer on what the client claims, and again below on
@@ -1065,6 +1081,12 @@ filesRouter.post(
     if (home.kind === 'deck') {
       await placeInDeck(c, home.deckId, row.id, deckRole);
     }
+    // The same for a punchboard: a front is a token, and a back is that
+    // token's from the moment it lands.
+    if (token !== null) {
+      if (backOf === null) await ensureToken(db, token, row.id);
+      else await setBack(db, token, backOf, row.id);
+    }
 
     publishAfterCommit(
       c.get('postCommitHooks'),
@@ -1074,6 +1096,7 @@ filesRouter.post(
       await fileWithUsage(c, projectId, row.id)
     );
     if (home.kind === 'deck') await publishDeck(c, projectId, home.deckId);
+    if (token !== null) await publishComponent(c, projectId, token);
     return c.json(serializeFile(row), 201);
   }
 );
@@ -1520,10 +1543,13 @@ filesRouter.post(
 
     const { home: to, deckRole } = await resolveHome(db, access.projectId, body);
     if (sameHome(from, to)) return c.json(serializeFile(file));
+    const fromTokens = from.kind === 'component' && from.role === 'token' ? from.componentId : null;
+    const toTokens = to.kind === 'component' && to.role === 'token' ? to.componentId : null;
 
     // Before the move writes anything, for the reason the upload checks it
     // before the transfer.
     if (to.kind === 'deck' && deckRole === 'card') await assertRoomForCard(db, to.deckId, id);
+    if (toTokens !== null) await assertRoomForToken(db, toTokens, id);
 
     // Against the destination, which is a set of names this file has never been
     // compared with. Renaming on arrival beats refusing the move over a clash
@@ -1531,6 +1557,7 @@ filesRouter.post(
     const filename = await freeFilename(db, access.projectId, to, file.filename);
 
     if (from.kind === 'deck') await removeFromDeck(c, from.deckId, id);
+    if (fromTokens !== null) await leavePunchboard(db, fromTokens, id);
 
     let row;
     try {
@@ -1542,7 +1569,7 @@ filesRouter.post(
         .executeTakeFirstOrThrow();
     } catch (error) {
       // The role index, not the name one: freeFilename settled the name above,
-      // and a component holds at most one artwork and one cut sheet.
+      // and a component holds at most one artwork.
       if (isUniqueViolation(error)) {
         throw new AppError(409, 'That component already has one of those. Replace it instead');
       }
@@ -1550,6 +1577,7 @@ filesRouter.post(
     }
 
     if (to.kind === 'deck') await placeInDeck(c, to.deckId, id, deckRole);
+    if (toTokens !== null) await ensureToken(db, toTokens, id);
 
     const moved = serializeFile(row);
     publishAfterCommit(
@@ -1563,6 +1591,8 @@ filesRouter.post(
     // arrangement changed, and neither screen can work the other's out.
     if (from.kind === 'deck') await publishDeck(c, access.projectId, from.deckId);
     if (to.kind === 'deck') await publishDeck(c, access.projectId, to.deckId);
+    if (fromTokens !== null) await publishComponent(c, access.projectId, fromTokens);
+    if (toTokens !== null) await publishComponent(c, access.projectId, toTokens);
     return c.json(moved);
   }
 );
@@ -1617,11 +1647,26 @@ filesRouter.delete(
           { ...file, purged: false }
         );
         // A deck counts only the cards it can print, so its totals move even
-        // though the card keeps its place.
+        // though the card keeps its place; a punchboard's sheet loses a token.
         const home = parseHome(file);
         if (home.kind === 'deck') await publishDeck(c, access.projectId, home.deckId);
+        if (home.kind === 'component' && home.role === 'token') {
+          await publishComponent(c, access.projectId, home.componentId);
+        }
       }
       return c.body(null, 204);
+    }
+
+    // A token's front takes the back that is its alone, which would otherwise
+    // be left in the punchboard with no token to be the back of.
+    const going = [id, ...(await backsGoingWith(db, id))];
+    if (going.length > 1) {
+      await db
+        .selectFrom('file')
+        .select(['file.id as id'])
+        .where('file.id', 'in', going.slice(1))
+        .forUpdate()
+        .execute();
     }
 
     // Read before the delete: the foreign key cascade takes these rows with the
@@ -1629,37 +1674,42 @@ filesRouter.delete(
     const versions = await db
       .selectFrom('file_version')
       .select(['file_version.storage_key as storage_key'])
-      .where('file_version.file_id', '=', id)
+      .where('file_version.file_id', 'in', going)
       .execute();
 
     // Before the delete: afterwards there is no row left to describe.
-    const doomed = await fileWithUsage(c, access.projectId, id);
+    const doomed = await Promise.all(going.map((one) => fileWithUsage(c, access.projectId, one)));
 
-    const row = await db
+    const rows = await db
       .deleteFrom('file')
-      .where('file.id', '=', id)
-      .returning(['file.storage_key as storage_key'])
-      .executeTakeFirst();
+      .where('file.id', 'in', going)
+      .returning(['file.id as id', 'file.storage_key as storage_key'])
+      .execute();
 
-    if (row) {
-      const keys = new Set<string>([row.storage_key, ...versions.map((v) => v.storage_key)]);
+    if (rows.some((row) => row.id === id)) {
+      const keys = new Set<string>([
+        ...rows.map((row) => row.storage_key),
+        ...versions.map((v) => v.storage_key),
+      ]);
       deleteStoredObjectsAfterCommit(c.get('postCommitHooks'), [...keys]);
-      publishAfterCommit(
-        c.get('postCommitHooks'),
-        c.get('user').id,
-        'file_deleted',
-        access.projectId,
-        {
-          ...doomed,
-          // The sum is taken before the rows go, so it still counts this file.
-          storage_used_bytes: await projectStorageUsed(c, access.projectId),
-          purged: true,
-        }
-      );
+      // The sum is taken before the rows go, so it still counts these files.
+      const used = await projectStorageUsed(c, access.projectId);
+      for (const gone of doomed) {
+        publishAfterCommit(
+          c.get('postCommitHooks'),
+          c.get('user').id,
+          'file_deleted',
+          access.projectId,
+          { ...gone, storage_used_bytes: used, purged: true }
+        );
+      }
       // The cascade took the card's row, and a screen holding the deck would
-      // otherwise go on sending it back in every save.
-      const home = parseHome(doomed);
+      // otherwise go on sending it back in every save; a token's the same.
+      const home = parseHome(doomed[0]!);
       if (home.kind === 'deck') await publishDeck(c, access.projectId, home.deckId);
+      if (home.kind === 'component' && home.role === 'token') {
+        await publishComponent(c, access.projectId, home.componentId);
+      }
     }
     return c.body(null, 204);
   }
@@ -1700,6 +1750,10 @@ filesRouter.post(
       await rejoinDeck(c, home.deckId, id);
       // Whether or not the card needed a place, it counts towards the deck again.
       await publishDeck(c, access.projectId, home.deckId);
+    }
+    if (home.kind === 'component' && home.role === 'token') {
+      await rejoinPunchboard(c.get('db'), home.componentId, id);
+      await publishComponent(c, access.projectId, home.componentId);
     }
     return c.json(restored);
   }

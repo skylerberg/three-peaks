@@ -8,6 +8,7 @@ export * from './layouts.ts';
 export * from './models3d.ts';
 export * from './print.ts';
 export * from './printRuns.ts';
+export * from './punchboards.ts';
 export * from './roles.ts';
 export * from './scenes.ts';
 export * from './tiles.ts';

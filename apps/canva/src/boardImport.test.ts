@@ -93,6 +93,7 @@ function component(overrides: Partial<Component> = {}): Component {
     deleted_at: null,
     files: [artworkFile('art-1')],
     missing_roles: [],
+    tokens: [],
     ...overrides,
   };
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isLiveCard, type CardFields } from '@three-peaks/shared';
+import { isLiveCard, type CardFields, type LayoutFace } from '@three-peaks/shared';
 import type { components } from '@three-peaks/shared/api';
 import { ApiError, CliError, EXIT, assertOk, exitCodeForStatus, toApiError } from './errors.ts';
 import { readAllStdin } from './prompt.ts';
@@ -12,7 +12,7 @@ import {
   matchRef,
   resolveFileRef,
   fetchDeck,
-  type DeckCard,
+  type Component,
   type DeckWithCards,
   type Project,
 } from './resolve.ts';
@@ -62,10 +62,94 @@ export async function resolveLayout(
   return matchLayout(ref, await listLayouts(ctx, projectId));
 }
 
-export async function listCardContent(ctx: RuntimeContext, deckId: string): Promise<CardContent[]> {
-  return assertOk(
-    await ctx.api.GET('/api/card-content', { params: { query: { deck_id: deckId } } })
-  ).cards;
+// --- Decks and punchboards ------------------------------------------------------
+
+// What a cards file is pushed into and what is drawn again: a deck's cards, or a
+// punchboard's tokens. A token's back is beside it, since its layout may draw
+// that too.
+export interface Piece {
+  file_id: string;
+  quantity: number;
+  file: FileRow;
+  back_file: FileRow | null;
+}
+
+export interface PieceSet {
+  kind: 'deck' | 'punchboard';
+  id: string;
+  name: string;
+  project_id: string;
+  width_mm: number;
+  height_mm: number;
+  pieces: Piece[];
+}
+
+export function deckPieces(full: DeckWithCards): PieceSet {
+  return {
+    kind: 'deck',
+    id: full.deck.id,
+    name: full.deck.name,
+    project_id: full.deck.project_id,
+    width_mm: full.deck.card_width_mm,
+    height_mm: full.deck.card_height_mm,
+    pieces: full.cards.map((card) => ({ ...card, back_file: null })),
+  };
+}
+
+export function punchboardPieces(component: Component): PieceSet {
+  if (component.settings.kind !== 'punchboard') {
+    throw new CliError(`${component.name} is a ${component.kind}, which has no tokens`, EXIT.usage);
+  }
+  return {
+    kind: 'punchboard',
+    id: component.id,
+    name: component.name,
+    project_id: component.project_id,
+    width_mm: component.settings.token_width_mm,
+    height_mm: component.settings.token_height_mm,
+    pieces: component.tokens,
+  };
+}
+
+// What a piece is called in a sentence.
+export function pieceNoun(set: Pick<PieceSet, 'kind'>, plural = false): string {
+  if (set.kind === 'deck') return plural ? 'cards' : 'card';
+  return plural ? 'tokens' : 'token';
+}
+
+export async function fetchPieces(
+  ctx: RuntimeContext,
+  set: Pick<PieceSet, 'kind' | 'id'>
+): Promise<PieceSet> {
+  if (set.kind === 'deck') return deckPieces(await fetchDeck(ctx, set.id));
+  return punchboardPieces(
+    assertOk(
+      await ctx.api.GET('/api/components/{componentId}', {
+        params: { path: { componentId: set.id } },
+      })
+    )
+  );
+}
+
+function homeOf(set: Pick<PieceSet, 'kind' | 'id'>) {
+  return set.kind === 'deck' ? { deck_id: set.id } : { component_id: set.id };
+}
+
+export function matchPiece(set: PieceSet, ref: string): Piece {
+  return matchRef(
+    ref,
+    set.pieces,
+    `${pieceNoun(set)} in "${set.name}"`,
+    (piece) => piece.file_id,
+    (piece) => piece.file.filename
+  );
+}
+
+export async function listCardContent(
+  ctx: RuntimeContext,
+  set: Pick<PieceSet, 'kind' | 'id'>
+): Promise<CardContent[]> {
+  return assertOk(await ctx.api.GET('/api/card-content', { params: { query: homeOf(set) } })).cards;
 }
 
 // A layout file or a cards file, or stdin for `-`.
@@ -177,12 +261,13 @@ function sameFields(a: CardFields, b: CardFields): boolean {
 // the background. What is left here is asking, and waiting to see what came of
 // it.
 
-// A card drawn without saving anything, for iterating on a layout.
-export async function previewCard(
+// One face of a card drawn without saving anything, for iterating on a layout.
+async function previewCard(
   ctx: RuntimeContext,
   projectId: string,
   layout: Pick<Layout, 'width_mm' | 'height_mm' | 'spec'>,
-  fields: CardFields
+  fields: CardFields,
+  face: LayoutFace = 'front'
 ): Promise<Uint8Array> {
   const result = await ctx.api.POST('/api/layouts/preview', {
     body: {
@@ -191,11 +276,38 @@ export async function previewCard(
       height_mm: layout.height_mm,
       spec: layout.spec,
       fields,
+      face,
     },
     parseAs: 'arrayBuffer',
   });
   if (!result.response.ok) throw toApiError(result.response, result.error);
   return new Uint8Array((result.data as unknown as ArrayBuffer | undefined) ?? new ArrayBuffer(0));
+}
+
+// What a card's back is written as beside it: after its front, as the API
+// names a token's drawn back.
+function backFilename(front: string): string {
+  return front.replace(/(\.png)?$/i, ' (back).png');
+}
+
+// Every face a layout draws for one card, written into `dir`: the front under
+// the card's name, and a back where the layout has one. The paths written.
+export async function writeFaces(
+  ctx: RuntimeContext,
+  projectId: string,
+  layout: Pick<Layout, 'width_mm' | 'height_mm' | 'spec'>,
+  fields: CardFields,
+  dir: string,
+  filename: string
+): Promise<string[]> {
+  const written = [join(dir, filename)];
+  await writeFile(written[0]!, await previewCard(ctx, projectId, layout, fields));
+  if (layout.spec.back !== null) {
+    const back = join(dir, backFilename(filename));
+    await writeFile(back, await previewCard(ctx, projectId, layout, fields, 'back'));
+    written.push(back);
+  }
+  return written;
 }
 
 type CardOutcome =
@@ -300,27 +412,33 @@ export async function eachCard<T>(
 }
 
 export interface RenderTarget {
-  card: DeckCard;
+  piece: Piece;
   content: CardContent;
 }
 
-// The live cards of a deck that are drawn from a layout, optionally only the
-// ones drawn from one layout or named on the command line.
+// The live pieces of a deck or a punchboard that are drawn from a layout,
+// optionally only the ones drawn from one layout or named on the command line.
 export function storedTargets(
-  full: DeckWithCards,
+  set: PieceSet,
   contents: readonly CardContent[],
-  filter: { layoutId?: string; cards?: readonly DeckCard[] } = {}
+  filter: { layoutId?: string; pieces?: readonly Piece[] } = {}
 ): RenderTarget[] {
   const byFile = new Map(contents.map((content) => [content.file_id, content]));
   const only =
-    filter.cards === undefined ? null : new Set(filter.cards.map((card) => card.file_id));
-  return full.cards.flatMap((card) => {
-    const content = byFile.get(card.file_id);
-    if (content === undefined || !isLiveCard(card)) return [];
+    filter.pieces === undefined ? null : new Set(filter.pieces.map((piece) => piece.file_id));
+  return set.pieces.flatMap((piece) => {
+    const content = byFile.get(piece.file_id);
+    if (content === undefined || !isLiveCard(piece)) return [];
     if (filter.layoutId !== undefined && content.layout_id !== filter.layoutId) return [];
-    if (only !== null && !only.has(card.file_id)) return [];
-    return [{ card, content }];
+    if (only !== null && !only.has(piece.file_id)) return [];
+    return [{ piece, content }];
   });
+}
+
+// The pictures a piece is printed with, as one value: a drawn back that came
+// out different is as much a new picture as a front.
+function faces(piece: Piece): string {
+  return `${piece.file.checksum ?? ''}/${piece.back_file?.checksum ?? ''}`;
 }
 
 // How long a command waits for the API to finish drawing what it asked for,
@@ -335,24 +453,27 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 // target held when it was read is what "new" is measured against.
 export async function awaitRenders(
   ctx: RuntimeContext,
-  deck: DeckWithCards['deck'],
+  set: PieceSet,
   targets: readonly RenderTarget[]
 ): Promise<CardRun> {
-  const wanted = new Set(targets.map((target) => target.card.file_id));
+  const wanted = new Set(targets.map((target) => target.piece.file_id));
   const deadline = Date.now() + RENDER_WAIT_MS;
-  let contents = await listCardContent(ctx, deck.id);
+  let contents = await listCardContent(ctx, set);
   const waiting = () =>
     contents.filter((c) => wanted.has(c.file_id) && c.render_status === 'pending').length;
   while (waiting() > 0 && Date.now() < deadline) {
     await pause(RENDER_POLL_MS);
-    contents = await listCardContent(ctx, deck.id);
+    contents = await listCardContent(ctx, set);
   }
   const status = new Map(contents.map((content) => [content.file_id, content]));
-  const now = new Map((await fetchDeck(ctx, deck.id)).cards.map((card) => [card.file_id, card]));
-  return reportRenders(ctx, targets, (target) => ({
-    content: status.get(target.card.file_id),
-    checksum: now.get(target.card.file_id)?.file.checksum ?? null,
-  }));
+  const now = new Map((await fetchPieces(ctx, set)).pieces.map((piece) => [piece.file_id, piece]));
+  return reportRenders(ctx, targets, (target) => {
+    const piece = now.get(target.piece.file_id);
+    return {
+      content: status.get(target.piece.file_id),
+      faces: piece === undefined ? null : faces(piece),
+    };
+  });
 }
 
 // Where each card stands, without waiting or asking for anything: `--check`.
@@ -363,7 +484,7 @@ export function checkRenders(
   return reportRenders(
     ctx,
     targets,
-    (target) => ({ content: target.content, checksum: target.card.file.checksum }),
+    (target) => ({ content: target.content, faces: faces(target.piece) }),
     { pendingFails: true }
   );
 }
@@ -371,23 +492,24 @@ export function checkRenders(
 function reportRenders(
   ctx: RuntimeContext,
   targets: readonly RenderTarget[],
-  current: (target: RenderTarget) => { content: CardContent | undefined; checksum: string | null },
+  current: (target: RenderTarget) => { content: CardContent | undefined; faces: string | null },
   options: { pendingFails?: boolean } = {}
 ): Promise<CardRun> {
   return eachCard(
     ctx,
     targets,
-    (target) => target.card.file.filename,
+    (target) => target.piece.file.filename,
     async (target) => {
-      const { content, checksum } = current(target);
-      const base = { card: target.card.file.filename, file_id: target.card.file_id };
+      const now = current(target);
+      const content = now.content;
+      const base = { card: target.piece.file.filename, file_id: target.piece.file_id };
       if (content?.render_status === 'failed') {
         throw new CliError(content.render_error ?? 'it could not be drawn', EXIT.invalid);
       }
       if (content?.render_status === 'pending') return { ...base, outcome: 'pending' };
       return {
         ...base,
-        outcome: checksum === target.card.file.checksum ? 'unchanged' : 'versioned',
+        outcome: now.faces === faces(target.piece) ? 'unchanged' : 'versioned',
       };
     },
     options
@@ -397,21 +519,21 @@ function reportRenders(
 // Asks for cards to be drawn again and waits for them.
 export async function renderStoredCards(
   ctx: RuntimeContext,
-  deck: DeckWithCards['deck'],
+  set: PieceSet,
   targets: readonly RenderTarget[]
 ): Promise<CardRun> {
   assertOk(
     await ctx.api.POST('/api/card-content/render', {
-      body: { deck_id: deck.id, file_ids: targets.map((target) => target.card.file_id) },
+      body: { ...homeOf(set), file_ids: targets.map((target) => target.piece.file_id) },
     })
   );
-  return awaitRenders(ctx, deck, targets);
+  return awaitRenders(ctx, set, targets);
 }
 
 // Cards drawn from their stored content into a directory, saving nothing.
 export async function writeStoredCards(
   ctx: RuntimeContext,
-  deck: DeckWithCards['deck'],
+  set: PieceSet,
   targets: readonly RenderTarget[],
   dir: string
 ): Promise<CardRun> {
@@ -428,17 +550,17 @@ export async function writeStoredCards(
   return eachCard(
     ctx,
     targets,
-    (target) => target.card.file.filename,
-    async ({ card, content }) => {
-      const bytes = await previewCard(
+    (target) => target.piece.file.filename,
+    async ({ piece, content }) => {
+      const [path] = await writeFaces(
         ctx,
-        deck.project_id,
+        set.project_id,
         await layoutOf(content.layout_id),
-        content.fields
+        content.fields,
+        dir,
+        safeFilename(piece.file.filename)
       );
-      const path = join(dir, card.file.filename);
-      await writeFile(path, bytes);
-      return { card: card.file.filename, file_id: card.file_id, outcome: 'written', path };
+      return { card: piece.file.filename, file_id: piece.file_id, outcome: 'written', path };
     }
   );
 }
@@ -456,18 +578,19 @@ export interface PlannedCard {
 
 // What one push does, card by card: a new card is created from its content, and
 // a card whose content changed is saved, which draws it. Either is refused, and
-// changes nothing, when the card cannot be drawn.
+// changes nothing, when the card cannot be drawn. A token's layout draws its
+// back as it goes.
 export async function pushCards(
   ctx: RuntimeContext,
-  full: DeckWithCards,
+  set: PieceSet,
   planned: readonly PlannedCard[],
   options: { dryRun: boolean }
 ): Promise<CardRun> {
   const contents = new Map(
-    (await listCardContent(ctx, full.deck.id)).map((content) => [content.file_id, content])
+    (await listCardContent(ctx, set)).map((content) => [content.file_id, content])
   );
   const live = new Map(
-    full.cards.filter(isLiveCard).map((card) => [card.file.filename.toLowerCase(), card])
+    set.pieces.filter(isLiveCard).map((piece) => [piece.file.filename.toLowerCase(), piece])
   );
   const copies = new Map<string, number>();
 
@@ -484,7 +607,7 @@ export async function pushCards(
           await ctx.api.POST('/api/card-content', {
             body: {
               id: randomUUID(),
-              deck_id: full.deck.id,
+              ...homeOf(set),
               filename: entry.filename,
               layout_id: entry.layout.id,
               fields: entry.fields,
@@ -525,7 +648,7 @@ export async function pushCards(
   );
   // Written even when some cards failed: the ones that went up should not be
   // left at the count an upload gives them.
-  if (!options.dryRun) await saveCopies(ctx, full.deck.id, copies);
+  if (!options.dryRun) await saveCopies(ctx, set, copies);
   return run;
 }
 
@@ -534,10 +657,23 @@ export async function pushCards(
 // back changes nothing but the counts.
 async function saveCopies(
   ctx: RuntimeContext,
-  deckId: string,
+  set: Pick<PieceSet, 'kind' | 'id'>,
   copies: ReadonlyMap<string, number>
 ): Promise<void> {
   if (copies.size === 0) return;
+  if (set.kind === 'punchboard') {
+    const latest = await fetchPieces(ctx, set);
+    await saveTokens(
+      ctx,
+      set.id,
+      latest.pieces.map((piece) => ({
+        ...tokenInput(piece),
+        quantity: copies.get(piece.file_id) ?? piece.quantity,
+      }))
+    );
+    return;
+  }
+  const deckId = set.id;
   const latest = assertOk(
     await ctx.api.GET('/api/decks/{deckId}', { params: { path: { deckId } } })
   );
@@ -548,6 +684,34 @@ async function saveCopies(
     await ctx.api.PUT('/api/decks/{deckId}/cards', {
       params: { path: { deckId } },
       body: { cards: cardsInput(next) },
+    })
+  );
+}
+
+export interface TokenInput {
+  file_id: string;
+  back_file_id: string | null;
+  quantity: number;
+}
+
+export function tokenInput(piece: Piece): TokenInput {
+  return {
+    file_id: piece.file_id,
+    back_file_id: piece.back_file?.id ?? null,
+    quantity: piece.quantity,
+  };
+}
+
+// The punchboard's whole token list in one save, as the API takes it.
+export async function saveTokens(
+  ctx: RuntimeContext,
+  componentId: string,
+  tokens: readonly TokenInput[]
+): Promise<Component> {
+  return assertOk(
+    await ctx.api.PUT('/api/components/{componentId}/tokens', {
+      params: { path: { componentId } },
+      body: { tokens: [...tokens] },
     })
   );
 }

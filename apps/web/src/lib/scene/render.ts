@@ -4,6 +4,7 @@
 // a document can be assembled -- and tested -- without loading any of it.
 
 import {
+  PUNCHBOARD_PARTS,
   buildModel,
   disposeModel,
   exportGlb,
@@ -17,9 +18,9 @@ export type SceneAssetRenderer = (build: AssetBuild) => Promise<Uint8Array>;
 /**
  * One renderer per export, holding the images it has already read.
  *
- * A deck puts the same back on every card in it and a token may be selected
- * twice over, so an uncached renderer would fetch and decode one image fifty
- * times to build fifty files that each embed it once.
+ * A deck puts the same back on every card in it, and a punchboard's sheet and
+ * its tokens are built from the same faces, so an uncached renderer would fetch
+ * and decode one image fifty times to build fifty files that each embed it once.
  */
 export function componentRenderer(): SceneAssetRenderer {
   const sources = new Map<string, Promise<SourceImage>>();
@@ -33,10 +34,21 @@ export function componentRenderer(): SceneAssetRenderer {
   };
 
   return async (build) => {
-    const artwork = await read(build.front);
+    const artwork = build.front ? await read(build.front) : null;
     const back = build.back ? await read(build.back) : null;
-    const cut = build.cut ? await read(build.cut) : null;
-    const model = buildModel(build.settings, { artwork, back, cut }, build.part);
+    // A token on its own is built from its own two faces; a sheet, from every
+    // token it cuts.
+    const tokens =
+      build.part === PUNCHBOARD_PARTS.token && artwork
+        ? [{ front: artwork, back, quantity: 1 }]
+        : await Promise.all(
+            (build.tokens ?? []).map(async (token) => ({
+              front: await read(token.front),
+              back: token.back ? await read(token.back) : null,
+              quantity: token.quantity,
+            }))
+          );
+    const model = buildModel(build.settings, { artwork, back, tokens }, build.part);
     try {
       return new Uint8Array(await exportGlb(model.group));
     } finally {

@@ -5,6 +5,20 @@ import { SAVE_DELAY_MS } from './autosave.ts';
 
 export type ProjectComponent = ApiComponents['schemas']['Component'];
 export type ComponentSettings = ProjectComponent['settings'];
+export type ComponentToken = ProjectComponent['tokens'][number];
+type FileRow = ApiComponents['schemas']['File'];
+
+// A token as the list the API takes back: its front, what is behind it, and how
+// many are cut.
+export interface TokenInput {
+  file_id: string;
+  back_file_id: string | null;
+  quantity: number;
+}
+
+export function tokenInput(token: ComponentToken): TokenInput {
+  return { file_id: token.file_id, back_file_id: token.back_file_id, quantity: token.quantity };
+}
 
 // The order the server lists a section in, so a row inserted here lands where a
 // reload would have put it. The name breaks a tie, because a tombstone keeps
@@ -164,6 +178,36 @@ class ComponentStore {
     } finally {
       this.saving = false;
     }
+  }
+
+  // A file event about one of the open punchboard's tokens: its rows ride on
+  // the token, so a new version reaches the thumbnails without a reload.
+  applyFile(file: FileRow): void {
+    const held = this.component;
+    if (!held || !held.tokens.some((t) => t.file_id === file.id || t.back_file_id === file.id)) {
+      return;
+    }
+    this.component = {
+      ...held,
+      tokens: held.tokens.map((token) => ({
+        ...token,
+        file: token.file_id === file.id ? file : token.file,
+        back_file: token.back_file?.id === file.id ? file : token.back_file,
+      })),
+    };
+  }
+
+  // The punchboard's whole token list, which is the order, the copies and the
+  // backs at once; the answer is the punchboard as it now stands.
+  async saveTokens(componentId: string, tokens: readonly TokenInput[]): Promise<void> {
+    this.apply(
+      assertOk(
+        await api.PUT('/api/components/{componentId}/tokens', {
+          params: { path: { componentId } },
+          body: { tokens: tokens.map((token) => ({ ...token })) },
+        })
+      )
+    );
   }
 
   async create(projectId: string, kind: ComponentKind, name: string): Promise<ProjectComponent> {

@@ -1,5 +1,5 @@
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
-import type { Bounds, Outline, Ring } from './types.ts';
+import type { Outline, Ring } from './types.ts';
 
 // Divisions per curve when a parsed path is flattened to a polygon. A token is
 // a few centimetres across, so this is well past what an eye or an extruder can
@@ -28,32 +28,6 @@ export function svgOutlines(text: string): Outline[] {
   }
 
   return outlines;
-}
-
-/**
- * The rectangle the document declares, which is what a punchboard's die line is
- * measured against: a token's size and the part of the sheet it samples both
- * come out of the same mapping, so neither can disagree with the other.
- *
- * Null when the document declares nothing, and the caller then falls back to
- * the paths' own extent -- which is right for a piece cut to its own outline
- * and wrong for a sheet, where the margin round the tokens is part of it.
- */
-export function svgViewBox(text: string): Bounds | null {
-  // SVGLoader hands back the parsed document, and the viewBox is on its root
-  // element rather than on the document itself.
-  const parsed = new SVGLoader().parse(text).xml as unknown as { documentElement?: Element };
-  const box = parsed.documentElement?.getAttribute('viewBox');
-  if (!box) return null;
-
-  const parts = box
-    .trim()
-    .split(/[\s,]+/u)
-    .map(Number);
-  if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) return null;
-  const [minX, minY, width, height] = parts;
-  if (width <= 0 || height <= 0) return null;
-  return { minX, minY, maxX: minX + width, maxY: minY + height };
 }
 
 function toRing(points: { x: number; y: number }[]): Ring {

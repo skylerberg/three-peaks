@@ -5,6 +5,9 @@ import {
   DEFAULT_WOOD_SETTINGS,
   defaultSettingsFor,
 } from '@three-peaks/shared';
+import { sql } from 'kysely';
+import { db } from '../../src/db/index.ts';
+import { retireUploadedSheets } from '../../src/db/migrations/0023_punchboard_tokens.ts';
 import { createUser, deleteUser, type TestUser } from '../setup/testContext.ts';
 
 const PNG = Buffer.from([
@@ -111,26 +114,68 @@ describe('components', () => {
   });
 
   describe('the files a component holds', () => {
-    it('reports what a punchboard is still waiting for', async () => {
-      const made = await create('Damage tokens', 'punchboard');
-      expect(made.body.missing_roles).toEqual(['artwork', 'cut']);
+    it('reports what a box is still waiting for, and a punchboard as waiting for nothing', async () => {
+      const box = await create('Retail box', 'box');
+      expect(box.body.missing_roles).toEqual(['artwork']);
+      expect((await uploadInto(box.body.id, 'wrap.png')).status).toBe(201);
+      expect((await (await read(box.body.id)).json()).missing_roles).toEqual([]);
 
-      expect((await uploadInto(made.body.id, 'sheet.png')).status).toBe(201);
-      expect((await read(made.body.id)).status).toBe(200);
-      expect((await (await read(made.body.id)).json()).missing_roles).toEqual(['cut']);
+      // Its tokens are a list rather than a slot, which tests/e2e/punchboardTokens covers.
+      const punchboard = await create('Damage tokens', 'punchboard');
+      expect(punchboard.body.missing_roles).toEqual([]);
+      expect(punchboard.body.tokens).toEqual([]);
+    });
 
-      expect((await uploadInto(made.body.id, 'cut.svg', 'cut')).status).toBe(201);
-      const done = await (await read(made.body.id)).json();
-      expect(done.missing_roles).toEqual([]);
-      expect(done.files.map((entry: { role: string }) => entry.role).sort()).toEqual([
-        'artwork',
-        'cut',
+    // What 0023 does to a punchboard made before it held tokens: a sheet and a
+    // die line uploaded into its two slots, and settings with no token shape.
+    it('moves the sheet and die line an old punchboard held to Assets', async () => {
+      const made = await create('Old sprue', 'punchboard');
+      const id = made.body.id as string;
+      const old: Record<string, unknown> = { ...DEFAULT_PUNCHBOARD_SETTINGS };
+      for (const key of ['token_width_mm', 'token_height_mm', 'token_corner_radius_mm']) {
+        delete old[key];
+      }
+      await sql`update component set settings = ${JSON.stringify(old)}::jsonb where id = ${id}`.execute(
+        db
+      );
+      // Uploaded as loose files and pushed into the slots by hand, the way
+      // the previous release would have filed them.
+      const sheet = await owner.api.postBytes(
+        `/api/files/upload?${new URLSearchParams({ project_id: projectId, filename: 'sheet.png' })}`,
+        PNG as unknown as BodyInit,
+        'image/png'
+      );
+      const cut = await owner.api.postBytes(
+        `/api/files/upload?${new URLSearchParams({ project_id: projectId, filename: 'cut.png' })}`,
+        PNG as unknown as BodyInit,
+        'image/png'
+      );
+      const sheetId = (await sheet.json()).id as string;
+      const cutId = (await cut.json()).id as string;
+      await sql`
+        update file set folder_id = null, component_id = ${id},
+          component_role = case when id = ${sheetId}::uuid then 'artwork' else 'cut' end
+        where id in (${sheetId}::uuid, ${cutId}::uuid)
+      `.execute(db);
+
+      await retireUploadedSheets(db as never);
+      await retireUploadedSheets(db as never);
+
+      const moved = await Promise.all(
+        [sheetId, cutId].map(async (file) => (await owner.api.get(`/api/files/${file}`)).json())
+      );
+      expect(moved.map((file) => [file.component_id, file.folder_id])).toEqual([
+        [null, null],
+        [null, null],
       ]);
+      expect(moved[0].filename).toBe(`sheet (Old sprue, artwork, ${sheetId.slice(0, 8)}).png`);
+      expect(moved[1].filename).toBe(`cut (Old sprue, cut, ${cutId.slice(0, 8)}).png`);
+      expect((await (await read(id)).json()).settings).toEqual(DEFAULT_PUNCHBOARD_SETTINGS);
     });
 
     it('refuses a role the kind does not have', async () => {
-      const made = await create('No cut sheet', 'wood');
-      const res = await uploadInto(made.body.id, 'cut.svg', 'cut');
+      const made = await create('No tokens', 'wood');
+      const res = await uploadInto(made.body.id, 'token.png', 'token');
       expect(res.status).toBe(422);
       expect(res.body.error).toMatch(/not a role a wood has/);
     });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cardFieldErrors,
   cardImageIds,
+  faceElements,
   fieldsInDrawingOrder,
   fillTemplate,
   layoutFileIds,
@@ -99,6 +100,7 @@ function spec(overrides: Partial<LayoutSpec> = {}): LayoutSpec {
       },
       text(),
     ],
+    back: null,
     ...overrides,
   };
 }
@@ -319,6 +321,67 @@ describe('pinned edges', () => {
     expect(errors({ ...frame!, slice: [4, 0, 4, 0], fit: 'contain' } as LayoutElement)).toEqual([
       'element 1 (image): slice stretches the image, so its fit must be fill',
     ]);
+  });
+});
+
+describe('a back', () => {
+  it('is checked on its own, and named as the back in every message', () => {
+    expect(
+      layoutReferenceErrors(
+        spec({ back: [rect({ when: 'missing' }), text({ text: '{{art}}', id: 'Plate' })] })
+      )
+    ).toEqual([
+      'back element 2 (text): id "Plate" must be lower-case letters, digits, - or _, starting with a letter',
+      'back element 1 (rect): when names "missing", which is not a field',
+      'back element 2 (text): {{art}} is an image field and cannot be printed as text',
+    ]);
+  });
+
+  it('keeps ids to its own face: one may repeat a front id, and none can pin to one', () => {
+    const front = text({ id: 'name', hug: true });
+    expect(
+      layoutReferenceErrors(spec({ elements: [front], back: [text({ id: 'name' })] }))
+    ).toEqual([]);
+    expect(
+      layoutReferenceErrors(
+        spec({
+          elements: [front],
+          back: [rect({ box: { ...box(0, 0, 63, 10), left: pin('name', 'left') } })],
+        })
+      )
+    ).toEqual(['back element 1 (rect): box.left names "name", which is no element\'s id']);
+  });
+
+  it('names a circle of pins as the back’s', () => {
+    expect(
+      layoutReferenceErrors(
+        spec({
+          back: [
+            rect({ id: 'a', box: { ...box(0, 0, 1, 1), left: pin('b', 'left') } }),
+            rect({ id: 'b', box: { ...box(0, 0, 1, 1), top: pin('a', 'top') } }),
+          ],
+        })
+      )
+    ).toEqual(['back elements are pinned to each other in a circle: a → b → a']);
+  });
+
+  it('asks for its fields after the front’s, and lends its fixed images to the file list', () => {
+    const backFrame = '00000000-0000-4000-8000-000000000009';
+    const twoFaced = spec({
+      fields: { rules: { type: 'text' }, art: { type: 'image' }, points: { type: 'text' } },
+      back: [
+        { ...spec().elements[0]!, source: { from: 'file', file_id: backFrame } } as LayoutElement,
+        text({ text: '{{points}}' }),
+      ],
+    });
+    expect(fieldsInDrawingOrder(twoFaced)).toEqual(['art', 'rules', 'points']);
+    expect(layoutFileIds(twoFaced)).toContain(backFrame);
+  });
+
+  it('is none for a layout stored before backs were a setting', () => {
+    const { back: _back, ...old } = spec();
+    expect(faceElements(old as LayoutSpec, 'back')).toBeNull();
+    expect(faceElements(spec(), 'front')).toHaveLength(3);
   });
 });
 

@@ -39,6 +39,54 @@ elements:
     min_size_pt: 6
 `;
 
+// A token printed both sides: a disc with its points on the front, and the
+// points again on a gold back.
+const CHALLENGE = `name: Challenge
+width_mm: 25
+height_mm: 25
+dpi: 100
+fonts:
+  body: Fonts/Body.otf
+fields:
+  points: text
+elements:
+  - type: rect
+    box: [0, 0, 25, 25]
+    fill: "#000000"
+    radius_mm: 12.5
+  - type: text
+    box: [2, 8, 21, 9]
+    text: "{{points}}"
+    font: body
+    size_pt: 12
+    color: "#ffffff"
+    align: center
+    valign: middle
+back:
+  - type: rect
+    box: [0, 0, 25, 25]
+    fill: "#c9a227"
+    radius_mm: 12.5
+  - type: text
+    box: [2, 8, 21, 9]
+    text: "{{points}}"
+    font: body
+    size_pt: 12
+    align: center
+    valign: middle
+`;
+
+const TOKENS = `layout: Challenge
+tokens:
+  - name: two
+    fields:
+      points: "2"
+  - name: three
+    copies: 2
+    fields:
+      points: "3"
+`;
+
 function cardsFile(archerRules: string, extra = ''): string {
   return `layout: Hero
 cards:
@@ -270,6 +318,111 @@ describe('layout and laid-out card commands', () => {
     // 63 mm at the layout's 120 dpi.
     expect(png.readUInt32BE(16)).toBe(298);
     expect(await versions('knight.png')).toBe(3);
+  });
+
+  describe('tokens drawn from a layout with a back', () => {
+    type Component = components['schemas']['Component'];
+
+    async function board(): Promise<Component> {
+      const res = await cli(['component', 'show', 'Challenges', '--json']);
+      expect(res.exitCode).toBe(0);
+      return res.json<Component>();
+    }
+
+    beforeAll(async () => {
+      const made = await cli([
+        'component',
+        'create',
+        'Challenges',
+        '--kind',
+        'punchboard',
+        '--set',
+        'token_width_mm=25',
+        '--set',
+        'token_height_mm=25',
+      ]);
+      expect(made.stderr).toBe('');
+    });
+
+    it('pushes a layout with a back, and pulls it back as written', async () => {
+      const pushed = await cli(['layout', 'push', await write('challenge.yaml', CHALLENGE)]);
+      expect(pushed.stderr).toBe('');
+      const pulled = await cli(['layout', 'pull', 'Challenge']);
+      expect(parse(pulled.stdout)).toEqual(parse(CHALLENGE));
+      const shown = await cli(['layout', 'show', 'Challenge']);
+      expect(shown.stdout).toContain('Elements: 2 on the front, 2 on the back');
+    });
+
+    it('creates every token in a tokens file, each with a back drawn for it', async () => {
+      const res = await cli([
+        'component',
+        'tokens',
+        'push',
+        'Challenges',
+        await write('tokens.yaml', TOKENS),
+      ]);
+      expect(res.stderr).toBe('');
+      expect(res.stdout).toContain('Created two.png');
+      const { tokens } = await board();
+      expect(tokens.map((t) => [t.file.filename, t.back_file?.filename, t.quantity])).toEqual([
+        ['two.png', 'two (back).png', 1],
+        ['three.png', 'three (back).png', 2],
+      ]);
+    });
+
+    it('pulls the tokens back under `tokens`, as a file that pushes as no change', async () => {
+      const pulled = await cli(['component', 'tokens', 'pull', 'Challenges']);
+      expect(parse(pulled.stdout)).toEqual(
+        parse(TOKENS.replace('  - name: two\n', '  - name: two\n    copies: 1\n'))
+      );
+      const again = await cli([
+        'component',
+        'tokens',
+        'push',
+        'Challenges',
+        await write('pulled-tokens.yaml', pulled.stdout),
+      ]);
+      expect(again.stdout).toContain('Unchanged two.png');
+      expect(again.stdout).toContain('Unchanged three.png');
+    });
+
+    it('previews both faces of the stored tokens without changing anything', async () => {
+      const out = join(dir, 'token-preview');
+      const res = await cli([
+        'layout',
+        'preview',
+        join(dir, 'challenge.yaml'),
+        '--punchboard',
+        'Challenges',
+        '-o',
+        out,
+      ]);
+      expect(res.exitCode, res.stderr).toBe(0);
+      expect((await readdir(out)).sort()).toEqual([
+        'three (back).png',
+        'three.png',
+        'two (back).png',
+        'two.png',
+      ]);
+      // 25 mm at the layout's 100 dpi.
+      expect((await readFile(join(out, 'two (back).png'))).readUInt32BE(16)).toBe(98);
+    });
+
+    it('says every token is drawn, and draws the back again when the layout changes', async () => {
+      const check = await cli(['component', 'tokens', 'render', 'Challenges', '--check']);
+      expect(check.exitCode, check.stderr).toBe(0);
+
+      const backBefore = (await board()).tokens[0]!.back_file!.checksum;
+      const pushed = await cli([
+        'layout',
+        'push',
+        await write('challenge-2.yaml', CHALLENGE.replace('#c9a227', '#ffd700')),
+      ]);
+      expect(pushed.exitCode, pushed.stderr).toBe(0);
+      expect(pushed.stdout).toContain('Challenges: 2 tokens');
+      expect(pushed.stdout).toContain('Updated two.png');
+      expect((await board()).tokens[0]!.back_file!.checksum).not.toBe(backBefore);
+    });
   });
 
   it('refuses to delete a layout cards are drawn from', async () => {
