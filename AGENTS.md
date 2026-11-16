@@ -535,9 +535,13 @@ A **deck** is an ordered list of card images with a copy count each, one card
 size, and one image on the back. The order is `deck_card.position`, dragged into
 place on the deck screen and replaced wholesale by every save. `/projects/:projectId/print` turns any selection
 of decks into a US Letter PDF: cards packed as tightly as the paper allows, with
-a backing page behind every sheet. The same screen prints a board, which is the
-one thing on it that can be larger than the paper — see "A board on paper"
-below.
+a backing page behind every sheet. A punchboard's tokens print on the same
+sheets the same way, each token a card of its own size behind the back that is
+its own -- `PrintSource` lets a card name its back in place of its set's --
+which is how a punchboard is proofed on ordinary paper before anything is
+die-cut. A punchboard opens unticked unless the screen was opened for it
+(`?punchboard=`). The same screen prints a board, which is the one thing on it
+that can be larger than the paper — see "A board on paper" below.
 
 **Card sizes are Panda Game Manufacturing's**, in
 `packages/shared/src/cards.ts`, and both features that size a card read that one
@@ -702,7 +706,10 @@ off it.
 `readOutstanding` in `apps/api/src/services/printRuns.ts` is the whole of the
 comparison, and what the screen shows is one subtraction: the copies the deck
 asks for, less the copies already on paper at the artwork this card carries now,
-behind the back this deck gives it now. Four situations fall out of that rather
+behind the back this deck gives it now. A punchboard's tokens are read the same
+way with their own backs, which every card in the answer carries as
+`back_file_id` and `back_version_number` -- the screen records those rather
+than working a deck's out. Four situations fall out of that rather
 than being tested for -- a card nothing has printed, one whose artwork has been
 re-imported, one whose deck has a new back, one whose copy count went up -- and
 `reason` says which, because a badge reading "new artwork" is a different

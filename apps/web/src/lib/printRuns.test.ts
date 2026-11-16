@@ -6,6 +6,8 @@ function owed(overrides: Partial<OutstandingCard> = {}): OutstandingCard {
     file_id: 'f1',
     version_number: 1,
     quantity: 3,
+    back_file_id: null,
+    back_version_number: null,
     printed_copies: 0,
     owed_copies: 3,
     printed_version_number: null,

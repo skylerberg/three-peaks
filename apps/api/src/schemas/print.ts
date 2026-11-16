@@ -13,7 +13,11 @@ export const printOutstandingCardSchema = type({
   // it hands back when it records the run.
   version_number: 'number',
   quantity: 'number',
-  // Copies already on paper at this artwork, behind this deck's current back.
+  // The reverse it is printed with now -- its deck's back, or a token's own --
+  // at the version the print screen draws and records it at.
+  back_file_id: 'string | null',
+  back_version_number: 'number | null',
+  // Copies already on paper at this artwork, behind that reverse.
   printed_copies: 'number',
   owed_copies: 'number',
   // The newest version any run ever printed, whatever back it carried. Null
@@ -32,8 +36,15 @@ export const printOutstandingDeckSchema = type({
   cards: printOutstandingCardSchema.array(),
 });
 
+export const printOutstandingPunchboardSchema = type({
+  component_id: 'string',
+  last_printed_at: 'string | null',
+  tokens: printOutstandingCardSchema.array(),
+});
+
 export const printOutstandingSchema = type({
   decks: printOutstandingDeckSchema.array(),
+  punchboards: printOutstandingPunchboardSchema.array(),
 });
 
 const [, maxQuantity] = DECK_QUANTITY_LIMITS;

@@ -1,8 +1,8 @@
 import type { components } from '@three-peaks/shared/api';
 import { api, assertOk } from '../api/client.ts';
 
-export type OutstandingDeck = components['schemas']['PrintOutstanding']['decks'][number];
-export type OutstandingCard = OutstandingDeck['cards'][number];
+type Outstanding = components['schemas']['PrintOutstanding'];
+export type OutstandingCard = Outstanding['decks'][number]['cards'][number];
 export type PrintRun = components['schemas']['PrintRun'];
 
 // Which count a card starts at. `all` offers every copy of every selected card;
@@ -19,11 +19,24 @@ export interface RecordedCard {
   back_version_number?: number | null;
 }
 
-export async function readOutstanding(projectId: string): Promise<OutstandingDeck[]> {
+// Every deck's cards and every punchboard's tokens, by the deck or punchboard
+// they belong to and then by file: what the print screen looks a card up in.
+export async function readOutstanding(
+  projectId: string
+): Promise<Record<string, { last_printed_at: string | null; cards: OutstandingCard[] }>> {
   const data = assertOk(
     await api.GET('/api/print/outstanding', { params: { query: { project_id: projectId } } })
   );
-  return data.decks;
+  return Object.fromEntries([
+    ...data.decks.map((deck) => [deck.deck_id, deck] as const),
+    ...data.punchboards.map(
+      (board) =>
+        [
+          board.component_id,
+          { last_printed_at: board.last_printed_at, cards: board.tokens },
+        ] as const
+    ),
+  ]);
 }
 
 export async function recordPrintRun(

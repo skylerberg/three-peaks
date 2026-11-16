@@ -140,6 +140,7 @@
         projectId={route.params.projectId}
         deckId={route.params.deckId}
         boardId={route.params.boardId}
+        punchboardId={route.params.punchboardId}
       />
     {:else if route.name === 'scene'}
       <SceneExport projectId={route.params.projectId} />

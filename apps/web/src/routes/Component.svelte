@@ -329,6 +329,14 @@
             Print
           </a>
         {/if}
+        {#if punchboard && component.tokens.some(isLiveCard)}
+          <a
+            class="focus-ring rounded px-3 py-2 text-sm underline"
+            href="/projects/{projectId}/print?punchboard={component.id}"
+          >
+            Print
+          </a>
+        {/if}
         <a
           class="focus-ring rounded px-3 py-2 text-sm underline"
           href="/projects/{projectId}/components/{component.kind}"

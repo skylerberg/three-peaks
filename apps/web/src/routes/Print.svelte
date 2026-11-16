@@ -6,6 +6,7 @@
     PAGE_SIZES,
     PRINTER_MARGIN_LIMITS,
     PRINT_DPI,
+    type CardSize,
     type FlipEdge,
     type TileGrid,
     type TileSize,
@@ -25,11 +26,10 @@
   import Button from '../components/ui/Button.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import { ApiError, api, assertOk } from '../api/client.ts';
-  import { type Deck, type DeckCard, decks } from '../lib/decks.svelte.ts';
+  import { decks } from '../lib/decks.svelte.ts';
   import { saveBlob } from '../lib/download.ts';
   import {
     type OutstandingCard,
-    type OutstandingDeck,
     type PrintMode,
     type PrintRun,
     type RecordedCard,
@@ -47,13 +47,32 @@
     projectId: string;
     deckId: string | null;
     boardId: string | null;
+    punchboardId: string | null;
   }
-  let { projectId, deckId, boardId }: Props = $props();
+  let { projectId, deckId, boardId, punchboardId }: Props = $props();
 
-  interface LoadedDeck {
-    deck: Deck;
-    cards: DeckCard[];
+  // What prints as cards on a sheet: a deck's cards, or a punchboard's tokens.
+  // One size, and each piece with the back it prints with -- the deck's for
+  // every card of a deck, a token's own for a punchboard, null for a blank
+  // reverse. Only the live ones: a deleted image has no bytes to place.
+  interface PrintSet {
+    id: string;
+    kind: 'deck' | 'punchboard';
+    name: string;
+    size: CardSize;
+    // The back a deck gives every card, which a punchboard has none of.
+    back_file_id: string | null;
+    pieces: PrintPiece[];
   }
+
+  interface PrintPiece {
+    file_id: string;
+    quantity: number;
+    filename: string;
+    back_file_id: string | null;
+  }
+
+  const PIECES = { deck: 'cards', punchboard: 'tokens' } as const;
 
   // A board as this screen needs it: what it is cut to, and the artwork that is
   // still there to print. Null where the artwork was never uploaded or has been
@@ -67,17 +86,17 @@
 
   let error = $state<string | null>(null);
   let loading = $state(true);
-  let loaded = $state<LoadedDeck[]>([]);
+  let loaded = $state<PrintSet[]>([]);
   let boards = $state<LoadedBoard[]>([]);
   // Unticked unless the screen was opened for one. A board is several sheets of
   // a different paper from the cards, and nothing records that one has been
   // printed, so every run including every board is not a default anyone wants.
   let chosenBoards = $state<Record<string, boolean>>({});
   let expanded = $state<Record<string, boolean>>({});
-  // Which cards this run puts on paper, keyed deck:file, without changing what
-  // the deck holds -- the deck's own counts are the persistent truth and this is
-  // one print job's opinion. A deck's own box is counted back off this rather
-  // than held beside it, so the two cannot disagree.
+  // Which cards this run puts on paper, keyed set:file, without changing what
+  // the deck or punchboard holds -- its own counts are the persistent truth and
+  // this is one print job's opinion. A set's own box is counted back off this
+  // rather than held beside it, so the two cannot disagree.
   let included = $state<Record<string, boolean>>({});
   // And how many of each, for the cards somebody has typed a number over. Only
   // those: the deck's copy count is the default, so a key absent here is a card
@@ -85,10 +104,12 @@
   // overwriting a number anyone chose.
   let copies = $state<Record<string, number>>({});
 
-  // What each card still owes the printer, as the API works it out. Held beside
-  // the decks rather than folded into them: it is a fact about print runs, and
-  // the deck rows are the same ones every other screen reads.
-  let outstanding = $state<OutstandingDeck[]>([]);
+  // What each card and token still owes the printer, as the API works it out,
+  // by the deck or punchboard it belongs to. Held beside the sets rather than
+  // folded into them: it is a fact about print runs.
+  let outstanding = $state<
+    Record<string, { last_printed_at: string | null; cards: OutstandingCard[] }>
+  >({});
   // The run this screen has just written down, and the only one it offers to
   // take back. A jammed sheet is the case; anything older is history.
   let recorded = $state<PrintRun | null>(null);
@@ -108,45 +129,39 @@
   const page = $derived(pageSize(pageId) ?? PAGE_SIZES[0]);
   const [minCopies, maxCopies] = DECK_QUANTITY_LIMITS;
 
-  const key = (deck: string, file: string) => `${deck}:${file}`;
+  const key = (set: string, file: string) => `${set}:${file}`;
 
   // One lookup for the whole screen. A deck of five hundred cards is scanned
   // once here rather than once per row per recompute.
   const owed = $derived.by(() => {
-    const byDeck: Record<string, Record<string, OutstandingCard>> = {};
-    for (const deck of outstanding) {
-      byDeck[deck.deck_id] = Object.fromEntries(deck.cards.map((card) => [card.file_id, card]));
+    const bySet: Record<string, Record<string, OutstandingCard>> = {};
+    for (const [setId, entry] of Object.entries(outstanding)) {
+      bySet[setId] = Object.fromEntries(entry.cards.map((card) => [card.file_id, card]));
     }
-    return byDeck;
+    return bySet;
   });
-  const owedDecks = $derived(
-    Object.fromEntries(outstanding.map((deck) => [deck.deck_id, deck])) as Record<
-      string,
-      OutstandingDeck | undefined
-    >
-  );
 
-  function outstandingFor(deckId: string, fileId: string): OutstandingCard | undefined {
-    return owed[deckId]?.[fileId];
+  function outstandingFor(setId: string, fileId: string): OutstandingCard | undefined {
+    return owed[setId]?.[fileId];
   }
 
   // What one card puts on paper: the number in its field, which is the plan's
   // number too -- the field is not a display of the count, it is the count.
-  function printedCopies(deckId: string, card: DeckCard): number {
-    return copies[key(deckId, card.file_id)] ?? startingCopies(deckId, card);
+  function printedCopies(setId: string, piece: PrintPiece): number {
+    return copies[key(setId, piece.file_id)] ?? startingCopies(setId, piece);
   }
 
-  function startingCopies(deckId: string, card: DeckCard): number {
-    return defaultCopies(card.quantity, outstandingFor(deckId, card.file_id), mode);
+  function startingCopies(setId: string, piece: PrintPiece): number {
+    return defaultCopies(piece.quantity, outstandingFor(setId, piece.file_id), mode);
   }
 
   function setCopies(
-    deckId: string,
-    card: DeckCard,
+    setId: string,
+    piece: PrintPiece,
     event: Event & { currentTarget: HTMLInputElement }
   ) {
     const typed = Number(event.currentTarget.value);
-    const slot = key(deckId, card.file_id);
+    const slot = key(setId, piece.file_id);
     if (!Number.isFinite(typed)) {
       delete copies[slot];
     } else {
@@ -155,11 +170,11 @@
     // Written back because a number that clamps onto the one already held
     // leaves the state unchanged, and with it the field showing what was typed
     // over a sheet that prints something else.
-    event.currentTarget.value = String(printedCopies(deckId, card));
+    event.currentTarget.value = String(printedCopies(setId, piece));
   }
 
-  function resetCopies(entry: LoadedDeck) {
-    for (const card of entry.cards) delete copies[key(entry.deck.id, card.file_id)];
+  function resetCopies(set: PrintSet) {
+    for (const piece of set.pieces) delete copies[key(set.id, piece.file_id)];
   }
 
   function selectAll(event: FocusEvent & { currentTarget: HTMLInputElement }) {
@@ -171,15 +186,15 @@
   // the artwork that went through the printer.
   const runEntries = $derived(
     loaded
-      .map((entry) => ({
-        deck: entry.deck,
-        state: owedDecks[entry.deck.id],
-        cards: entry.cards
-          .filter((card) => included[key(entry.deck.id, card.file_id)] === true)
-          .map((card) => ({
-            file_id: card.file_id,
-            copies: printedCopies(entry.deck.id, card),
-            version_number: outstandingFor(entry.deck.id, card.file_id)?.version_number ?? null,
+      .map((set) => ({
+        set,
+        cards: set.pieces
+          .filter((piece) => included[key(set.id, piece.file_id)] === true)
+          .map((piece) => ({
+            file_id: piece.file_id,
+            back_file_id: piece.back_file_id,
+            copies: printedCopies(set.id, piece),
+            state: outstandingFor(set.id, piece.file_id),
           }))
           .filter((card) => card.copies > 0),
       }))
@@ -188,10 +203,14 @@
 
   const runDecks = $derived(
     runEntries.map((entry) => ({
-      name: entry.deck.name,
-      card: deckCardSize(entry.deck),
-      back_file_id: entry.deck.back_file_id,
-      cards: entry.cards.map((card) => ({ file_id: card.file_id, copies: card.copies })),
+      name: entry.set.name,
+      card: entry.set.size,
+      back_file_id: entry.set.back_file_id,
+      cards: entry.cards.map((card) => ({
+        file_id: card.file_id,
+        copies: card.copies,
+        back_file_id: card.back_file_id,
+      })),
     }))
   );
 
@@ -199,10 +218,12 @@
   // drawn from the same artwork the counts above were worked out against.
   const versions = $derived.by(() => {
     const pinned: Record<string, number> = {};
-    for (const deck of outstanding) {
-      for (const card of deck.cards) pinned[card.file_id] = card.version_number;
-      if (deck.back_file_id !== null && deck.back_version_number !== null) {
-        pinned[deck.back_file_id] = deck.back_version_number;
+    for (const entry of Object.values(outstanding)) {
+      for (const card of entry.cards) {
+        pinned[card.file_id] = card.version_number;
+        if (card.back_file_id !== null && card.back_version_number !== null) {
+          pinned[card.back_file_id] = card.back_version_number;
+        }
       }
     }
     return pinned;
@@ -213,23 +234,22 @@
   // at a number nobody checked -- it simply stays owed.
   const recordable = $derived(
     runEntries.flatMap((entry) =>
-      entry.cards
-        .filter((card) => card.version_number !== null)
-        .map((card): RecordedCard => {
-          const back =
-            includeBacks && entry.deck.back_file_id !== null && entry.state?.back_version_number
-              ? {
-                  back_file_id: entry.deck.back_file_id,
-                  back_version_number: entry.state.back_version_number,
-                }
-              : {};
-          return {
+      entry.cards.flatMap((card): RecordedCard[] => {
+        const state = card.state;
+        if (state === undefined) return [];
+        const back =
+          includeBacks && state.back_file_id !== null && state.back_version_number !== null
+            ? { back_file_id: state.back_file_id, back_version_number: state.back_version_number }
+            : {};
+        return [
+          {
             file_id: card.file_id,
-            version_number: card.version_number as number,
+            version_number: state.version_number,
             copies: card.copies,
             ...back,
-          };
-        })
+          },
+        ];
+      })
     )
   );
 
@@ -246,7 +266,23 @@
   // screen is the page count of the file the button produces.
   const summary = $derived(summarizeRuns(planRuns(runDecks), page, printerMargin, includeBacks));
 
-  const anyBacks = $derived(runDecks.some((entry) => entry.back_file_id !== null));
+  // "12 cards and 30 tokens", counted off the run the summary is planned from.
+  const piecesLabel = $derived.by(() => {
+    const count = (kind: PrintSet['kind']) =>
+      runEntries
+        .filter((entry) => entry.set.kind === kind)
+        .reduce((sum, entry) => sum + entry.cards.reduce((n, card) => n + card.copies, 0), 0);
+    const tokens = count('punchboard');
+    const cards = summary.cards - tokens;
+    const phrase = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    if (tokens === 0) return phrase(cards, 'card', 'cards');
+    if (cards === 0) return phrase(tokens, 'token', 'tokens');
+    return `${phrase(cards, 'card', 'cards')} and ${phrase(tokens, 'token', 'tokens')}`;
+  });
+
+  const anyBacks = $derived(
+    runDecks.some((entry) => entry.cards.some((card) => card.back_file_id !== null))
+  );
 
   const boardGrids = $derived(
     Object.fromEntries(
@@ -291,31 +327,33 @@
     return fit === 'fill' ? Math.min(across, down) : Math.max(across, down);
   }
 
-  // Every deck's box, counted off its own cards: checked when the whole deck is
-  // ticked, mixed when part of it is, and nothing to tick at all when a deck
-  // holds no card. `typed` is what puts the reset beside it, and is counted
-  // here rather than scanned for separately.
-  const deckChoice = $derived.by(() => {
+  // Every set's box, counted off its own pieces: checked when the whole set is
+  // ticked, mixed when part of it is, and nothing to tick at all when it holds
+  // none. `typed` is what puts the reset beside it, and is counted here rather
+  // than scanned for separately.
+  const setChoice = $derived.by(() => {
     const counted: Record<string, { total: number; chosen: number; typed: boolean }> = {};
-    for (const { deck, cards } of loaded) {
-      counted[deck.id] = {
-        total: cards.length,
-        chosen: cards.filter((card) => included[key(deck.id, card.file_id)] === true).length,
-        typed: cards.some((card) => copies[key(deck.id, card.file_id)] !== undefined),
+    for (const set of loaded) {
+      counted[set.id] = {
+        total: set.pieces.length,
+        chosen: set.pieces.filter((piece) => included[key(set.id, piece.file_id)] === true).length,
+        typed: set.pieces.some((piece) => copies[key(set.id, piece.file_id)] !== undefined),
       };
     }
     return counted;
   });
 
-  const anySelected = $derived(Object.values(deckChoice).some((choice) => choice.chosen > 0));
+  const anySelected = $derived(Object.values(setChoice).some((choice) => choice.chosen > 0));
+  const deckSets = $derived(loaded.filter((set) => set.kind === 'deck'));
+  const punchboardSets = $derived(loaded.filter((set) => set.kind === 'punchboard'));
 
-  function chooseWholeDeck(entry: LoadedDeck, choose: boolean) {
-    for (const card of entry.cards) included[key(entry.deck.id, card.file_id)] = choose;
+  function chooseWholeSet(set: PrintSet, choose: boolean) {
+    for (const piece of set.pieces) included[key(set.id, piece.file_id)] = choose;
   }
 
   $effect(() => {
     const project = projectId;
-    const preselect = deckId;
+    const preselect = deckId ?? punchboardId;
     const board = boardId;
     loading = true;
     error = null;
@@ -324,14 +362,55 @@
       try {
         await decks.loadList(project);
         const list = decks.decks;
-        const [full, pending, listed] = await Promise.all([
+        const [full, pending, listed, punched] = await Promise.all([
           Promise.all(list.map((deck) => decks.readDeck(deck.id))),
           readOutstanding(project),
           api.GET('/api/components', { params: { query: { project_id: project, kind: 'board' } } }),
+          api.GET('/api/components', {
+            params: { query: { project_id: project, kind: 'punchboard' } },
+          }),
         ]);
         // A card whose image is deleted has no bytes to place, so it is not a card
-        // of the deck as far as a print run is concerned.
-        loaded = full.map((entry) => ({ ...entry, cards: entry.cards.filter(isLiveCard) }));
+        // of the deck as far as a print run is concerned; nor is a token's, and a
+        // back of its own that is deleted prints nothing.
+        loaded = [
+          ...full.map(({ deck, cards }) => ({
+            id: deck.id,
+            kind: 'deck' as const,
+            name: deck.name,
+            size: deckCardSize(deck),
+            back_file_id: deck.back_file_id,
+            pieces: cards.filter(isLiveCard).map((card) => ({
+              file_id: card.file_id,
+              quantity: card.quantity,
+              filename: card.file.filename,
+              back_file_id: deck.back_file_id,
+            })),
+          })),
+          ...assertOk(punched).components.flatMap((component) =>
+            component.settings.kind === 'punchboard'
+              ? [
+                  {
+                    id: component.id,
+                    kind: 'punchboard' as const,
+                    name: component.name,
+                    size: {
+                      width_mm: component.settings.token_width_mm,
+                      height_mm: component.settings.token_height_mm,
+                    },
+                    back_file_id: null,
+                    pieces: component.tokens.filter(isLiveCard).map((token) => ({
+                      file_id: token.file_id,
+                      quantity: token.quantity,
+                      filename: token.file.filename,
+                      back_file_id:
+                        token.back_file?.deleted_at === null ? token.back_file.id : null,
+                    })),
+                  },
+                ]
+              : []
+          ),
+        ];
         boards = assertOk(listed).components.flatMap((component) => {
           if (component.settings.kind !== 'board') return [];
           const artwork = component.files.find((entry) => entry.role === 'artwork')?.file ?? null;
@@ -351,13 +430,16 @@
         recorded = null;
         copies = {};
         // Opened for one board is opened for that board alone: the cards are a
-        // different job on different paper.
+        // different job on different paper. Opened for nothing, every deck is
+        // ticked; a punchboard is ticked only when it was asked for, since its
+        // tokens are a sheet of their own nobody prints by default.
         included = Object.fromEntries(
           loaded
             .filter(
-              (entry) => board === null && (preselect === null || preselect === entry.deck.id)
+              (set) =>
+                board === null && (preselect === null ? set.kind === 'deck' : preselect === set.id)
             )
-            .flatMap((entry) => entry.cards.map((card) => [key(entry.deck.id, card.file_id), true]))
+            .flatMap((set) => set.pieces.map((piece) => [key(set.id, piece.file_id), true]))
         );
         chosenBoards = board === null ? {} : { [board]: true };
       } catch (caught) {
@@ -371,17 +453,17 @@
     })();
   });
 
-  function cardsPerSheet(deck: Deck): number {
-    return planGrid(page, deckCardSize(deck), printerMargin).per_sheet;
+  function perSheet(set: PrintSet): number {
+    return planGrid(page, set.size, printerMargin).per_sheet;
   }
 
   function when(timestamp: string): string {
     return new Date(timestamp).toLocaleString();
   }
 
-  function sizeLabel(deck: Deck): string {
-    const preset = matchingCardPreset(deckCardSize(deck));
-    return preset ? preset.name : `${deck.card_width_mm} × ${deck.card_height_mm} mm`;
+  function sizeLabel(size: CardSize): string {
+    const preset = matchingCardPreset(size);
+    return preset ? preset.name : `${size.width_mm} × ${size.height_mm} mm`;
   }
 
   async function generate() {
@@ -451,9 +533,9 @@
       <a class="focus-ring rounded text-sm underline" href="/projects/{projectId}/decks">Decks</a>
       <h1 class="text-2xl font-semibold">Print sheets</h1>
       <p class="text-sm text-muted">
-        Cards packed onto {page.name} at their real size, with a mirrored backing page behind every sheet.
-        Print double-sided at 100% scale — never “fit to page”. A board prints on one side, split across
-        pages when it is larger than one.
+        Cards and punchboard tokens packed onto {page.name} at their real size, with a mirrored backing
+        page behind every sheet. Print double-sided at 100% scale — never “fit to page”. A board prints
+        on one side, split across pages when it is larger than one.
       </p>
     </div>
 
@@ -461,7 +543,7 @@
       <Spinner label="Loading decks" />
     {:else if loaded.length === 0 && boards.length === 0}
       <p class="text-sm text-muted">
-        This project has no decks or boards yet.
+        This project has no decks, punchboards or boards yet.
         <a class="focus-ring rounded underline" href="/projects/{projectId}/decks">Make a deck</a>
         or
         <a class="focus-ring rounded underline" href="/projects/{projectId}/components/board">
@@ -471,108 +553,19 @@
     {:else}
       <section class="flex flex-col gap-2">
         <h2 class="text-lg font-semibold">What to print</h2>
-        {#if loaded.length > 0}
+        {#if deckSets.length > 0}
           <ul class="flex flex-col gap-2" aria-label="Decks">
-            {#each loaded as entry (entry.deck.id)}
-              {@const perSheet = cardsPerSheet(entry.deck)}
-              {@const printedAt = owedDecks[entry.deck.id]?.last_printed_at ?? null}
-              {@const choice = deckChoice[entry.deck.id]}
-              <li class="rounded-md border border-edge bg-surface p-3">
-                <div class="flex flex-wrap items-center gap-3">
-                  <label class="flex min-h-11 min-w-0 flex-1 items-center gap-3">
-                    <input
-                      type="checkbox"
-                      class="focus-ring size-4"
-                      checked={choice.total > 0 && choice.chosen === choice.total}
-                      indeterminate={choice.chosen > 0 && choice.chosen < choice.total}
-                      disabled={choice.total === 0}
-                      onchange={(event) => chooseWholeDeck(entry, event.currentTarget.checked)}
-                    />
-                    <span class="min-w-0 flex-1 truncate font-medium">{entry.deck.name}</span>
-                  </label>
-                  {#if choice.chosen > 0 && choice.chosen < choice.total}
-                    <span class="text-sm text-muted">{choice.chosen} of {choice.total} cards</span>
-                  {/if}
-                  <span class="text-sm text-muted">{sizeLabel(entry.deck)}</span>
-                  <span class="text-sm text-muted">
-                    {perSheet > 0 ? `${perSheet} per sheet` : 'too large for this paper'}
-                  </span>
-                  <span class="text-sm text-muted">
-                    {#if printedAt}
-                      last printed <time datetime={printedAt}>{when(printedAt)}</time>
-                    {:else}
-                      never printed
-                    {/if}
-                  </span>
-                  {#if entry.deck.back_file_id === null}
-                    <span class="text-sm text-warning">no back</span>
-                  {/if}
-                  {#if choice.typed}
-                    <Button
-                      variant="ghost"
-                      aria-label="Reset the counts for {entry.deck.name}"
-                      onclick={() => resetCopies(entry)}
-                    >
-                      Reset counts
-                    </Button>
-                  {/if}
-                  <Button
-                    variant="ghost"
-                    aria-expanded={expanded[entry.deck.id] === true}
-                    onclick={() => (expanded[entry.deck.id] = !expanded[entry.deck.id])}
-                  >
-                    {expanded[entry.deck.id] ? 'Hide cards' : 'Choose cards'}
-                  </Button>
-                </div>
+            {#each deckSets as set (set.id)}
+              {@render setRow(set)}
+            {/each}
+          </ul>
+        {/if}
 
-                {#if expanded[entry.deck.id]}
-                  <ul
-                    class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2"
-                  >
-                    {#each entry.cards as card (card.file_id)}
-                      {@const label = outstandingLabel(outstandingFor(entry.deck.id, card.file_id))}
-                      <li
-                        class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft"
-                      >
-                        <label class="flex min-w-0 flex-1 items-center gap-3">
-                          <input
-                            type="checkbox"
-                            class="focus-ring size-4"
-                            checked={included[key(entry.deck.id, card.file_id)] === true}
-                            onchange={(event) => {
-                              included[key(entry.deck.id, card.file_id)] =
-                                event.currentTarget.checked;
-                            }}
-                          />
-                          <span class="min-w-0 flex-1 truncate">{card.file.filename}</span>
-                        </label>
-                        {#if label}
-                          <span
-                            class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-                          >
-                            {label}
-                          </span>
-                        {/if}
-                        <span class="text-muted" aria-hidden="true">×</span>
-                        <input
-                          type="number"
-                          aria-label="Copies of {card.file.filename}"
-                          class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
-                          value={printedCopies(entry.deck.id, card)}
-                          min={minCopies}
-                          max={maxCopies}
-                          step="1"
-                          disabled={included[key(entry.deck.id, card.file_id)] !== true}
-                          onfocus={selectAll}
-                          onchange={(event) => setCopies(entry.deck.id, card, event)}
-                        />
-                      </li>
-                    {:else}
-                      <li class="px-2 text-sm text-muted">This deck has no cards.</li>
-                    {/each}
-                  </ul>
-                {/if}
-              </li>
+        {#if punchboardSets.length > 0}
+          <h3 class="pt-2 text-sm font-medium">Punchboards</h3>
+          <ul class="flex flex-col gap-2" aria-label="Punchboards">
+            {#each punchboardSets as set (set.id)}
+              {@render setRow(set)}
             {/each}
           </ul>
         {/if}
@@ -627,10 +620,10 @@
             <option value="changed">Only what has changed since the last print</option>
           </select>
           <p class="max-w-96 text-xs text-muted">
-            Changed means a card nothing has printed yet, artwork that has been updated since it was
-            last printed, a card back the deck has replaced, or a copy count that has gone up. It
-            fills in the count beside each card; one you set yourself stays as you set it. Boards
-            are not tracked: a ticked board prints every time.
+            Changed means a card or token nothing has printed yet, artwork that has been updated
+            since it was last printed, a back that has been replaced, or a copy count that has gone
+            up. It fills in the count beside each one; one you set yourself stays as you set it.
+            Boards are not tracked: a ticked board prints every time.
           </p>
         </div>
 
@@ -697,10 +690,9 @@
       <section class="flex flex-col gap-3 rounded-md border border-edge bg-surface p-4">
         {#if loaded.length > 0}
           <p class="text-sm" role="status">
-            {summary.cards}
-            {summary.cards === 1 ? 'card' : 'cards'} on {summary.sheets}
+            {piecesLabel} on {summary.sheets}
             {summary.sheets === 1 ? 'sheet' : 'sheets'} of {page.name}{summary.sizes > 1
-              ? `, across ${summary.sizes} card sizes`
+              ? `, across ${summary.sizes} sizes`
               : ''}.
           </p>
         {/if}
@@ -723,8 +715,8 @@
 
         {#if summary.oversized}
           <p class="text-sm text-danger" role="alert">
-            One of the selected decks has a card larger than the printable area. Lower the printer
-            margin or choose a smaller size.
+            Something selected is larger than the printable area. Lower the printer margin or choose
+            a smaller size.
           </p>
         {/if}
         {#if boardSummary.unplaceable}
@@ -734,7 +726,7 @@
         {/if}
         {#if includeBacks && !anyBacks && summary.cards > 0}
           <p class="text-sm text-warning">
-            None of the selected decks has a card back, so the backing pages would be blank.
+            Nothing selected has a back, so the backing pages would be blank.
           </p>
         {/if}
         {#if mode === 'changed' && summary.cards === 0 && anySelected}
@@ -771,3 +763,99 @@
     {/if}
   {/if}
 </div>
+
+{#snippet setRow(set: PrintSet)}
+  {@const sheetful = perSheet(set)}
+  {@const printedAt = outstanding[set.id]?.last_printed_at ?? null}
+  {@const choice = setChoice[set.id]!}
+  {@const many = PIECES[set.kind]}
+  <li class="rounded-md border border-edge bg-surface p-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="flex min-h-11 min-w-0 flex-1 items-center gap-3">
+        <input
+          type="checkbox"
+          class="focus-ring size-4"
+          checked={choice.total > 0 && choice.chosen === choice.total}
+          indeterminate={choice.chosen > 0 && choice.chosen < choice.total}
+          disabled={choice.total === 0}
+          onchange={(event) => chooseWholeSet(set, event.currentTarget.checked)}
+        />
+        <span class="min-w-0 flex-1 truncate font-medium">{set.name}</span>
+      </label>
+      {#if choice.chosen > 0 && choice.chosen < choice.total}
+        <span class="text-sm text-muted">{choice.chosen} of {choice.total} {many}</span>
+      {/if}
+      <span class="text-sm text-muted">{sizeLabel(set.size)}</span>
+      <span class="text-sm text-muted">
+        {sheetful > 0 ? `${sheetful} per sheet` : 'too large for this paper'}
+      </span>
+      <span class="text-sm text-muted">
+        {#if printedAt}
+          last printed <time datetime={printedAt}>{when(printedAt)}</time>
+        {:else}
+          never printed
+        {/if}
+      </span>
+      {#if set.kind === 'deck' && set.back_file_id === null}
+        <span class="text-sm text-warning">no back</span>
+      {/if}
+      {#if choice.typed}
+        <Button
+          variant="ghost"
+          aria-label="Reset the counts for {set.name}"
+          onclick={() => resetCopies(set)}
+        >
+          Reset counts
+        </Button>
+      {/if}
+      <Button
+        variant="ghost"
+        aria-expanded={expanded[set.id] === true}
+        onclick={() => (expanded[set.id] = !expanded[set.id])}
+      >
+        {expanded[set.id] ? `Hide ${many}` : `Choose ${many}`}
+      </Button>
+    </div>
+
+    {#if expanded[set.id]}
+      <ul class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto border-t border-edge pt-2">
+        {#each set.pieces as piece (piece.file_id)}
+          {@const label = outstandingLabel(outstandingFor(set.id, piece.file_id))}
+          <li class="flex min-h-11 items-center gap-3 rounded px-2 text-sm hover:bg-accent-soft">
+            <label class="flex min-w-0 flex-1 items-center gap-3">
+              <input
+                type="checkbox"
+                class="focus-ring size-4"
+                checked={included[key(set.id, piece.file_id)] === true}
+                onchange={(event) => {
+                  included[key(set.id, piece.file_id)] = event.currentTarget.checked;
+                }}
+              />
+              <span class="min-w-0 flex-1 truncate">{piece.filename}</span>
+            </label>
+            {#if label}
+              <span class="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent">
+                {label}
+              </span>
+            {/if}
+            <span class="text-muted" aria-hidden="true">×</span>
+            <input
+              type="number"
+              aria-label="Copies of {piece.filename}"
+              class="focus-ring min-h-11 w-20 shrink-0 rounded-md border border-edge bg-surface px-2 text-sm"
+              value={printedCopies(set.id, piece)}
+              min={minCopies}
+              max={maxCopies}
+              step="1"
+              disabled={included[key(set.id, piece.file_id)] !== true}
+              onfocus={selectAll}
+              onchange={(event) => setCopies(set.id, piece, event)}
+            />
+          </li>
+        {:else}
+          <li class="px-2 text-sm text-muted">This {set.kind} has no {many}.</li>
+        {/each}
+      </ul>
+    {/if}
+  </li>
+{/snippet}

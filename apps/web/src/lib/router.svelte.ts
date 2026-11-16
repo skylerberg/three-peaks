@@ -17,7 +17,15 @@ export type Route =
   | { name: 'deck-history'; params: { projectId: string; deckId: string } }
   | { name: 'deck-run'; params: { projectId: string; deckId: string; runId: string } }
   | { name: 'deck-as-of'; params: { projectId: string; deckId: string; runId: string } }
-  | { name: 'print'; params: { projectId: string; deckId: string | null; boardId: string | null } }
+  | {
+      name: 'print';
+      params: {
+        projectId: string;
+        deckId: string | null;
+        boardId: string | null;
+        punchboardId: string | null;
+      };
+    }
   | { name: 'scene'; params: { projectId: string } }
   | { name: 'model'; params: { projectId: string; fileId: string } }
   | { name: 'versions'; params: { projectId: string; fileId: string } }
@@ -83,17 +91,20 @@ export function matchRoute(path: string, search = ''): Route {
 
   const print = new RegExp(`^/projects/(${UUID})/print$`).exec(clean);
   if (print) {
-    // A deck or a board named in the query arrives pre-selected, so "print
-    // this" from its own screen is one click rather than a screen and then a
-    // checkbox.
-    const deckId = params.get('deck');
-    const boardId = params.get('board');
+    // A deck, a board or a punchboard named in the query arrives pre-selected,
+    // so "print this" from its own screen is one click rather than a screen
+    // and then a checkbox.
+    const named = (key: string) => {
+      const value = params.get(key);
+      return value && value.length > 0 ? value : null;
+    };
     return {
       name: 'print',
       params: {
         projectId: print[1],
-        deckId: deckId && deckId.length > 0 ? deckId : null,
-        boardId: boardId && boardId.length > 0 ? boardId : null,
+        deckId: named('deck'),
+        boardId: named('board'),
+        punchboardId: named('punchboard'),
       },
     };
   }

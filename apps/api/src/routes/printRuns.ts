@@ -45,9 +45,9 @@ printRunsRouter.get(
   '/outstanding',
   describeRoute({
     tags: ['Print runs'],
-    summary: 'What each card still owes the printer',
+    summary: 'What each card and token still owes the printer',
     description:
-      'Every live card of every live deck in the project, with how many copies are already on paper at its current artwork and current back, and how many are not. A card owes copies because nothing has printed it, because its artwork has been re-imported since, because the deck was given a new back, or because its copy count went up — four situations and one subtraction, and `reason` says which.',
+      "Every live card of every live deck in the project, and every live token of every live punchboard, with how many copies are already on paper at its current artwork and current back, and how many are not. A card's back is its deck's and a token's is its own. A card owes copies because nothing has printed it, because its artwork has been re-imported since, because it was given a new back, or because its copy count went up — four situations and one subtraction, and `reason` says which.",
     security: [{ bearerAuth: [] }],
     responses: {
       200: {
@@ -61,7 +61,7 @@ printRunsRouter.get(
   async (c) => {
     const { project_id: projectId } = c.req.valid('query') as { project_id: string };
     await assertProjectAccess(c, projectId);
-    return c.json({ decks: await readOutstanding(c, projectId) });
+    return c.json(await readOutstanding(c, projectId));
   }
 );
 

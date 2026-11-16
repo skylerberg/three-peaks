@@ -4,8 +4,8 @@
 // because that is the unit the card sizes are quoted in and the unit the PDF
 // writer is configured with, so there is no conversion anywhere to get wrong.
 //
-// The web app draws from this; a future token or tile printer should too, which
-// is why nothing below knows what a deck is.
+// The web app draws decks and punchboards' tokens from this, which is why
+// nothing below knows what either is.
 
 import type { CardSize } from './cards.ts';
 
@@ -337,11 +337,13 @@ export function pixelsForPrint(lengthMm: number, dpi: number = PRINT_DPI): numbe
 }
 
 // One component type's worth of a selection: a size, what goes on the back of
-// everything in it, and the cards with their copy counts.
+// everything in it, and the cards with their copy counts. A card naming a back
+// of its own -- a punchboard's token, whose back is its own rather than its
+// set's -- prints that instead, null leaving its reverse blank.
 export interface PrintSource {
   card: CardSize;
   back_file_id: string | null;
-  cards: readonly { file_id: string; copies: number }[];
+  cards: readonly { file_id: string; copies: number; back_file_id?: string | null }[];
 }
 
 /**
@@ -362,7 +364,7 @@ export function planRuns(sources: readonly PrintSource[]): PrintRun[] {
       ...expandCopies(
         source.cards.map((card) => ({
           front_file_id: card.file_id,
-          back_file_id: source.back_file_id,
+          back_file_id: card.back_file_id === undefined ? source.back_file_id : card.back_file_id,
           copies: card.copies,
         }))
       )

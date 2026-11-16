@@ -85,6 +85,8 @@ function outstanding() {
             file_id: STALE,
             version_number: 3,
             quantity: 2,
+            back_file_id: BACK,
+            back_version_number: 1,
             printed_copies: 0,
             owed_copies: 2,
             printed_version_number: 2,
@@ -95,6 +97,8 @@ function outstanding() {
             file_id: FRESH,
             version_number: 1,
             quantity: 1,
+            back_file_id: BACK,
+            back_version_number: 1,
             printed_copies: 1,
             owed_copies: 0,
             printed_version_number: 1,
@@ -105,6 +109,8 @@ function outstanding() {
             file_id: BACK,
             version_number: 1,
             quantity: 0,
+            back_file_id: BACK,
+            back_version_number: 1,
             printed_copies: 0,
             owed_copies: 0,
             printed_version_number: null,
@@ -114,6 +120,15 @@ function outstanding() {
         ],
       },
     ],
+    punchboards: listedPunchboards.map((board) => ({
+      component_id: board.id,
+      last_printed_at: null,
+      tokens: [
+        owedToken(CHALLENGE, CHALLENGE_BACK, 1),
+        owedToken(SEEKER, SEEKER, 2),
+        owedToken(BLANK, null, 1),
+      ],
+    })),
   };
 }
 
@@ -169,7 +184,97 @@ function board(overrides: { name?: string; artwork?: Record<string, unknown> | n
 let recorded: unknown[] = [];
 let deleted: string[] = [];
 let listedBoards: ReturnType<typeof board>[] = [];
+let listedPunchboards: ReturnType<typeof punchboard>[] = [];
 let listedDecks = [deck];
+
+const PUNCHBOARD = '6b5a4f3e-2d1c-4b0a-9f8e-7d6c5b4a3f2e';
+const CHALLENGE = '1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e';
+const CHALLENGE_BACK = '2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f';
+const SEEKER = '3d4e5f6a-7b8c-4d9e-8f0a-2b3c4d5e6f7a';
+const BLANK = '4e5f6a7b-8c9d-4e0f-9a1b-3c4d5e6f7a8b';
+
+function tokenFile(id: string, filename: string) {
+  return {
+    ...file(id, filename),
+    deck_id: null,
+    component_id: PUNCHBOARD,
+    component_role: 'token',
+  };
+}
+
+// Three tokens, one of each kind of back: a back of its own, its front on
+// both sides, and nothing printed behind it.
+function punchboard() {
+  return {
+    id: PUNCHBOARD,
+    project_id: PROJECT,
+    kind: 'punchboard',
+    name: 'Tokens',
+    position: 0,
+    settings: {
+      kind: 'punchboard',
+      width_mm: 280,
+      height_mm: 210,
+      thickness_mm: 2,
+      token_width_mm: 30,
+      token_height_mm: 30,
+      token_corner_radius_mm: 15,
+      token_gap_mm: 3,
+      margin_mm: 10,
+      sheet_state: 'intact',
+      back_color: '#b9ac93',
+      edge_color: '#8d8069',
+      seed: 1,
+    },
+    created_by: 'someone',
+    created_at: '2026-02-01T09:00:00.000Z',
+    updated_at: '2026-02-01T09:00:00.000Z',
+    deleted_at: null,
+    files: [],
+    missing_roles: [],
+    tokens: [
+      {
+        file_id: CHALLENGE,
+        back_file_id: CHALLENGE_BACK,
+        quantity: 1,
+        position: 0,
+        file: tokenFile(CHALLENGE, 'two.png'),
+        back_file: tokenFile(CHALLENGE_BACK, 'two (back).png'),
+      },
+      {
+        file_id: SEEKER,
+        back_file_id: SEEKER,
+        quantity: 2,
+        position: 1,
+        file: tokenFile(SEEKER, 'seeker.png'),
+        back_file: tokenFile(SEEKER, 'seeker.png'),
+      },
+      {
+        file_id: BLANK,
+        back_file_id: null,
+        quantity: 1,
+        position: 2,
+        file: tokenFile(BLANK, 'blank.png'),
+        back_file: null,
+      },
+    ],
+  };
+}
+
+function owedToken(fileId: string, back: string | null, quantity: number) {
+  return {
+    file_id: fileId,
+    version_number: 1,
+    quantity,
+    back_file_id: back,
+    back_version_number: back === null ? null : back === CHALLENGE_BACK ? 2 : 1,
+    printed_copies: 0,
+    owed_copies: quantity,
+    printed_version_number: null,
+    last_printed_at: null,
+    reason: 'never',
+  };
+}
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -179,6 +284,7 @@ beforeEach(() => {
   recorded = [];
   deleted = [];
   listedBoards = [];
+  listedPunchboards = [];
   listedDecks = [deck];
 
   fetchMock.mockImplementation(async (input, init) => {
@@ -202,7 +308,11 @@ beforeEach(() => {
         copies: 2,
       });
     }
-    if (url.includes('/api/components')) return jsonResponse(200, { components: listedBoards });
+    if (url.includes('/api/components')) {
+      return jsonResponse(200, {
+        components: url.includes('kind=punchboard') ? listedPunchboards : listedBoards,
+      });
+    }
     if (url.includes(`/api/decks/${DECK}`)) return jsonResponse(200, { deck, cards });
     if (url.includes('/api/decks')) return jsonResponse(200, { decks: listedDecks });
     return jsonResponse(404, { error: `nothing stubbed for ${url}` });
@@ -210,7 +320,12 @@ beforeEach(() => {
 });
 
 function open(boardId: string | null = null) {
-  return render(Print, { projectId: PROJECT, deckId: boardId === null ? DECK : null, boardId });
+  return render(Print, {
+    projectId: PROJECT,
+    deckId: boardId === null ? DECK : null,
+    boardId,
+    punchboardId: null,
+  });
 }
 
 async function chooseChanged() {
@@ -289,7 +404,7 @@ describe('choosing what goes on paper', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
-    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1 }]);
+    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1, back_file_id: BACK }]);
   });
 });
 
@@ -364,8 +479,8 @@ describe('how many of each card', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
     expect(job().decks[0].cards).toEqual([
-      { file_id: STALE, copies: 5 },
-      { file_id: FRESH, copies: 1 },
+      { file_id: STALE, copies: 5, back_file_id: BACK },
+      { file_id: FRESH, copies: 1, back_file_id: BACK },
     ]);
   });
 
@@ -387,7 +502,7 @@ describe('how many of each card', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
-    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1 }]);
+    expect(job().decks[0].cards).toEqual([{ file_id: FRESH, copies: 1, back_file_id: BACK }]);
   });
 
   it('prints a card the deck holds none of once its count is typed over', async () => {
@@ -397,7 +512,7 @@ describe('how many of each card', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
-    expect(job().decks[0].cards).toContainEqual({ file_id: BACK, copies: 1 });
+    expect(job().decks[0].cards).toContainEqual({ file_id: BACK, copies: 1, back_file_id: BACK });
   });
 
   // Clamped onto the number already held, which is the case the field is written
@@ -483,7 +598,7 @@ describe('printing only what has changed', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
 
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
-    expect(job().decks[0].cards).toEqual([{ file_id: STALE, copies: 2 }]);
+    expect(job().decks[0].cards).toEqual([{ file_id: STALE, copies: 2, back_file_id: BACK }]);
   });
 
   it('prints every selected card when the mode is everything', async () => {
@@ -493,8 +608,8 @@ describe('printing only what has changed', () => {
 
     await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
     expect(job().decks[0].cards).toEqual([
-      { file_id: STALE, copies: 2 },
-      { file_id: FRESH, copies: 1 },
+      { file_id: STALE, copies: 2, back_file_id: BACK },
+      { file_id: FRESH, copies: 1, back_file_id: BACK },
     ]);
   });
 
@@ -668,5 +783,84 @@ describe('printing a board', () => {
     await waitFor(() => expect(boardBox().checked).toBe(true));
     expect(screen.getByText(/1\s+board on 6\s+pages/)).toBeInTheDocument();
     expect(screen.queryByText(/sheets of US Letter/)).toBeNull();
+  });
+});
+
+// A punchboard's tokens print the way a deck's cards do, onto the same paper,
+// each with the back that is its own.
+describe('a punchboard’s tokens', () => {
+  beforeEach(() => {
+    listedPunchboards = [punchboard()];
+  });
+
+  function openFor(punchboardId: string | null) {
+    return render(Print, { projectId: PROJECT, deckId: null, boardId: null, punchboardId });
+  }
+
+  function tokensBox(): HTMLInputElement {
+    return screen.getByRole('checkbox', { name: 'Tokens' });
+  }
+
+  it('lists the punchboard unticked unless the screen was opened for it', async () => {
+    openFor(null);
+    await waitFor(() => expect(tokensBox()).toBeInTheDocument());
+    expect(tokensBox().checked).toBe(false);
+    expect((screen.getByRole('checkbox', { name: 'Base game' }) as HTMLInputElement).checked).toBe(
+      true
+    );
+    expect(screen.getByText('30 × 30 mm')).toBeInTheDocument();
+  });
+
+  it('prints every copy of every token behind its own back', async () => {
+    openFor(PUNCHBOARD);
+    await waitFor(() => expect(tokensBox().checked).toBe(true));
+    expect((screen.getByRole('checkbox', { name: 'Base game' }) as HTMLInputElement).checked).toBe(
+      false
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(/^4 tokens on 2 sheets/u);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    await waitFor(() => expect(generatePrintPdf).toHaveBeenCalled());
+    expect(job().decks).toEqual([
+      {
+        name: 'Tokens',
+        card: { width_mm: 30, height_mm: 30 },
+        back_file_id: null,
+        cards: [
+          { file_id: CHALLENGE, copies: 1, back_file_id: CHALLENGE_BACK },
+          { file_id: SEEKER, copies: 2, back_file_id: SEEKER },
+          { file_id: BLANK, copies: 1, back_file_id: null },
+        ],
+      },
+    ]);
+    expect(job().versions).toMatchObject({ [CHALLENGE]: 1, [CHALLENGE_BACK]: 2, [SEEKER]: 1 });
+  });
+
+  it('records each token with the back it was printed behind, and none behind a blank one', async () => {
+    openFor(PUNCHBOARD);
+    await waitFor(() => expect(tokensBox().checked).toBe(true));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+
+    await waitFor(() => expect(recorded).toHaveLength(1));
+    expect(recorded[0]).toEqual({
+      project_id: PROJECT,
+      cards: [
+        {
+          file_id: CHALLENGE,
+          version_number: 1,
+          copies: 1,
+          back_file_id: CHALLENGE_BACK,
+          back_version_number: 2,
+        },
+        {
+          file_id: SEEKER,
+          version_number: 1,
+          copies: 2,
+          back_file_id: SEEKER,
+          back_version_number: 1,
+        },
+        { file_id: BLANK, version_number: 1, copies: 1 },
+      ],
+    });
   });
 });
