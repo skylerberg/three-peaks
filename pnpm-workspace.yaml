@@ -91,38 +91,3 @@ ignoredOptionalDependencies:
 # setting in DAYS and pnpm counts MINUTES.
 minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
-
-# TEMPORARY -- delete this block on or after 2026-08-26.
-#
-# These sixteen entries were already in the lockfile when the seven-day window
-# went in, published 2026-08-16 to 2026-08-18. They pass the one-day default they
-# were installed under and fail the new one, which blocks every install here --
-# `pnpm install` verifies existing lockfile entries, not just new resolutions.
-#
-# Rebuilding is not the way out: the catalog pins vitest to ~4.1.11 and overrides
-# vite to 8.2.1, so no version old enough to clear the gate is in range, and
-# `pnpm clean --lockfile && pnpm install` fails with NO_MATURE_MATCHING_VERSION
-# instead. Loosening those pins to dodge a three-day wait is a worse trade.
-#
-# Every entry is pinned to an exact version on purpose. A bare name would exempt
-# the package forever, including some future compromised release; `name@version`
-# exempts only these specific builds, which have now been public and unrevoked
-# for the better part of a week. The newest clears seven days on 2026-08-25T20:10Z,
-# after which this block does nothing and should go.
-minimumReleaseAgeExclude:
-  - '@aws-sdk/client-sesv2@3.1113.0'
-  - '@google-cloud/storage@8.0.1'
-  - '@types/pg@8.23.1'
-  - '@vitest/expect@4.1.11'
-  - '@vitest/mocker@4.1.11'
-  - '@vitest/pretty-format@4.1.11'
-  - '@vitest/runner@4.1.11'
-  - '@vitest/snapshot@4.1.11'
-  - '@vitest/spy@4.1.11'
-  - '@vitest/utils@4.1.11'
-  - 'es-module-lexer@2.3.2'
-  - 'esrap@2.3.5'
-  - 'fast-xml-parser@5.11.0'
-  - 'hono@4.13.3'
-  - 'swagger-ui-dist@5.32.14'
-  - 'vitest@4.1.11'

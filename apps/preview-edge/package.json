@@ -7,7 +7,7 @@
     "type-check": "tsc"
   },
   "dependencies": {
-    "@google-cloud/storage": "^8.0.1"
+    "@google-cloud/storage": "^8.4.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
