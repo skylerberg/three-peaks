@@ -680,8 +680,8 @@
               step="0.05"
             />
             <p class="max-w-80 text-xs text-muted">
-              Millimetres your printer will not print inside. Lower it for more cards a sheet, at
-              the risk of clipping the outer row.
+              Millimetres your printer will not print inside. Raise it if the outer row comes out
+              clipped: 6.35 suits most printers that cannot print borderless.
             </p>
           </div>
         </div>

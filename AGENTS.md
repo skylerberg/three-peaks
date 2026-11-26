@@ -612,10 +612,11 @@ the placements back out of the content streams. Position alone would not catch
 the bug — on a three-column grid an unmirrored backing page occupies exactly the
 right set of boxes.
 
-Sheets are planned inside a **printer margin**, 6.35 mm by default, because a
-consumer printer will not lay ink nearer the edge than that and the outer row
-would come out clipped. It is a setting rather than a constant: borderless
-printing is worth half a sheet again on square cards.
+Sheets are planned inside a **printer margin**, and by default there is none:
+packed to the paper, a sheet of square cards holds half as many again. It is a
+setting rather than a constant because a consumer printer will not lay ink
+nearer the edge than about a quarter inch, and on one of those the outer row
+comes out clipped until the margin is raised to 6.35 mm.
 
 ## Building the file
 

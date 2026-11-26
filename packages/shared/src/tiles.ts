@@ -43,8 +43,8 @@ export interface TileGrid {
  *
  * Only the ink has to fit inside the printer margin. The marks and the label
  * run out into it, as a card sheet's marks do: a 10.5 in board is exactly
- * Letter's printable height at the default margin, and reserving room for its
- * marks as well split it across four sheets rather than two.
+ * Letter's printable height inside a quarter-inch margin, and reserving room
+ * for its marks as well split it across four sheets rather than two.
  *
  * The bleed goes with the marks. Without marks the edge of the ink is the only
  * thing saying where to cut, so ink that ran past the line would move it.

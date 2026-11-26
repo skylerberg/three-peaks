@@ -438,7 +438,9 @@ describe('renderRuns', () => {
 });
 
 describe('renderBoards', () => {
-  const margin = DEFAULT_PRINTER_MARGIN_MM;
+  // A quarter inch, where a 420 x 190 mm board takes a sheet fewer turned. With
+  // no margin it fits on two either way round, and a tie stays upright.
+  const margin = 6.35;
 
   function board(name: string, width_mm: number, height_mm: number): PrintBoard {
     return { name, file_id: name, width_mm, height_mm };
@@ -453,7 +455,7 @@ describe('renderBoards', () => {
     await renderBoards(
       recording.doc,
       boards,
-      options({ cut_marks: true, ...overrides }),
+      options({ printer_margin_mm: margin, cut_marks: true, ...overrides }),
       images,
       pageTurner(recording.doc),
       blankBacks

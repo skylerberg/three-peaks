@@ -38,7 +38,7 @@ const LETTER_WIDTH_PT = 612;
 const LETTER_HEIGHT_PT = 792;
 const MM_PER_PT = 25.4 / 72;
 
-// Poker cards on Letter inside the default printer margin, and minis, which are
+// Poker cards on Letter at the default printer margin, and minis, which are
 // turned to fit. Kept here rather than derived, so the probe fails if the
 // packing quietly changes.
 const POKER_PER_SHEET = 9;
@@ -50,6 +50,9 @@ const MINI_PER_SHEET = 18;
 // meets. Kept here for the reason the card counts are.
 const BOARD = { width: 560, height: 420, columns: 3, rows: 2 };
 const TILE_BLEED_MM = 2;
+// Typed into the screen before the board is printed, and what every piece of it
+// has to keep inside. The screen's own default is no margin, which would leave
+// that check asking only whether the ink is on the paper at all.
 const PRINTER_MARGIN_MM = 6.35;
 
 const failures = [];
@@ -1123,6 +1126,7 @@ async function run() {
       wait: 0,
     });
     await browser.page.waitForSelector('button:has-text("Generate PDF")', { timeout: 30_000 });
+    await browser.page.getByLabel('Printer margin').fill(String(PRINTER_MARGIN_MM));
 
     const boardRow = await browser.page
       .getByRole('listitem')

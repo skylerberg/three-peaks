@@ -18,7 +18,10 @@ import {
 
 const letter = pageSize('letter')!;
 const poker = cardPreset('poker')!;
-const margin = DEFAULT_PRINTER_MARGIN_MM;
+// A quarter inch, which is what a printer that cannot print borderless needs.
+// Not the default, which is none: inside no margin at all, an assertion that
+// something stays within it says only that it stays on the paper.
+const margin = 6.35;
 
 function item(front: string, back: string | null = null): PrintItem {
   return { front_file_id: front, back_file_id: back };
@@ -26,25 +29,26 @@ function item(front: string, back: string | null = null): PrintItem {
 
 describe('planGrid', () => {
   // The number a designer plans a print run around. Each is the better of the
-  // two orientations within the default printer margin, so a change to either
-  // the margin or the trial shows up here as a changed count rather than as a
-  // clipped sheet nobody looks at until it comes out of the printer.
+  // two orientations at the default printer margin, so a change to either the
+  // default or the trial shows up here as a changed count rather than as a
+  // stack of sheets nobody counts until it comes out of the printer.
   it.each([
     ['mini', 18, true],
-    ['mini-square', 15, false],
+    ['mini-square', 20, false],
     ['bridge', 9, false],
-    ['euro', 8, true],
+    ['euro', 9, false],
     ['poker', 9, false],
-    ['square', 6, false],
-    ['tarot', 4, false],
+    ['square', 9, false],
+    ['tarot', 6, false],
   ])('fits %s cards %i to a US Letter sheet', (id, expected, rotated) => {
-    const grid = planGrid(letter, cardPreset(id)!, margin);
+    const grid = planGrid(letter, cardPreset(id)!, DEFAULT_PRINTER_MARGIN_MM);
     expect(grid.per_sheet).toBe(expected);
     expect(grid.rotated).toBe(rotated);
   });
 
-  // The two sizes that pay for the rotation trial. Without it mini loses six
-  // cards a sheet and euro two, and nothing else in the suite would notice.
+  // The two sizes that pay for the rotation trial inside a quarter inch.
+  // Without it mini loses six cards a sheet and euro two, and nothing else in
+  // the suite would notice.
   it.each([
     ['mini', 12],
     ['euro', 6],
@@ -85,9 +89,8 @@ describe('planGrid', () => {
     expect(grid.origin_y_mm + usedHeight).toBeLessThanOrEqual(letter.height_mm - margin);
   });
 
-  // The margin is a real cost, not a formality: on a borderless printer a square
-  // card gains half a sheet again, which is why it is a setting rather than a
-  // constant.
+  // The margin is a real cost, not a formality: without one a square card gains
+  // half a sheet again, which is why the default is none.
   it.each([
     ['square', 6, 9],
     ['tarot', 4, 6],
@@ -276,8 +279,9 @@ describe('cutMarks', () => {
     expect(marks).toHaveLength((grid.columns + 1) * 2 + (grid.rows + 1) * 2);
   });
 
-  it('stays on the paper', () => {
-    for (const mark of marks) {
+  // Without a margin a block can sit nearer the edge than a mark is long.
+  it.each(CARD_PRESETS)('keeps every $id mark on the paper', (preset) => {
+    for (const mark of cutMarks(planGrid(letter, preset, DEFAULT_PRINTER_MARGIN_MM), letter)) {
       for (const x of [mark.x1_mm, mark.x2_mm]) {
         expect(x).toBeGreaterThanOrEqual(0);
         expect(x).toBeLessThanOrEqual(letter.width_mm);
