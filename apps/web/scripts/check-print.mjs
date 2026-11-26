@@ -1448,7 +1448,7 @@ async function run() {
               file: 'src/routes/Print.svelte',
               find: '{ decks: runDecks, boards: runBoards, options, versions: $state.snapshot(versions) }',
               replace:
-                '{ decks: loaded.map((entry) => ({ name: entry.deck.name, card: deckCardSize(entry.deck), back_file_id: entry.deck.back_file_id, cards: entry.cards.filter((card) => card.quantity > 0).map((card) => ({ file_id: card.file_id, copies: card.quantity })) })), boards: runBoards, options, versions: $state.snapshot(versions) }',
+                '{ decks: loaded.map((set) => ({ name: set.name, card: set.size, back_file_id: set.back_file_id, cards: set.pieces.filter((piece) => piece.quantity > 0).map((piece) => ({ file_id: piece.file_id, copies: piece.quantity, back_file_id: piece.back_file_id })) })), boards: runBoards, options, versions: $state.snapshot(versions) }',
             }),
           },
           encoding: 'utf8',
