@@ -618,7 +618,7 @@ async function run() {
     });
 
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const produced = await browser.page.evaluate(async () => {
       const blob = window.__printed;
@@ -834,7 +834,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const reprintBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -932,7 +932,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const typedBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1059,7 +1059,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const chosenBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1165,7 +1165,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const boardBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1231,7 +1231,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const mixedBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
