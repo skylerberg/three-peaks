@@ -160,6 +160,7 @@ async function run() {
           // bytes, which a 401 body would never have got as far as.
           return image?.src.startsWith('blob:') && image.naturalWidth > 0 ? 'decoded' : null;
         },
+        null,
         { timeout: 15_000 }
       )
       .then((handle) => handle.jsonValue())
@@ -182,6 +183,7 @@ async function run() {
           const match = document.body.innerText.match(/[\d.]+ [KMGT]?B of .+ used/);
           return match && !match[0].startsWith('0 B of') ? match[0] : null;
         },
+        null,
         { timeout: 15_000 }
       )
       .then((handle) => handle.jsonValue())

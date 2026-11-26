@@ -23,11 +23,11 @@ export const PAGE_SIZES: readonly PageSize[] = [
 
 export const DEFAULT_PAGE_SIZE_ID = 'letter';
 
-// A quarter inch. Consumer printers refuse to put ink nearer the edge than
-// roughly this, so packing to the paper rather than to the printable area is
-// what produces a sheet whose outer row is clipped. Adjustable, because a
-// borderless-capable printer can do better and the extra row is worth having.
-export const DEFAULT_PRINTER_MARGIN_MM = 6.35;
+// None: a sheet is packed to the paper, which is every card it has room for.
+// Adjustable, because a printer that cannot print borderless refuses to put
+// ink within roughly a quarter inch of the edge, and packing to the paper on
+// one of those clips the outer row.
+export const DEFAULT_PRINTER_MARGIN_MM = 0;
 export const PRINTER_MARGIN_LIMITS = [0, 25] as const;
 
 // The industry print standard, and what a "this artwork is 180 DPI" warning is

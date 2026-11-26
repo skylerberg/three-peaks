@@ -38,7 +38,7 @@ const LETTER_WIDTH_PT = 612;
 const LETTER_HEIGHT_PT = 792;
 const MM_PER_PT = 25.4 / 72;
 
-// Poker cards on Letter inside the default printer margin, and minis, which are
+// Poker cards on Letter at the default printer margin, and minis, which are
 // turned to fit. Kept here rather than derived, so the probe fails if the
 // packing quietly changes.
 const POKER_PER_SHEET = 9;
@@ -50,6 +50,9 @@ const MINI_PER_SHEET = 18;
 // meets. Kept here for the reason the card counts are.
 const BOARD = { width: 560, height: 420, columns: 3, rows: 2 };
 const TILE_BLEED_MM = 2;
+// Typed into the screen before the board is printed, and what every piece of it
+// has to keep inside. The screen's own default is no margin, which would leave
+// that check asking only whether the ink is on the paper at all.
 const PRINTER_MARGIN_MM = 6.35;
 
 const failures = [];
@@ -615,7 +618,7 @@ async function run() {
     });
 
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const produced = await browser.page.evaluate(async () => {
       const blob = window.__printed;
@@ -831,7 +834,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const reprintBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -929,7 +932,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const typedBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1056,7 +1059,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const chosenBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1123,6 +1126,7 @@ async function run() {
       wait: 0,
     });
     await browser.page.waitForSelector('button:has-text("Generate PDF")', { timeout: 30_000 });
+    await browser.page.getByLabel('Printer margin').fill(String(PRINTER_MARGIN_MM));
 
     const boardRow = await browser.page
       .getByRole('listitem')
@@ -1161,7 +1165,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const boardBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1227,7 +1231,7 @@ async function run() {
       };
     });
     await browser.click('button:has-text("Generate PDF")');
-    await browser.page.waitForFunction(() => window.__printed !== null, { timeout: 120_000 });
+    await browser.page.waitForFunction(() => window.__printed !== null, null, { timeout: 120_000 });
 
     const mixedBytes = Uint8Array.from(
       await browser.page.evaluate(async () => [
@@ -1444,7 +1448,7 @@ async function run() {
               file: 'src/routes/Print.svelte',
               find: '{ decks: runDecks, boards: runBoards, options, versions: $state.snapshot(versions) }',
               replace:
-                '{ decks: loaded.map((entry) => ({ name: entry.deck.name, card: deckCardSize(entry.deck), back_file_id: entry.deck.back_file_id, cards: entry.cards.filter((card) => card.quantity > 0).map((card) => ({ file_id: card.file_id, copies: card.quantity })) })), boards: runBoards, options, versions: $state.snapshot(versions) }',
+                '{ decks: loaded.map((set) => ({ name: set.name, card: set.size, back_file_id: set.back_file_id, cards: set.pieces.filter((piece) => piece.quantity > 0).map((piece) => ({ file_id: piece.file_id, copies: piece.quantity, back_file_id: piece.back_file_id })) })), boards: runBoards, options, versions: $state.snapshot(versions) }',
             }),
           },
           encoding: 'utf8',

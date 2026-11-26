@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PRINTER_MARGIN_MM, type Rect, pageSize } from './print.ts';
+import { type Rect, pageSize } from './print.ts';
 import {
   TILE_BLEED_MM,
   TILE_MARK_LENGTH_MM,
@@ -12,9 +12,12 @@ import {
 } from './tiles.ts';
 
 const letter = pageSize('letter')!;
-const margin = DEFAULT_PRINTER_MARGIN_MM;
-// Letter inside the default margin: the room a tile's ink has. Written down
-// rather than derived, so a change to the margin shows up here as a number.
+// A quarter inch rather than the default, which is none: these tests are about
+// the ink keeping inside a margin while the marks and the label run out into
+// it, and a margin of nothing leaves them no margin to run into.
+const margin = 6.35;
+// Letter inside that margin: the room a tile's ink has. Written down rather
+// than derived, so a change to the margin shows up here as a number.
 const ROOM_WIDTH = 203.2;
 const ROOM_HEIGHT = 266.7;
 
